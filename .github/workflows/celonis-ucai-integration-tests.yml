@@ -1,4 +1,4 @@
-name: Unity Catalog AI Databricks Integration Tests
+name: (Celonis) Unity Catalog AI Databricks Integration Tests
 
 on:
   push:
@@ -26,8 +26,11 @@ jobs:
       run:
         working-directory: ai
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - name: Checkout Branch
+        uses: actions/checkout@v4.1.2
+        with:
+          ref: ${{ github.ref }}
+          token: ${{ secrets.CELOBOT_GITHUB_TOKEN }}
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -52,8 +55,11 @@ jobs:
       run:
         working-directory: ai
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - name: Checkout Branch
+        uses: actions/checkout@v4.1.2
+        with:
+          ref: ${{ github.ref }}
+          token: ${{ secrets.CELOBOT_GITHUB_TOKEN }}
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -78,8 +84,11 @@ jobs:
       run:
         working-directory: ai
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - name: Checkout Branch
+        uses: actions/checkout@v4.1.2
+        with:
+          ref: ${{ github.ref }}
+          token: ${{ secrets.CELOBOT_GITHUB_TOKEN }}
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -104,8 +113,11 @@ jobs:
       run:
         working-directory: ai
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - name: Checkout Branch
+        uses: actions/checkout@v4.1.2
+        with:
+          ref: ${{ github.ref }}
+          token: ${{ secrets.CELOBOT_GITHUB_TOKEN }}
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -130,8 +142,11 @@ jobs:
       run:
         working-directory: ai
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - name: Checkout Branch
+        uses: actions/checkout@v4.1.2
+        with:
+          ref: ${{ github.ref }}
+          token: ${{ secrets.CELOBOT_GITHUB_TOKEN }}
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -156,8 +171,11 @@ jobs:
       run:
         working-directory: ai
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - name: Checkout Branch
+        uses: actions/checkout@v4.1.2
+        with:
+          ref: ${{ github.ref }}
+          token: ${{ secrets.CELOBOT_GITHUB_TOKEN }}
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -182,8 +200,11 @@ jobs:
       run:
         working-directory: ai
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - name: Checkout Branch
+        uses: actions/checkout@v4.1.2
+        with:
+          ref: ${{ github.ref }}
+          token: ${{ secrets.CELOBOT_GITHUB_TOKEN }}
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -208,8 +229,11 @@ jobs:
       run:
         working-directory: ai
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - name: Checkout Branch
+        uses: actions/checkout@v4.1.2
+        with:
+          ref: ${{ github.ref }}
+          token: ${{ secrets.CELOBOT_GITHUB_TOKEN }}
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -223,29 +247,3 @@ jobs:
       - name: Run tests
         run: |
           pytest integrations/litellm/tests --ignore=integrations/litellm/tests/test_litellm_toolkit_oss.py
-
-  dspy_test:
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ['3.10']
-    timeout-minutes: 20
-    defaults:
-      run:
-        working-directory: ai
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-      - name: Install dependencies
-        run: |
-          pip install core/.
-          echo "PYTHONPATH=$(pwd)/core/src:\$PYTHONPATH" >> $GITHUB_ENV
-          pip install integrations/dspy[dev]
-          pip install mlflow
-      - name: Run tests
-        run: |
-          pytest integrations/dspy/tests --ignore=integrations/dspy/tests/test_dspy_toolkit_oss.py

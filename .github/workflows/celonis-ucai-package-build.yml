@@ -1,4 +1,4 @@
-name: Test package build
+name: (Celonis) Test package build
 
 on:
   push:
@@ -23,8 +23,12 @@ jobs:
       run:
         working-directory: ai/core
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - name: Checkout Branch
+        uses: actions/checkout@v4.1.2
+        with:
+          ref: ${{ github.ref }}
+          token: ${{ secrets.CELOBOT_GITHUB_TOKEN }}
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
