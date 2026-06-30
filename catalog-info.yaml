@@ -10,19 +10,14 @@ metadata:
     - unitycatalog
   annotations:
     github.com/project-slug: celonis/unitycatalog
-    backstage.io/techdocs-ref: dir:.
-    sonarqube.org/project-key: celonis_unitycatalog
     repo-depot.celonis.dev/project-type: JAVA_MAVEN_CUSTOM
     repo-depot.celonis.dev/image-name: celospark/unitycatalog
     repo-depot.celonis.dev/dply-release-approval-team: Storium
     repo-depot.celonis.dev/workflow-runner-release: runner=2cpu-linux-x64
-    # Uncomment when deployed via cfg-ibc / ArgoCD:
-    # argocd/app-selector: app=unity-catalog
-    # cd.celonis.dev/cfg-ibc-folder: unity-catalog
 spec:
   type: service
   lifecycle: experimental
-  owner: group:default/storium
+  owner: storium
   tier: "2"
 
 ---
@@ -38,23 +33,17 @@ metadata:
     - unitycatalog
   annotations:
     github.com/project-slug: celonis/unitycatalog
-    backstage.io/techdocs-ref: dir:./ui
-    sonarqube.org/project-key: celonis_unitycatalog
     repo-depot.celonis.dev/project-type: CUSTOM
     repo-depot.celonis.dev/image-name: celospark/unitycatalog-ui
     repo-depot.celonis.dev/dply-release-approval-team: Storium
     repo-depot.celonis.dev/workflow-runner-release: runner=2cpu-linux-x64
-    # Uncomment when deployed via cfg-ibc / ArgoCD:
-    # argocd/app-selector: app=unity-catalog-ui
-    # cd.celonis.dev/cfg-ibc-folder: unity-catalog-ui
 spec:
   type: frontend
   lifecycle: experimental
-  owner: group:default/storium
+  owner: storium
   tier: "2"
   dependsOn:
     - component:default/unity-catalog
-
 ---
 apiVersion: backstage.io/v1alpha1
 kind: Component
@@ -68,15 +57,12 @@ metadata:
     - unitycatalog
   annotations:
     github.com/project-slug: celonis/unitycatalog
-    backstage.io/techdocs-ref: dir:./clients/java
-    sonarqube.org/project-key: celonis_unitycatalog
     repo-depot.celonis.dev/project-type: JAVA_MAVEN_CUSTOM
-    repo-depot.celonis.dev/dply-release-approval-team: Storium
     repo-depot.celonis.dev/workflow-runner-release: runner=2cpu-linux-x64
 spec:
   type: library
   lifecycle: experimental
-  owner: group:default/storium
+  owner: storium
   dependsOn:
     - component:default/unity-catalog
 
@@ -94,15 +80,12 @@ metadata:
     - unitycatalog
   annotations:
     github.com/project-slug: celonis/unitycatalog
-    backstage.io/techdocs-ref: dir:./connectors/spark
-    sonarqube.org/project-key: celonis_unitycatalog
     repo-depot.celonis.dev/project-type: JAVA_MAVEN_CUSTOM
-    repo-depot.celonis.dev/dply-release-approval-team: Storium
     repo-depot.celonis.dev/workflow-runner-release: runner=2cpu-linux-x64
 spec:
   type: library
   lifecycle: experimental
-  owner: group:default/storium
+  owner: storium
   dependsOn:
     - component:default/unitycatalog-client
 
@@ -119,15 +102,12 @@ metadata:
     - unitycatalog
   annotations:
     github.com/project-slug: celonis/unitycatalog
-    backstage.io/techdocs-ref: dir:./target/control/java
-    sonarqube.org/project-key: celonis_unitycatalog
     repo-depot.celonis.dev/project-type: JAVA_MAVEN_CUSTOM
-    repo-depot.celonis.dev/dply-release-approval-team: Storium
     repo-depot.celonis.dev/workflow-runner-release: runner=2cpu-linux-x64
 spec:
   type: library
   lifecycle: experimental
-  owner: group:default/storium
+  owner: storium
   dependsOn:
     - component:default/unity-catalog
 
@@ -145,14 +125,11 @@ metadata:
     - unitycatalog
   annotations:
     github.com/project-slug: celonis/unitycatalog
-    backstage.io/techdocs-ref: dir:./connectors/hadoop
-    sonarqube.org/project-key: celonis_unitycatalog
     repo-depot.celonis.dev/project-type: JAVA_MAVEN_CUSTOM
-    repo-depot.celonis.dev/dply-release-approval-team: Storium
     repo-depot.celonis.dev/workflow-runner-release: runner=2cpu-linux-x64
 spec:
   type: library
   lifecycle: experimental
-  owner: group:default/storium
+  owner: storium
   dependsOn:
     - component:default/unitycatalog-client
