@@ -293,11 +293,18 @@ public class CredPropsUtil {
   private static Map<String, String> s3FixedCredProps(
       boolean credScopedFsEnabled, Configuration hadoopConf, TemporaryCredentials tempCreds) {
     AwsCredentials awsCred = tempCreds.getAwsTempCredentials();
-    return new S3PropsBuilder(credScopedFsEnabled, hadoopConf)
-        .set("fs.s3a.access.key", awsCred.getAccessKeyId())
-        .set("fs.s3a.secret.key", awsCred.getSecretAccessKey())
-        .set("fs.s3a.session.token", awsCred.getSessionToken())
-        .build();
+    S3PropsBuilder builder =
+        new S3PropsBuilder(credScopedFsEnabled, hadoopConf)
+            .set("fs.s3a.access.key", awsCred.getAccessKeyId())
+            .set("fs.s3a.secret.key", awsCred.getSecretAccessKey())
+            .set("fs.s3a.session.token", awsCred.getSessionToken());
+    String endpoint = resolveS3Endpoint(hadoopConf, tempCreds.getEndpointUrl());
+    if (endpoint != null && !endpoint.isEmpty()) {
+      builder
+          .set("fs.s3a.endpoint", endpoint)
+          .set(UCHadoopConfConstants.S3A_INIT_ENDPOINT_URL, endpoint);
+    }
+    return builder.build();
   }
 
   private static S3PropsBuilder s3TempCredPropsBuilder(
@@ -324,7 +331,26 @@ public class CredPropsUtil {
           String.valueOf(tempCreds.getExpirationTime()));
     }
 
+    String endpoint = resolveS3Endpoint(hadoopConf, tempCreds.getEndpointUrl());
+    if (endpoint != null && !endpoint.isEmpty()) {
+      builder
+          .set("fs.s3a.endpoint", endpoint)
+          .set(UCHadoopConfConstants.S3A_INIT_ENDPOINT_URL, endpoint);
+    }
+
     return builder;
+  }
+
+  /**
+   * Prefer an existing client {@code fs.s3a.endpoint} over a vended URL so containerized clients
+   * (e.g. Spark with {@code http://minio:9000}) are not overwritten by a host-side loopback URL.
+   */
+  private static String resolveS3Endpoint(Configuration hadoopConf, String vendedEndpointUrl) {
+    String clientEndpoint = hadoopConf.get("fs.s3a.endpoint");
+    if (clientEndpoint != null && !clientEndpoint.isEmpty()) {
+      return clientEndpoint;
+    }
+    return vendedEndpointUrl;
   }
 
   private static Map<String, String> s3TableTempCredProps(
