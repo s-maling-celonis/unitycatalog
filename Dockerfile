@@ -4,15 +4,18 @@ ARG HOME="/home/unitycatalog"
 # Build stage, using Amazon Corretto jdk 17 on alpine with arm64 support
 FROM amazoncorretto:17-alpine3.20-jdk@sha256:c045f0537bc890f9e61924f33f35e9667f696b4f372dad4a73861a9396b5d0b5 as base
 
-# Dependencies are installed in $HOME/.cache by sbt
+# Dependencies are installed in $HOME/.cache/coursier by sbt
 ARG HOME
-ENV HOME=$HOME
+ENV HOME=$HOME \
+    COURSIER_CACHE=$HOME/.cache/coursier
 
 WORKDIR $HOME
 
 COPY --parents dev/ build/ project/ examples/ server/ api/ clients/ version.sbt build.sbt ./
 
-RUN apk add --no-cache bash && ./build/sbt -info clean package
+RUN mkdir -p "$COURSIER_CACHE" \
+ && apk add --no-cache bash \
+ && ./build/sbt -info clean package
 
 # Small runtime image
 FROM alpine:3.20@sha256:a4f4213abb84c497377b8544c81b3564f313746700372ec4fe84653e4fb03805 as runtime
