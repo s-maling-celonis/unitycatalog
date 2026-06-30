@@ -1,0 +1,23 @@
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: unitycatalog-hadoop
+  title: Unity Catalog Hadoop Connector
+  description: Hadoop filesystem connector library for Unity Catalog (cloud.celonis:unitycatalog-hadoop). Not yet published by CI — include when added to celonis-build.yml.
+  tags:
+    - java
+    - hadoop
+    - library
+    - unitycatalog
+  annotations:
+    github.com/project-slug: celonis/unitycatalog
+    sonarqube.org/project-key: celonis_unitycatalog_hadoop
+    repo-depot.celonis.dev/project-type: JAVA_MAVEN_CUSTOM
+    repo-depot.celonis.dev/dply-release-approval-team: Storium
+    repo-depot.celonis.dev/workflow-runner-release: runner=2cpu-linux-x64
+spec:
+  type: library
+  lifecycle: experimental
+  owner: storium
+  dependsOn:
+    - component:default/unitycatalog-client

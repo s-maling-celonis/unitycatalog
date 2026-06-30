@@ -1,0 +1,22 @@
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: unitycatalog-controlapi
+  title: Unity Catalog Control API
+  description: Generated Java client for the Unity Catalog control plane API (cloud.celonis:unitycatalog-controlapi).
+  tags:
+    - java
+    - library
+    - unitycatalog
+  annotations:
+    github.com/project-slug: celonis/unitycatalog
+    sonarqube.org/project-key: celonis_unitycatalog_controlapi
+    repo-depot.celonis.dev/project-type: JAVA_MAVEN_CUSTOM
+    repo-depot.celonis.dev/dply-release-approval-team: Storium
+    repo-depot.celonis.dev/workflow-runner-release: runner=2cpu-linux-x64
+spec:
+  type: library
+  lifecycle: experimental
+  owner: storium
+  dependsOn:
+    - component:default/unity-catalog
