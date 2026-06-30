@@ -4,8 +4,6 @@ on:
   push:
     tags:
       - "v*"
-    branches:
-      - main
     paths:
       - build/**
       - project/**
@@ -18,7 +16,7 @@ on:
       - Dockerfile
   pull_request:
     branches:
-      - main
+      - branch-*
     paths:
       - build/**
       - project/**

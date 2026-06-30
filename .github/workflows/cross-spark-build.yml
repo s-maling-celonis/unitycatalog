@@ -1,12 +1,12 @@
 name: "Cross-Spark Build"
 on:
   push:
-    branches: [main, branch-*]
+    branches: [ branch-* ]
     paths-ignore:
       - '**.md'
       - '**.txt'
   pull_request:
-    branches: [main, branch-*]
+    branches: [ branch-* ]
     paths-ignore:
       - '**.md'
       - '**.txt'
