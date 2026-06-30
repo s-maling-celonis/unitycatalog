@@ -25,8 +25,8 @@ jobs:
             project-path: connectors/spark
           - project: client
             project-path: clients/java
-#          - project: controlApi
-#            project-path: target/control/java
+          - project: controlApi
+            project-path: target/control/java
 
     steps:
       - name: Checkout Branch
