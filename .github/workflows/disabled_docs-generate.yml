@@ -3,8 +3,8 @@ name: Docs Generation Tests
 on:
     pull_request:
       types: [opened, synchronize, reopened]
-    push:
-      branches: [main]
+      branches-ignore:
+        - main
 
 jobs:
   docs-generate:

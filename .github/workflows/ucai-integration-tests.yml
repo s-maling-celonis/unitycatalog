@@ -3,11 +3,13 @@ name: Unity Catalog AI Databricks Integration Tests
 on:
   push:
     branches:
-      - main
+      - branch-*
     paths:
       - ai/integrations/**
       - .github/workflows/ucai-integration-tests.yml
   pull_request:
+    branches-ignore:
+      - main
     paths:
       - ai/integrations/**
       - .github/workflows/ucai-integration-tests.yml

@@ -1,11 +1,6 @@
 name: Build and Push Docker Images - unitycatalog-ui
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - ui/**
   workflow_dispatch: {}
 
 env:

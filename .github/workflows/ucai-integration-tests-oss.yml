@@ -3,12 +3,14 @@ name: Unity Catalog AI Integration Tests
 on:
   push:
     branches:
-      - main
+      - branch-*
     paths:
       - ai/**
       - .github/workflows/ucai-*.yml
       - clients/python/**
   pull_request:
+    branches-ignore:
+      - main
     paths:
       - ai/**
       - .github/workflows/ucai-*.yml

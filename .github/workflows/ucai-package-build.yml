@@ -3,11 +3,13 @@ name: Test package build
 on:
   push:
     branches:
-      - main
+      - branch-*
     paths:
       - ai/**
       - .github/workflows/ucai-*.yml
   pull_request:
+    branches-ignore:
+      - main
     paths:
       - ai/**
       - .github/workflows/ucai-*.yml
