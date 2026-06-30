@@ -2,6 +2,8 @@ name: (Celonis) Build and Push Docker Images - unitycatalog-ui
 
 on:
   push:
+    tags:
+      - 'v*'
     branches:
       - main
       - develop
@@ -11,7 +13,9 @@ on:
   workflow_dispatch: {}
 
 env:
-  IMAGE: ghcr.io/celonis/unitycatalog-ui
+  IMAGES: |
+    ghcr.io/celonis/celospark/unitycatalog-ui
+    652406827250.dkr.ecr.eu-central-1.amazonaws.com/celospark/unitycatalog-ui
 
 jobs:
   build-and-push:
@@ -35,9 +39,10 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.IMAGE }}
+          images: ${{ env.IMAGES }}
           tags: |
             type=ref,event=branch
+            type=ref,event=tag
             type=sha,enable=true,prefix={{branch}}-
 
       - name: GitHub Container Registry Login
@@ -47,6 +52,19 @@ jobs:
           registry: ghcr.io
           username: celobot
           password: ${{ secrets.CELOBOT_GITHUB_TOKEN }}
+
+      - name: Configure AWS credentials
+        if: github.event_name != 'pull_request'
+        uses: aws-actions/configure-aws-credentials@v4.2.1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: eu-central-1
+
+      - name: Login to Amazon ECR
+        if: github.event_name != 'pull_request'
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1.7.0
 
       - name: Build and Push Docker Image
         if: github.event_name != 'pull_request'
@@ -69,3 +87,15 @@ jobs:
           platforms: linux/amd64
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Logout of Amazon ECR
+        if: always() && github.event_name != 'pull_request'
+        run: docker logout ${{ steps.login-ecr.outputs.registry }}
+
+      - name: Generate and attest provenance
+        if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')
+        uses: celonis/sigstore-container-signing-action@master
+        with:
+          image-registry: 652406827250.dkr.ecr.eu-central-1.amazonaws.com
+          image-name: celonis/unitycatalog-ui
+          image-tag: ${{ steps.meta.outputs.tags }}
