@@ -1,0 +1,37 @@
+name: Run UC JaCoCo tests
+description: >-
+  Restore the shared UC build cache and run JaCoCo for one or more sbt projects.
+  The calling job must run actions/checkout first.
+
+inputs:
+  sbt-targets:
+    description: >-
+      Space-separated sbt targets, e.g. "server/jacoco" or
+      "serverModels/jacoco controlApi/jacoco".
+    required: true
+  spark-version:
+    description: Optional Spark version (-DsparkVersion) for connector tests.
+    required: false
+    default: ''
+  delta-version:
+    description: Optional Delta version (-DdeltaVersion) for connector tests.
+    required: false
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - name: Restore UC build cache
+      uses: ./.github/actions/restore-uc-build-cache
+
+    - name: Run tests with coverage
+      shell: bash
+      run: |
+        SPARK_ARGS=""
+        if [[ -n "${{ inputs.spark-version }}" ]]; then
+          SPARK_ARGS="-DsparkVersion=${{ inputs.spark-version }}"
+        fi
+        if [[ -n "${{ inputs.delta-version }}" ]]; then
+          SPARK_ARGS="$SPARK_ARGS -DdeltaVersion=${{ inputs.delta-version }}"
+        fi
+        build/sbt $SPARK_ARGS -J-Xmx2G ${{ inputs.sbt-targets }}
