@@ -1,0 +1,71 @@
+# Disabled: Celonis does not use automatic backporting to release branches.
+# To re-enable, rename to backport.yml, restore pull_request_target/issue_comment
+# triggers, and remove the job-level if: false guard (fix secrets-in-if if needed).
+#
+# How to use the Backport Action:
+#
+# Pre-merge: Add Labels
+# ----------------------
+# Before merging your PR, add backport labels in the format:
+#   - backport branch-0.3
+#   - backport branch-0.2
+#   - etc.
+# You can add multiple labels to backport to multiple branches.
+#
+# Post-merge: Automatic or Manual Trigger
+# ----------------------------------------
+# Automatic (recommended):
+#   - Once the PR is merged, the action runs automatically
+#   - Creates backport PRs for all branches specified in the labels
+#   - Each backport commit is signed-off with the original author's credentials
+#
+# Manual trigger (if needed):
+#   - Comment /backport on the merged PR
+#   - The action will process all backport labels on the PR
+#   - Useful if the automatic trigger failed or if you add labels after merging
+#
+# Result:
+#   - New PRs are created with title: [Backport {branch}] {original title}
+#   - Branches are named: backport-{pr-number}-to-{target-branch}
+#   - All commits include proper sign-off from the original author
+
+name: Backport merged pull request
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  backport:
+    if: false  # Disabled; remove this line and restore triggers in backport.yml to re-enable
+    runs-on: ubuntu-latest
+    name: Backport PR
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.BACKPORT_ACTION_TOKEN }}
+
+      - name: Create backport PRs
+        id: backport
+        uses: korthout/backport-action@v3
+        with:
+          github_token: ${{ secrets.BACKPORT_ACTION_TOKEN }}
+          label_pattern: '^backport ([^ ]+)$'
+          copy_requested_reviewers: true
+          pull_title: '[Backport ${target_branch}] ${pull_title}'
+          pull_description: |
+            Backport of #${pull_number} to `${target_branch}`.
+
+            ---
+
+            ${pull_description}
+          add_author_as_assignee: true
+          experimental: >
+            {
+              "conflict_resolution": "draft_commit_conflicts"
+            }
