@@ -1,0 +1,158 @@
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: unity-catalog
+  title: Unity Catalog
+  description: Unity Catalog backend server — REST API for catalog metadata, deployed as a container and published as a Maven artifact.
+  tags:
+    - java
+    - celospark
+    - unitycatalog
+  annotations:
+    github.com/project-slug: celonis/unitycatalog
+    backstage.io/techdocs-ref: dir:.
+    sonarqube.org/project-key: celonis_unitycatalog
+    repo-depot.celonis.dev/project-type: JAVA_MAVEN_CUSTOM
+    repo-depot.celonis.dev/image-name: celospark/unitycatalog
+    repo-depot.celonis.dev/dply-release-approval-team: Storium
+    repo-depot.celonis.dev/workflow-runner-release: runner=2cpu-linux-x64
+    # Uncomment when deployed via cfg-ibc / ArgoCD:
+    # argocd/app-selector: app=unity-catalog
+    # cd.celonis.dev/cfg-ibc-folder: unity-catalog
+spec:
+  type: service
+  lifecycle: experimental
+  owner: group:default/storium
+  tier: "2"
+
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: unity-catalog-ui
+  title: Unity Catalog UI
+  description: Web UI for Unity Catalog, deployed as a container image built from the ui/ directory.
+  tags:
+    - node
+    - celospark
+    - unitycatalog
+  annotations:
+    github.com/project-slug: celonis/unitycatalog
+    backstage.io/techdocs-ref: dir:./ui
+    sonarqube.org/project-key: celonis_unitycatalog
+    repo-depot.celonis.dev/project-type: CUSTOM
+    repo-depot.celonis.dev/image-name: celospark/unitycatalog-ui
+    repo-depot.celonis.dev/dply-release-approval-team: Storium
+    repo-depot.celonis.dev/workflow-runner-release: runner=2cpu-linux-x64
+    # Uncomment when deployed via cfg-ibc / ArgoCD:
+    # argocd/app-selector: app=unity-catalog-ui
+    # cd.celonis.dev/cfg-ibc-folder: unity-catalog-ui
+spec:
+  type: frontend
+  lifecycle: experimental
+  owner: group:default/storium
+  tier: "2"
+  dependsOn:
+    - component:default/unity-catalog
+
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: unitycatalog-client
+  title: Unity Catalog Java Client
+  description: Java client library for the Unity Catalog REST API (cloud.celonis:unitycatalog-client).
+  tags:
+    - java
+    - library
+    - unitycatalog
+  annotations:
+    github.com/project-slug: celonis/unitycatalog
+    backstage.io/techdocs-ref: dir:./clients/java
+    sonarqube.org/project-key: celonis_unitycatalog
+    repo-depot.celonis.dev/project-type: JAVA_MAVEN_CUSTOM
+    repo-depot.celonis.dev/dply-release-approval-team: Storium
+    repo-depot.celonis.dev/workflow-runner-release: runner=2cpu-linux-x64
+spec:
+  type: library
+  lifecycle: experimental
+  owner: group:default/storium
+  dependsOn:
+    - component:default/unity-catalog
+
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: unitycatalog-spark
+  title: Unity Catalog Spark Connector
+  description: Spark connector library for Unity Catalog (cloud.celonis:unitycatalog-spark_4.1_2.13).
+  tags:
+    - scala
+    - spark
+    - library
+    - unitycatalog
+  annotations:
+    github.com/project-slug: celonis/unitycatalog
+    backstage.io/techdocs-ref: dir:./connectors/spark
+    sonarqube.org/project-key: celonis_unitycatalog
+    repo-depot.celonis.dev/project-type: JAVA_MAVEN_CUSTOM
+    repo-depot.celonis.dev/dply-release-approval-team: Storium
+    repo-depot.celonis.dev/workflow-runner-release: runner=2cpu-linux-x64
+spec:
+  type: library
+  lifecycle: experimental
+  owner: group:default/storium
+  dependsOn:
+    - component:default/unitycatalog-client
+
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: unitycatalog-controlapi
+  title: Unity Catalog Control API
+  description: Generated Java client for the Unity Catalog control plane API (cloud.celonis:unitycatalog-controlapi).
+  tags:
+    - java
+    - library
+    - unitycatalog
+  annotations:
+    github.com/project-slug: celonis/unitycatalog
+    backstage.io/techdocs-ref: dir:./target/control/java
+    sonarqube.org/project-key: celonis_unitycatalog
+    repo-depot.celonis.dev/project-type: JAVA_MAVEN_CUSTOM
+    repo-depot.celonis.dev/dply-release-approval-team: Storium
+    repo-depot.celonis.dev/workflow-runner-release: runner=2cpu-linux-x64
+spec:
+  type: library
+  lifecycle: experimental
+  owner: group:default/storium
+  dependsOn:
+    - component:default/unity-catalog
+
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: unitycatalog-hadoop
+  title: Unity Catalog Hadoop Connector
+  description: Hadoop filesystem connector library for Unity Catalog (cloud.celonis:unitycatalog-hadoop). Not yet published by CI — include when added to celonis-build.yml.
+  tags:
+    - java
+    - hadoop
+    - library
+    - unitycatalog
+  annotations:
+    github.com/project-slug: celonis/unitycatalog
+    backstage.io/techdocs-ref: dir:./connectors/hadoop
+    sonarqube.org/project-key: celonis_unitycatalog
+    repo-depot.celonis.dev/project-type: JAVA_MAVEN_CUSTOM
+    repo-depot.celonis.dev/dply-release-approval-team: Storium
+    repo-depot.celonis.dev/workflow-runner-release: runner=2cpu-linux-x64
+spec:
+  type: library
+  lifecycle: experimental
+  owner: group:default/storium
+  dependsOn:
+    - component:default/unitycatalog-client
