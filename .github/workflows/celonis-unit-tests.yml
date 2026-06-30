@@ -3,7 +3,7 @@
 # separate terms of service, privacy policy, and support
 # documentation.
 
-name: Unit Tests
+name: (Celonis) Unit Tests
 
 on:
   push:
@@ -61,7 +61,11 @@ jobs:
 
     steps:
       # Local composite actions require checkout before uses: ./.github/actions/...
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - name: Checkout Branch
+        uses: actions/checkout@v4.1.2
+        with:
+          ref: ${{ github.ref }}
+          token: ${{ secrets.CELOBOT_GITHUB_TOKEN }}
       - name: Run UC unit tests
         uses: ./.github/actions/run-uc-unit-tests
         with:

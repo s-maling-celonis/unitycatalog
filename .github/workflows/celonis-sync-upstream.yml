@@ -1,0 +1,158 @@
+name: (Celonis) Sync from Upstream
+
+on:
+  # Run manually when needed
+  workflow_dispatch:
+    inputs:
+      upstream_branch:
+        description: 'Upstream branch to sync from'
+        required: true
+        default: 'main'
+        type: string
+      target_branch:
+        description: 'Target branch to sync to'
+        required: true
+        default: 'main'
+        type: string
+
+env:
+  UPSTREAM_REPO: 'https://github.com/unitycatalog/unitycatalog.git'
+
+jobs:
+  sync-upstream:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4.1.2
+        with:
+          ref: ${{ inputs.target_branch || 'main' }}
+          token: ${{ secrets.CELOBOT_GITHUB_TOKEN }}
+          fetch-depth: 0  # Fetch full history for proper rebasing
+
+      - name: Configure Git
+        run: |
+          git config user.name "celobot"
+          git config user.email "celobot@celonis.com"
+
+      - name: Add Upstream Remote
+        run: |
+          git remote add upstream ${{ env.UPSTREAM_REPO }} || git remote set-url upstream ${{ env.UPSTREAM_REPO }}
+          git remote -v
+
+      - name: Fetch Upstream Changes
+        run: |
+          git fetch upstream ${{ inputs.upstream_branch || 'main' }}
+
+      - name: Rebase onto Upstream
+        id: rebase
+        run: |
+          UPSTREAM_BRANCH=${{ inputs.upstream_branch || 'main' }}
+          TARGET_BRANCH=${{ inputs.target_branch || 'main' }}
+          
+          echo "Rebasing ${TARGET_BRANCH} onto upstream/${UPSTREAM_BRANCH}..."
+          
+          # Attempt to rebase
+          if git rebase upstream/${UPSTREAM_BRANCH}; then
+            echo "Rebase successful"
+            echo "rebase_status=success" >> $GITHUB_OUTPUT
+          else
+            echo "Rebase failed with conflicts"
+            echo "rebase_status=failed" >> $GITHUB_OUTPUT
+            
+            # Abort the rebase
+            git rebase --abort
+            
+            # List conflicting files for the summary
+            git diff --name-only HEAD upstream/${UPSTREAM_BRANCH} > /tmp/diff_files.txt || true
+            
+            exit 1
+          fi
+
+      - name: Push Rebased Changes
+        if: steps.rebase.outputs.rebase_status == 'success'
+        run: |
+          TARGET_BRANCH=${{ inputs.target_branch || 'main' }}
+          
+          # Force push with lease to ensure we don't overwrite unexpected changes
+          git push origin ${TARGET_BRANCH} --force-with-lease
+
+      - name: Create Issue on Rebase Failure
+        if: failure() && steps.rebase.outputs.rebase_status == 'failed'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.CELOBOT_GITHUB_TOKEN }}
+          script: |
+            const upstreamBranch = '${{ inputs.upstream_branch || 'main' }}';
+            const targetBranch = '${{ inputs.target_branch || 'main' }}';
+            
+            const issue = await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `[Sync] Failed to rebase ${targetBranch} onto upstream/${upstreamBranch}`,
+              body: `## Upstream Sync Failed
+            
+            The automated rebase of \`${targetBranch}\` onto \`upstream/${upstreamBranch}\` has failed due to conflicts.
+            
+            **Workflow Run:** ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}
+            
+            ### Manual Resolution Required
+            
+            Please manually resolve the conflicts by following these steps:
+            
+            \`\`\`bash
+            # Clone the repository
+            git clone https://github.com/${context.repo.owner}/${context.repo.repo}.git
+            cd ${context.repo.repo}
+            
+            # Add upstream remote
+            git remote add upstream ${process.env.UPSTREAM_REPO}
+            
+            # Fetch upstream changes
+            git fetch upstream ${upstreamBranch}
+            
+            # Checkout target branch
+            git checkout ${targetBranch}
+            
+            # Attempt rebase
+            git rebase upstream/${upstreamBranch}
+            
+            # Resolve conflicts in the files git indicates
+            # After resolving each file:
+            git add <resolved-file>
+            git rebase --continue
+            
+            # Once all conflicts are resolved, force push
+            git push origin ${targetBranch} --force-with-lease
+            \`\`\`
+            
+            ### Triggered By
+            - **Actor:** ${context.actor}
+            - **Event:** ${context.eventName}
+            - **Date:** ${new Date().toISOString()}
+            `,
+              labels: ['sync', 'upstream', 'needs-attention']
+            });
+            
+            console.log(`Created issue #${issue.data.number}`);
+
+      - name: Generate Summary
+        if: always()
+        run: |
+          echo "## Upstream Sync Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Upstream Repository:** ${{ env.UPSTREAM_REPO }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Upstream Branch:** ${{ inputs.upstream_branch || 'main' }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Target Branch:** ${{ inputs.target_branch || 'main' }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "${{ steps.rebase.outputs.rebase_status }}" == "success" ]; then
+            echo "✅ **Status:** Rebase successful and changes pushed" >> $GITHUB_STEP_SUMMARY
+          elif [ "${{ steps.rebase.outputs.rebase_status }}" == "failed" ]; then
+            echo "❌ **Status:** Rebase failed due to conflicts" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "An issue has been created for manual resolution." >> $GITHUB_STEP_SUMMARY
+          else
+            echo "⚠️ **Status:** Workflow did not complete" >> $GITHUB_STEP_SUMMARY
+          fi
+

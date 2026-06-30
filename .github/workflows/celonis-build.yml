@@ -1,0 +1,86 @@
+name: (Celonis) Build and Publish Artifacts
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+    branches:
+      - develop
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    strategy:
+      matrix:
+        include:
+          - project: server
+            project-path: server
+          - project: spark
+            project-path: connectors/spark
+          - project: client
+            project-path: clients/java
+#          - project: controlApi
+#            project-path: target/control/java
+
+    steps:
+      - name: Checkout Branch
+        uses: actions/checkout@v4.1.2
+        with:
+          ref: ${{ github.ref }}
+          token: ${{ secrets.CELOBOT_GITHUB_TOKEN }}
+
+      - name: Setup Java
+        uses: celonis/core-setup-java-action@v4.0.2
+        with:
+          use-cache: 'false'
+          maven-version: '3.9.16'
+
+      - name: Build with sbt
+        run: |
+          build/sbt ${{ matrix.project }}/package ${{ matrix.project }}/makePom
+          sed -i 's#git@github.com:unitycatalog/unitycatalog.git#git@github.com:celonis/unitycatalog.git#g' $(find ${{ matrix.project-path }} -name '*.pom')
+          sed -i 's#<groupId>io.unitycatalog</groupId>#<groupId>cloud.celonis</groupId>#g' $(find ${{ matrix.project-path }} -name '*.pom') 
+
+      - name: Find artifacts
+        run: |
+          POM_FILE=""
+          while IFS= read -r pom; do
+            jar="${pom%.pom}.jar"
+            if [ -f "$jar" ]; then
+              POM_FILE="$pom"
+              break
+            fi
+          done < <(find ${{ matrix.project-path }}/target -name '*.pom' ! -path '*/streams/*' | sort)
+          JAR_FILE="${POM_FILE%.pom}.jar"
+          if [ -z "$POM_FILE" ] || [ ! -f "$JAR_FILE" ]; then
+            echo "Artifact not found. POM: $POM_FILE JAR: $JAR_FILE"
+            find ${{ matrix.project-path }}/target \( -name '*.pom' -o -name '*.jar' \) | head -30
+            exit 1
+          fi
+          echo "POM_FILE=${POM_FILE}" >> "$GITHUB_ENV"
+          echo "JAR_FILE=${JAR_FILE}" >> "$GITHUB_ENV"
+
+      - name: Show artifact paths
+        run: |
+          echo "Publishing project: ${{ matrix.project }}"
+          echo "POM path: ${{ env.POM_FILE }}"
+          echo "JAR path: ${{ env.JAR_FILE }}"
+
+      - name: Publish to GitHub Packages
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
+        env:
+          GITHUB_ACTOR: celobot
+          GITHUB_TOKEN: ${{ secrets.CELOBOT_GITHUB_TOKEN }}
+          MAVEN_OPTS: -XX:+TieredCompilation -XX:TieredStopAtLevel=1 -XX:+UseG1GC -Xmx16g -XX:-UseGCOverheadLimit
+        run: |
+          mvn deploy:deploy-file -e \
+            -Dfile=${{ env.JAR_FILE }} \
+            -DrepositoryId=github \
+            -Durl=https://maven.pkg.github.com/celonis/maven-internal/ \
+            -DpomFile=${{ env.POM_FILE }}
