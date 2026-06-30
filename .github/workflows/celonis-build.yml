@@ -46,7 +46,6 @@ jobs:
           build/sbt ${{ matrix.project }}/package ${{ matrix.project }}/makePom
           sed -i 's#git@github.com:unitycatalog/unitycatalog.git#git@github.com:celonis/unitycatalog.git#g' $(find ${{ matrix.project-path }} -name '*.pom')
           sed -i 's#<groupId>io.unitycatalog</groupId>#<groupId>cloud.celonis</groupId>#g' $(find ${{ matrix.project-path }} -name '*.pom')
-          sed -i 's#<packaging>pom</packaging>#<packaging>jar</packaging>#g' $(find ${{ matrix.project-path }} -name '*.pom')
 
       - name: Find artifacts
         run: |
@@ -82,7 +81,6 @@ jobs:
         run: |
           mvn deploy:deploy-file -e \
             -Dfile=${{ env.JAR_FILE }} \
-            -Dpackaging=jar \
             -DrepositoryId=github \
             -Durl=https://maven.pkg.github.com/celonis/maven-internal/ \
             -DpomFile=${{ env.POM_FILE }}
