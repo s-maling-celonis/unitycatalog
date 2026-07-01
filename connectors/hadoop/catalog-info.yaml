@@ -19,5 +19,3 @@ spec:
   type: library
   lifecycle: experimental
   owner: storium
-  dependsOn:
-    - component:default/unitycatalog-client

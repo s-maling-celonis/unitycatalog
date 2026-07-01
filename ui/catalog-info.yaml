@@ -20,5 +20,3 @@ spec:
   lifecycle: experimental
   owner: storium
   tier: "2"
-  dependsOn:
-    - component:default/unity-catalog
