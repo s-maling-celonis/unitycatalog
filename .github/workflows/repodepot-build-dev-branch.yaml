@@ -13,6 +13,13 @@ on:
       - '.claude/**'
       - '.cursor/**'
       - '.mirrord/**'
+      - 'docs/**'
+      - 'mkdocs.yml'
+      - '**.md'
+      - 'ai/**'
+      - 'examples/**'
+      - 'integration-tests/**'
+      - 'tests/**'
 
   workflow_dispatch:
     inputs:
