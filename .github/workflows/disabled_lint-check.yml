@@ -1,13 +1,14 @@
+# Disabled: Duplicate of celonis-lint-check.
+# Re-enable: rename to lint-check.yml, restore on: triggers, remove if: false from jobs.
+
 name: Code Format Check
 
 on:
-  push:
-    branches: [ "main", "develop" ]
-  pull_request:
-    branches: [ "main", "develop" ]
+  workflow_dispatch:
 
 jobs:
   lint:
+    if: false
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -26,6 +27,7 @@ jobs:
           (cd ui && yarn install --frozen-lockfile && yarn test:format)
 
   java-fmt:
+    if: false
     runs-on: ubuntu-latest
     permissions:
       contents: read

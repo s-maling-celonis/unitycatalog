@@ -1,20 +1,17 @@
+# Disabled: Duplicate of celonis-ucai-core-tests.
+# Re-enable: rename to ucai-core-tests.yml, restore on: triggers, remove if: false from jobs.
+
 name: UCAI Core Tests
 
 on:
-  push:
-    branches:
-      - main
-      - develop
-  pull_request:
-    branches:
-      - main
-      - develop
+  workflow_dispatch:
 
 env:
   UV_EXCLUDE_NEWER: "2026-03-10T00:00:00Z"
 
 jobs:
   lint:
+    if: false
     runs-on: ubuntu-latest
     timeout-minutes: 10
     defaults:
@@ -40,6 +37,7 @@ jobs:
         run: yamllint .
 
   core_tests:
+    if: false
     runs-on: ubuntu-latest
     strategy:
       matrix:
