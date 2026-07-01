@@ -1,4 +1,4 @@
-name: (Celonis) Build and Push Docker Images - unitycatalog
+name: (Celonis) Build and Push Docker Images - unitycatalog-server
 
 on:
   push:
@@ -14,8 +14,8 @@ on:
 
 env:
   IMAGES: |
-    ghcr.io/celonis/celospark/unitycatalog
-    652406827250.dkr.ecr.eu-central-1.amazonaws.com/celospark/unitycatalog
+    ghcr.io/celonis/celospark/unitycatalog-server
+    652406827250.dkr.ecr.eu-central-1.amazonaws.com/celospark/unitycatalog-server
 
 jobs:
   build-and-push:
@@ -96,5 +96,5 @@ jobs:
         uses: celonis/sigstore-container-signing-action@master
         with:
           image-registry: 652406827250.dkr.ecr.eu-central-1.amazonaws.com
-          image-name: celonis/unitycatalog
+          image-name: celonis/unitycatalog-server
           image-tag: ${{ steps.meta.outputs.tags }}
