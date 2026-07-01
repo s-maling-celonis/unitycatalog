@@ -3,7 +3,7 @@ kind: Component
 metadata:
   name: unitycatalog-hadoop
   title: Unity Catalog Hadoop Connector
-  description: Hadoop filesystem connector library for Unity Catalog (cloud.celonis:unitycatalog-hadoop). Not yet published by CI — include when added to celonis-build.yml.
+  description: Hadoop filesystem connector library for Unity Catalog (cloud.celonis:unitycatalog-hadoop).
   tags:
     - java
     - hadoop

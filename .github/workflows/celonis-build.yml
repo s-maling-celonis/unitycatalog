@@ -1,10 +1,9 @@
 name: (Celonis) Build and Publish Artifacts
 
+# Push builds and Maven publishing are handled by Repo Depot
+# (repodepot-build-dev-branch / repodepot-create-release-candidate).
+# This workflow validates artifact builds on pull requests only.
 on:
-  push:
-    branches:
-      - main
-      - develop
   pull_request:
     branches:
       - develop
@@ -14,7 +13,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      packages: write
 
     strategy:
       matrix:
@@ -27,6 +25,8 @@ jobs:
             project-path: clients/java
           - project: controlApi
             project-path: target/control/java
+          - project: hadoop
+            project-path: connectors/hadoop
 
     steps:
       - name: Checkout Branch
@@ -68,19 +68,6 @@ jobs:
 
       - name: Show artifact paths
         run: |
-          echo "Publishing project: ${{ matrix.project }}"
+          echo "Validated project: ${{ matrix.project }}"
           echo "POM path: ${{ env.POM_FILE }}"
           echo "JAR path: ${{ env.JAR_FILE }}"
-
-      - name: Publish to GitHub Packages
-        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
-        env:
-          GITHUB_ACTOR: celobot
-          GITHUB_TOKEN: ${{ secrets.CELOBOT_GITHUB_TOKEN }}
-          MAVEN_OPTS: -XX:+TieredCompilation -XX:TieredStopAtLevel=1 -XX:+UseG1GC -Xmx16g -XX:-UseGCOverheadLimit
-        run: |
-          mvn deploy:deploy-file -e \
-            -Dfile=${{ env.JAR_FILE }} \
-            -DrepositoryId=github \
-            -Durl=https://maven.pkg.github.com/celonis/maven-internal/ \
-            -DpomFile=${{ env.POM_FILE }}
