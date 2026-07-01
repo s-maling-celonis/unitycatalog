@@ -1,14 +1,14 @@
+# Disabled: Server Docker build and push are handled by Repo Depot.
+# Re-enable: rename to celonis-docker-build.yml, restore on: triggers, remove if: false from jobs.
+
 name: (Celonis) Build and Push Docker Images - unitycatalog-server
 
-# Image build and push on develop/release branches are handled by Repo Depot.
-# This workflow validates the server Docker build on pull requests to develop only.
 on:
-  pull_request:
-    branches:
-      - develop
+  workflow_dispatch:
 
 jobs:
   build:
+    if: false
     runs-on: ubuntu-latest
 
     steps:

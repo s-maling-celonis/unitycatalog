@@ -1,15 +1,14 @@
+# Disabled: Build and Maven publish are handled by Repo Depot; PR compile coverage is in celonis-unit-tests.
+# Re-enable: rename to celonis-build.yml, restore on: triggers, remove if: false from jobs.
+
 name: (Celonis) Build and Publish Artifacts
 
-# Push builds and Maven publishing are handled by Repo Depot
-# (repodepot-build-dev-branch / repodepot-create-release-candidate).
-# This workflow validates artifact builds on pull requests only.
 on:
-  pull_request:
-    branches:
-      - develop
+  workflow_dispatch:
 
 jobs:
   build:
+    if: false
     runs-on: ubuntu-latest
     permissions:
       contents: read
