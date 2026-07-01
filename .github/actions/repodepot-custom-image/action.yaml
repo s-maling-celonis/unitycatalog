@@ -232,7 +232,7 @@ runs:
       id: create-image
       uses: docker/build-push-action@v6
       with:
-        context: ${{ steps.component.outputs.docker-context }}
+        context: ${{ format('{0}/{1}', inputs.working-directory, steps.component.outputs.docker-context) }}
         push: true
         platforms: linux/amd64,linux/arm64
         tags: ${{ inputs.image-registry }}/${{ inputs.image-name }}:${{ inputs.image-tag }}
