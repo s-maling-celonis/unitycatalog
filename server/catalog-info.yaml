@@ -11,7 +11,7 @@ metadata:
   annotations:
     github.com/project-slug: celonis/unitycatalog
     sonarqube.org/project-key: celonis_unitycatalog_server
-    repo-depot.celonis.dev/project-type: JAVA_MAVEN_CUSTOM
+    repo-depot.celonis.dev/project-type: CUSTOM
     repo-depot.celonis.dev/image-name: celospark/unitycatalog-server
     repo-depot.celonis.dev/dply-release-approval-team: Storium
     repo-depot.celonis.dev/workflow-runner-release: runner=2cpu-linux-x64

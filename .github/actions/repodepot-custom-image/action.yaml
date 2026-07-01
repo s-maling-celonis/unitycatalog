@@ -117,7 +117,7 @@ runs:
       with:
         node-version: '18'
         cache: yarn
-        cache-dependency-path: ui/yarn.lock
+        cache-dependency-path: ${{ inputs.working-directory }}/ui/yarn.lock
 
     - name: Build
       id: build
