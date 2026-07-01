@@ -15,6 +15,7 @@ metadata:
     repo-depot.celonis.dev/image-name: celospark/unitycatalog-ui
     repo-depot.celonis.dev/dply-release-approval-team: Storium
     repo-depot.celonis.dev/workflow-runner-release: runner=2cpu-linux-x64
+    repo-depot.celonis.dev/deploy-strategy: kargo
 spec:
   type: frontend
   lifecycle: experimental
