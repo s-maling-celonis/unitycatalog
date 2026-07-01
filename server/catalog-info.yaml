@@ -10,7 +10,6 @@ metadata:
     - unitycatalog
   annotations:
     github.com/project-slug: celonis/unitycatalog
-    argocd/app-selector: app=celospark
     sonarqube.org/project-key: celonis_unitycatalog_server
     repo-depot.celonis.dev/project-type: CUSTOM
     repo-depot.celonis.dev/image-name: celospark/unitycatalog-server
