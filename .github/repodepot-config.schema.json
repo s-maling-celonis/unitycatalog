@@ -1,0 +1,38 @@
+{
+  "$schema": "http://json-schema.org/draft-04/schema#",
+  "id": "https://celonis.dev/schemas/repodepot-config.schema.json",
+  "title": "Repo Depot Service-level Configuration",
+  "description": "Defines service-level configuration for various build/release workflows run as a part of Repo Depot.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "workflows": {
+      "type": "object",
+      "description": "Container of Build/Release workflows and their associated configurations.",
+      "additionalProperties": false,
+      "properties": {
+        "build-dev-branch": {
+          "$ref": "#/definitions/BuildDevBranch"
+        }
+      }
+    }
+  },
+  "definitions": {
+    "BuildDevBranch": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "paths-ignore": {
+          "type": "array",
+          "description": "Path patterns to exclude from the build-dev-branch workflow trigger (uses GitHub glob syntax).",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[^\\s]+$"
+          },
+          "uniqueItems": true
+        }
+      }
+    }
+  }
+}
