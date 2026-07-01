@@ -1,16 +1,17 @@
+# Disabled: Duplicate of celonis-python-client-tests.
+# Re-enable: rename to python-client-tests.yml, restore on: triggers, remove if: false from jobs.
+
 name: Python Client Tests
 
 on:
-  push:
-    branches: [ "main", "develop", "branch-*" ]
-  pull_request:
-    branches: [ "main", "develop", "branch-*" ]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
   test:
+    if: false
     runs-on: ubuntu-latest
 
     steps:

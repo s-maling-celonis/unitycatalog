@@ -1,14 +1,10 @@
+# Disabled: Duplicate of celonis-ucai-integration-tests.
+# Re-enable: rename to ucai-integration-tests.yml, restore on: triggers, remove if: false from jobs.
+
 name: Unity Catalog AI Databricks Integration Tests
 
 on:
-  push:
-    branches:
-      - main
-      - develop
-  pull_request:
-    branches:
-      - main
-      - develop
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -18,7 +14,7 @@ env:
 
 jobs:
   crewai_test:
-
+    if: false
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -44,7 +40,7 @@ jobs:
           uv run pytest tests --ignore=tests/test_crewai_toolkit_oss.py
 
   langchain_test:
-
+    if: false
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -70,7 +66,7 @@ jobs:
           uv run pytest tests --ignore=tests/test_langchain_toolkit_oss.py
 
   anthropic_test:
-
+    if: false
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -96,7 +92,7 @@ jobs:
           uv run pytest tests --ignore=tests/test_anthropic_toolkit_oss.py
 
   llamaindex_test:
-
+    if: false
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -122,7 +118,7 @@ jobs:
           uv run pytest tests --ignore=tests/test_llama_index_toolkit_oss.py
 
   openai_test:
-
+    if: false
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -148,7 +144,7 @@ jobs:
           uv run pytest tests --ignore=tests/test_openai_toolkit_oss.py
 
   autogen_test:
-
+    if: false
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -174,7 +170,7 @@ jobs:
           uv run pytest tests --ignore=tests/test_autogen_toolkit_oss.py
 
   gemini_test:
-
+    if: false
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -200,7 +196,7 @@ jobs:
           uv run pytest tests --ignore=tests/test_gemini_toolkit_oss.py
 
   litellm_test:
-
+    if: false
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -226,7 +222,7 @@ jobs:
           uv run pytest tests --ignore=tests/test_litellm_toolkit_oss.py
 
   dspy_test:
-
+    if: false
     runs-on: ubuntu-latest
     strategy:
       matrix:

@@ -1,21 +1,17 @@
+# Disabled: Duplicate of celonis-ucai-integration-tests-oss.
+# Re-enable: rename to ucai-integration-tests-oss.yml, restore on: triggers, remove if: false from jobs.
+
 name: Unity Catalog AI Integration Tests
 
 on:
-  push:
-    branches:
-      - main
-      - develop
-  pull_request:
-    branches:
-      - main
-      - develop
+  workflow_dispatch:
 
 env:
   UV_EXCLUDE_NEWER: "2026-03-10T00:00:00Z"
 
 jobs:
   integration_tests:
-
+    if: false
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -68,17 +64,10 @@ jobs:
           fi
           uv run pytest tests/test_anthropic_toolkit_oss.py
       - name: Run AutoGen OSS Integration Tests
-
         working-directory: ai/integrations/autogen
         run: |
           uv sync --extra dev
           uv run pytest tests/test_autogen_toolkit_oss.py
-      # TODO: re-enable after Python 3.11 is supported in the executor (fork+asyncio issue)
-      # - name: Run CrewAI OSS Integration Tests
-      #   working-directory: ai/integrations/crewai
-      #   run: |
-      #     uv sync --extra dev
-      #     uv run pytest tests/test_crewai_toolkit_oss.py
       - name: Run Gemini OSS Integration Tests
         working-directory: ai/integrations/gemini
         run: |
@@ -88,19 +77,16 @@ jobs:
           fi
           uv run pytest tests/test_gemini_toolkit_oss.py
       - name: Run LiteLLM OSS Integration Tests
-
         working-directory: ai/integrations/litellm
         run: |
           uv sync --extra dev
           uv run pytest tests/test_litellm_toolkit_oss.py
       - name: Run Dspy OSS Integration Tests
-
         working-directory: ai/integrations/dspy
         run: |
           uv sync --extra dev
           uv run pytest tests/test_dspy_toolkit_oss.py
       - name: Run LlamaIndex OSS Integration Tests
-
         working-directory: ai/integrations/llama_index
         run: |
           uv sync --extra dev

@@ -1,21 +1,17 @@
+# Disabled: Duplicate of celonis-ucai-package-build.
+# Re-enable: rename to ucai-package-build.yml, restore on: triggers, remove if: false from jobs.
+
 name: Test package build
 
 on:
-  push:
-    branches:
-      - main
-      - develop
-  pull_request:
-    branches:
-      - main
-      - develop
+  workflow_dispatch:
 
 env:
   UV_EXCLUDE_NEWER: "2026-03-10T00:00:00Z"
 
 jobs:
   build:
-
+    if: false
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -37,9 +33,7 @@ jobs:
         id: build-dist
         run: |
           uv build
-          # List distribution files and check their file sizes
           ls -lh dist
-          # Set step outputs
           sdist_path=$(find dist -type f -name "*.tar.gz")
           wheel_path=$(find dist -type f -name "*.whl")
           wheel_name=$(basename "$wheel_path")
@@ -60,13 +54,13 @@ jobs:
         env:
           SDIST_PATH: ${{ steps.build-dist.outputs.sdist-path }}
         run: |
-          unset UV_EXCLUDE_NEWER  # locally built artifact, not from PyPI
+          unset UV_EXCLUDE_NEWER
           uv pip install --system "$SDIST_PATH"
           python -c "import unitycatalog.ai.core; print(unitycatalog.ai.core.__version__)"
       - name: Test installation from wheel
         env:
           WHEEL_PATH: ${{ steps.build-dist.outputs.wheel-path }}
         run: |
-          unset UV_EXCLUDE_NEWER  # locally built artifact, not from PyPI
+          unset UV_EXCLUDE_NEWER
           uv pip install --system --reinstall "$WHEEL_PATH"
           python -c "import unitycatalog.ai.core; print(unitycatalog.ai.core.__version__)"
