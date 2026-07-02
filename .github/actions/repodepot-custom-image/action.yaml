@@ -219,6 +219,12 @@ runs:
 
         echo "status=true" >> "$GITHUB_OUTPUT"
 
+    - name: Restore Node for repo-depot tooling
+      if: inputs.component-name == 'unity-catalog-ui'
+      uses: actions/setup-node@v5
+      with:
+        node-version-file: tooling/package.json
+
     - name: Set up QEMU
       if: steps.component.outputs.needs-image == 'true'
       uses: docker/setup-qemu-action@v3
