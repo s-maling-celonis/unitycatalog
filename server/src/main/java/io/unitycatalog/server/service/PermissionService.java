@@ -11,6 +11,7 @@ import static io.unitycatalog.server.model.SecurableType.TABLE;
 import static io.unitycatalog.server.model.SecurableType.VOLUME;
 
 import io.unitycatalog.control.model.User;
+import io.unitycatalog.server.auth.AuthorizeExpressions;
 import io.unitycatalog.server.auth.UnityCatalogAuthorizer;
 import io.unitycatalog.server.auth.annotation.AuthorizeExpression;
 import io.unitycatalog.server.auth.annotation.AuthorizeResourceKey;
@@ -33,7 +34,6 @@ import io.unitycatalog.server.persist.Repositories;
 import io.unitycatalog.server.persist.SchemaRepository;
 import io.unitycatalog.server.persist.TableRepository;
 import io.unitycatalog.server.persist.UserRepository;
-import io.unitycatalog.server.persist.ViewRepository;
 import io.unitycatalog.server.persist.VolumeRepository;
 import io.unitycatalog.server.persist.model.Privileges;
 import java.util.HashSet;
@@ -59,7 +59,6 @@ public class PermissionService {
   private final CatalogRepository catalogRepository;
   private final SchemaRepository schemaRepository;
   private final TableRepository tableRepository;
-  private final ViewRepository viewRepository;
   private final FunctionRepository functionRepository;
   private final VolumeRepository volumeRepository;
   private final ModelRepository modelRepository;
@@ -73,7 +72,6 @@ public class PermissionService {
     this.catalogRepository = repositories.getCatalogRepository();
     this.schemaRepository = repositories.getSchemaRepository();
     this.tableRepository = repositories.getTableRepository();
-    this.viewRepository = repositories.getViewRepository();
     this.functionRepository = repositories.getFunctionRepository();
     this.volumeRepository = repositories.getVolumeRepository();
     this.modelRepository = repositories.getModelRepository();
@@ -83,54 +81,65 @@ public class PermissionService {
 
   // TODO: Refactor these endpoints to use a common method with dynamic resource id lookup
   @Get("/metastore/{name}")
+  @AuthorizeExpression(AuthorizeExpressions.GET_RESOURCE_AUTHORIZATION)
   public HttpResponse getMetastoreAuthorization(
       @Param("name") String name) {
     return getAuthorization(METASTORE, name);
   }
 
   @Get("/catalog/{name}")
+  @AuthorizeExpression(AuthorizeExpressions.GET_RESOURCE_AUTHORIZATION)
   public HttpResponse getCatalogAuthorization(
       @Param("name") String name) {
     return getAuthorization(CATALOG, name);
   }
 
   @Get("/schema/{name}")
+  @AuthorizeExpression(AuthorizeExpressions.GET_RESOURCE_AUTHORIZATION)
   public HttpResponse getSchemaAuthorization(
       @Param("name") String name) {
     return getAuthorization(SCHEMA, name);
   }
 
   @Get("/table/{name}")
+  @AuthorizeExpression(AuthorizeExpressions.GET_RESOURCE_AUTHORIZATION)
   public HttpResponse getTableAuthorization(
       @Param("name") String name) {
     return getAuthorization(TABLE, name);
   }
 
   @Get("/function/{name}")
+  @AuthorizeExpression(AuthorizeExpressions.GET_RESOURCE_AUTHORIZATION)
   public HttpResponse getFunctionAuthorization(
       @Param("name") String name) {
     return getAuthorization(FUNCTION, name);
   }
 
   @Get("/volume/{name}")
+  @AuthorizeExpression(AuthorizeExpressions.GET_RESOURCE_AUTHORIZATION)
   public HttpResponse getVolumeAuthorization(
       @Param("name") String name) {
     return getAuthorization(VOLUME, name);
   }
 
   @Get("/registered_model/{name}")
+  @AuthorizeExpression(AuthorizeExpressions.GET_RESOURCE_AUTHORIZATION)
   public HttpResponse getRegisteredModelAuthorization(
       @Param("name") String name) {
     return getAuthorization(REGISTERED_MODEL, name);
   }
 
   @Get("/external_location/{name}")
-  public HttpResponse getExternalLocationAuthorization(@Param("name") String name) {
+  @AuthorizeExpression(AuthorizeExpressions.GET_RESOURCE_AUTHORIZATION)
+  public HttpResponse getExternalLocationAuthorization(
+      @Param("name") String name) {
     return getAuthorization(EXTERNAL_LOCATION, name);
   }
 
   @Get("/credential/{name}")
-  public HttpResponse getCredentialAuthorization(@Param("name") String name) {
+  @AuthorizeExpression(AuthorizeExpressions.GET_RESOURCE_AUTHORIZATION)
+  public HttpResponse getCredentialAuthorization(
+      @Param("name") String name) {
     return getAuthorization(CREDENTIAL, name);
   }
 
@@ -345,7 +354,6 @@ public class PermissionService {
       case CATALOG -> catalogRepository.getCatalog(name).getId();
       case SCHEMA -> schemaRepository.getSchema(name).getSchemaId();
       case TABLE -> tableRepository.getTable(name).getTableId();
-      case VIEW -> viewRepository.getView(name).getViewId();
       case FUNCTION -> functionRepository.getFunction(name).getFunctionId();
       case VOLUME -> volumeRepository.getVolume(name).getVolumeId();
       case REGISTERED_MODEL -> modelRepository.getRegisteredModel(name).getId();

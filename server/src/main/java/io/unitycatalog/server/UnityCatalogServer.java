@@ -47,7 +47,6 @@ import io.unitycatalog.server.service.TemporaryModelVersionCredentialsService;
 import io.unitycatalog.server.service.TemporaryPathCredentialsService;
 import io.unitycatalog.server.service.TemporaryTableCredentialsService;
 import io.unitycatalog.server.service.TemporaryVolumeCredentialsService;
-import io.unitycatalog.server.service.ViewService;
 import io.unitycatalog.server.service.VolumeService;
 import io.unitycatalog.server.service.credential.CloudCredentialVendor;
 import io.unitycatalog.server.service.credential.StorageCredentialVendor;
@@ -179,7 +178,6 @@ public class UnityCatalogServer {
     SchemaService schemaService = new SchemaService(authorizer, repositories, serverProperties);
     VolumeService volumeService = new VolumeService(authorizer, repositories, serverProperties);
     TableService tableService = new TableService(authorizer, repositories, serverProperties);
-    ViewService viewService = new ViewService(authorizer, repositories, serverProperties);
     StagingTableService stagingTableService =
         new StagingTableService(authorizer, repositories, serverProperties);
     FunctionService functionService =
@@ -232,7 +230,6 @@ public class UnityCatalogServer {
         .annotatedService(BASE_PATH + "schemas", schemaService, requestConverterFunction)
         .annotatedService(BASE_PATH + "volumes", volumeService, requestConverterFunction)
         .annotatedService(BASE_PATH + "tables", tableService, requestConverterFunction)
-        .annotatedService(BASE_PATH + "views", viewService, requestConverterFunction)
         .annotatedService(
             BASE_PATH + "staging-tables", stagingTableService, requestConverterFunction)
         .annotatedService(BASE_PATH + "functions", functionService, requestConverterFunction)

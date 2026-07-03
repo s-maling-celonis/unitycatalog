@@ -3,7 +3,6 @@ package io.unitycatalog.server.service.credential.aws;
 import io.unitycatalog.server.model.AwsIamRoleResponse;
 import io.unitycatalog.server.persist.dao.CredentialDAO;
 import io.unitycatalog.server.service.credential.CredentialContext;
-import java.net.URI;
 import java.time.Duration;
 import java.util.Optional;
 import java.util.UUID;
@@ -86,11 +85,7 @@ public interface AwsCredentialGenerator {
         credentialsProvider = DefaultCredentialsProvider.create();
       }
 
-      StsClientBuilder stsBuilder = builder.region(region).credentialsProvider(credentialsProvider);
-      if (config.getEndpointUrl() != null && !config.getEndpointUrl().isEmpty()) {
-        stsBuilder.endpointOverride(URI.create(config.getEndpointUrl()));
-      }
-      this.stsClient = stsBuilder.build();
+      this.stsClient = builder.region(region).credentialsProvider(credentialsProvider).build();
       this.staticAwsRoleArn = config.getAwsRoleArn();
     }
 
