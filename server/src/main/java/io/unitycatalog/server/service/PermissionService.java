@@ -34,6 +34,7 @@ import io.unitycatalog.server.persist.Repositories;
 import io.unitycatalog.server.persist.SchemaRepository;
 import io.unitycatalog.server.persist.TableRepository;
 import io.unitycatalog.server.persist.UserRepository;
+import io.unitycatalog.server.persist.ViewRepository;
 import io.unitycatalog.server.persist.VolumeRepository;
 import io.unitycatalog.server.persist.model.Privileges;
 import java.util.HashSet;
@@ -59,6 +60,7 @@ public class PermissionService {
   private final CatalogRepository catalogRepository;
   private final SchemaRepository schemaRepository;
   private final TableRepository tableRepository;
+  private final ViewRepository viewRepository;
   private final FunctionRepository functionRepository;
   private final VolumeRepository volumeRepository;
   private final ModelRepository modelRepository;
@@ -72,6 +74,7 @@ public class PermissionService {
     this.catalogRepository = repositories.getCatalogRepository();
     this.schemaRepository = repositories.getSchemaRepository();
     this.tableRepository = repositories.getTableRepository();
+    this.viewRepository = repositories.getViewRepository();
     this.functionRepository = repositories.getFunctionRepository();
     this.volumeRepository = repositories.getVolumeRepository();
     this.modelRepository = repositories.getModelRepository();
@@ -354,6 +357,7 @@ public class PermissionService {
       case CATALOG -> catalogRepository.getCatalog(name).getId();
       case SCHEMA -> schemaRepository.getSchema(name).getSchemaId();
       case TABLE -> tableRepository.getTable(name).getTableId();
+      case VIEW -> viewRepository.getView(name).getViewId();
       case FUNCTION -> functionRepository.getFunction(name).getFunctionId();
       case VOLUME -> volumeRepository.getVolume(name).getVolumeId();
       case REGISTERED_MODEL -> modelRepository.getRegisteredModel(name).getId();
