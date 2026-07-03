@@ -1,0 +1,252 @@
+name: Create Image
+description: Custom build, test, publish, and image creation for Unity Catalog Repo Depot components.
+
+inputs:
+  working-directory:
+    description: Relative path under $GITHUB_WORKSPACE to use when running commands.
+    required: true
+  image-registry:
+    description: The name of the container registry to use when creating an image.
+    required: true
+  image-name:
+    description: The name of the image to use when creating a image.
+    required: true
+  image-tag:
+    description: The name of the image tag to use when creating a image.
+    required: true
+  github-token:
+    description: The token to use when accessing Celonis resources.
+    required: true
+  sca-tag-ref:
+    required: true
+    default: ''
+    description: 'string: Tag to reference for SCA scans'
+  srcclr-api-token:
+    required: true
+    description: 'string: The API token for Sourceclear, typically set in a repository secret called SRCCLR_API_TOKEN'
+  secrets:
+    description: JSON encoded repository secrets
+    required: true
+  vars:
+    description: JSON encoded repository variables
+    required: true
+  is-dev-build:
+    description: Boolean indicating if the build is a development build
+    required: true
+  release-branch:
+    description: The name of the release branch to build from
+    required: false
+  relative-source-location:
+    description: The relative source location of a component in the GitHub repository.
+    required: false
+  component-name:
+    description: The name of the component
+    required: true
+  sonar-project-key:
+    description: SonarQube project key (from sonarqube.org/project-key annotation)
+    required: true
+  sonar-scan-blocking:
+    description: When true, a SonarQube quality gate failure fails the job
+    required: true
+  sonar-token:
+    description: SonarQube authentication token
+    required: true
+
+outputs:
+  build-status:
+    description: 'Indicates whether the build was successful (type: boolean, values: true/false).'
+    value: ${{ steps.build.outputs.status }}
+  test-status:
+    description: 'Indicates whether the testing was successful (type: boolean, values: true/false).'
+    value: ${{ steps.test.outputs.status }}
+  image-metadata:
+    description: 'JSON metadata output from the docker image creation'
+    value: ${{ steps.create-image.outputs.metadata || steps.empty-image-metadata.outputs.metadata }}
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve component
+      id: component
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        case "${{ inputs.component-name }}" in
+          unity-catalog-server)
+            echo "sbt-project=server"
+            echo "project-path=server"
+            echo "needs-image=true"
+            echo "docker-context=."
+            ;;
+          unity-catalog-ui)
+            echo "needs-image=true"
+            echo "docker-context=ui"
+            ;;
+          unitycatalog-client)
+            echo "sbt-project=client"
+            echo "project-path=clients/java"
+            ;;
+          unitycatalog-controlapi)
+            echo "sbt-project=controlApi"
+            echo "project-path=target/control/java"
+            ;;
+          unitycatalog-hadoop)
+            echo "sbt-project=hadoop"
+            echo "project-path=connectors/hadoop"
+            ;;
+          unitycatalog-spark)
+            echo "sbt-project=spark"
+            echo "project-path=connectors/spark"
+            ;;
+          *)
+            echo "Unknown component: ${{ inputs.component-name }}" >&2
+            exit 1
+            ;;
+        esac >> "$GITHUB_OUTPUT"
+
+    - name: Setup Java
+      if: inputs.component-name != 'unity-catalog-ui'
+      uses: celonis/core-setup-java-action@v4.0.2
+      with:
+        use-cache: 'false'
+        maven-version: '3.9.16'
+
+    - name: Setup Node
+      if: inputs.component-name == 'unity-catalog-ui'
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: yarn
+        cache-dependency-path: ${{ inputs.working-directory }}/ui/yarn.lock
+
+    - name: Build
+      id: build
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        GITHUB_ACTOR: celobot
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        MAVEN_OPTS: -XX:+TieredCompilation -XX:TieredStopAtLevel=1 -XX:+UseG1GC -Xmx16g -XX:-UseGCOverheadLimit
+        REPO_DEPOT_VERSION: ${{ inputs.image-tag }}
+      run: |
+        set -euo pipefail
+
+        stamp_pom_version() {
+          local pom_file="$1"
+          local version="$2"
+          sed -i "0,/<version>/{s|<version>[^<]*</version>|<version>${version}</version>|}" "$pom_file"
+        }
+
+        publish_maven_artifact() {
+          local project_path="$1"
+          local pom_file=""
+          while IFS= read -r pom; do
+            local jar="${pom%.pom}.jar"
+            if [ -f "$jar" ]; then
+              pom_file="$pom"
+              break
+            fi
+          done < <(find "$project_path/target" -name '*.pom' ! -path '*/streams/*' | sort)
+          local jar_file="${pom_file%.pom}.jar"
+          if [ -z "$pom_file" ] || [ ! -f "$jar_file" ]; then
+            echo "Artifact not found. POM: $pom_file JAR: $jar_file" >&2
+            find "$project_path/target" \( -name '*.pom' -o -name '*.jar' \) | head -30 >&2 || true
+            exit 1
+          fi
+          stamp_pom_version "$pom_file" "$REPO_DEPOT_VERSION"
+          echo "Publishing ${pom_file} at version ${REPO_DEPOT_VERSION}"
+          mvn deploy:deploy-file -e \
+            -Dfile="$jar_file" \
+            -DrepositoryId=github \
+            -Durl=https://maven.pkg.github.com/celonis/maven-internal/ \
+            -DpomFile="$pom_file"
+        }
+
+        build_sbt_module() {
+          local sbt_project="$1"
+          local project_path="$2"
+          build/sbt "set ThisBuild / version := \"${REPO_DEPOT_VERSION}\"" \
+            "$sbt_project/package" "$sbt_project/makePom"
+          sed -i 's#git@github.com:unitycatalog/unitycatalog.git#git@github.com:celonis/unitycatalog.git#g' \
+            "$(find "$project_path" -name '*.pom')"
+          sed -i 's#<groupId>io.unitycatalog</groupId>#<groupId>cloud.celonis</groupId>#g' \
+            "$(find "$project_path" -name '*.pom')"
+          publish_maven_artifact "$project_path"
+        }
+
+        case "${{ inputs.component-name }}" in
+          unity-catalog-server|unitycatalog-client|unitycatalog-controlapi|unitycatalog-hadoop|unitycatalog-spark)
+            build_sbt_module "${{ steps.component.outputs.sbt-project }}" "${{ steps.component.outputs.project-path }}"
+            ;;
+          unity-catalog-ui)
+            cd ui
+            yarn install --network-timeout 1000000
+            ;;
+          *)
+            echo "Unsupported component: ${{ inputs.component-name }}" >&2
+            exit 1
+            ;;
+        esac
+
+        echo "status=true" >> "$GITHUB_OUTPUT"
+
+    - name: Test
+      id: test
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        CI: true
+      run: |
+        set -euo pipefail
+
+        case "${{ inputs.component-name }}" in
+          unity-catalog-server|unitycatalog-client|unitycatalog-controlapi|unitycatalog-hadoop)
+            build/sbt "${{ steps.component.outputs.sbt-project }}/test"
+            ;;
+          unitycatalog-spark)
+            build/sbt -DsparkVersion=4.1.0 -DdeltaVersion=4.2.0 publishLocal \
+              "${{ steps.component.outputs.sbt-project }}/test"
+            ;;
+          unity-catalog-ui)
+            cd ui
+            yarn test --watchAll=false --passWithNoTests
+            ;;
+          *)
+            echo "Unsupported component: ${{ inputs.component-name }}" >&2
+            exit 1
+            ;;
+        esac
+
+        echo "status=true" >> "$GITHUB_OUTPUT"
+
+    - name: Restore Node for repo-depot tooling
+      if: inputs.component-name == 'unity-catalog-ui'
+      uses: actions/setup-node@v5
+      with:
+        node-version-file: tooling/package.json
+
+    - name: Set up QEMU
+      if: steps.component.outputs.needs-image == 'true'
+      uses: docker/setup-qemu-action@v3
+
+    - name: Set up Docker Buildx
+      if: steps.component.outputs.needs-image == 'true'
+      uses: docker/setup-buildx-action@v3
+
+    - name: Create Docker Image
+      if: steps.component.outputs.needs-image == 'true'
+      id: create-image
+      uses: docker/build-push-action@v6
+      with:
+        context: ${{ format('{0}/{1}', inputs.working-directory, steps.component.outputs.docker-context) }}
+        push: true
+        platforms: linux/amd64,linux/arm64
+        tags: ${{ inputs.image-registry }}/${{ inputs.image-name }}:${{ inputs.image-tag }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max,ignore-error=true
+
+    - name: Set empty image metadata
+      if: steps.component.outputs.needs-image != 'true'
+      id: empty-image-metadata
+      shell: bash
+      run: echo 'metadata={}' >> "$GITHUB_OUTPUT"
