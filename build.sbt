@@ -142,6 +142,9 @@ lazy val controlApi = (project in file("target/control/java"))
     name := s"$artifactNamePrefix-controlapi",
     commonSettings,
     skipReleaseSettings,
+    // skipReleaseSettings sets publishArtifact := false, so makePom emits packaging=pom.
+    // package still produces a JAR; declare it publishable for POM generation only.
+    Compile / packageBin / publishArtifact := true,
     libraryDependencies ++= Seq(
       "jakarta.annotation" % "jakarta.annotation-api" % "3.0.0" % Provided,
       "com.fasterxml.jackson.core" % "jackson-annotations" % jacksonVersion,
