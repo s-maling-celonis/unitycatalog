@@ -131,6 +131,24 @@ runs:
       run: |
         set -euo pipefail
 
+        configure_maven_settings() {
+          # core-setup-java-action configures server-id=github with the workflow
+          # GITHUB_TOKEN. RepoDepot passes CELOBOT_GITHUB_TOKEN for custom deploy;
+          # Maven deploy:deploy-file reads ~/.m2/settings.xml, not the shell env.
+          mkdir -p ~/.m2
+          cat > ~/.m2/settings.xml <<EOF
+        <settings>
+          <servers>
+            <server>
+              <id>github</id>
+              <username>${GITHUB_ACTOR}</username>
+              <password>${GITHUB_TOKEN}</password>
+            </server>
+          </servers>
+        </settings>
+        EOF
+        }
+
         stamp_pom_version() {
           local pom_file="$1"
           local version="$2"
@@ -154,6 +172,7 @@ runs:
             exit 1
           fi
           stamp_pom_version "$pom_file" "$REPO_DEPOT_VERSION"
+          configure_maven_settings
           echo "Publishing ${pom_file} at version ${REPO_DEPOT_VERSION}"
           mvn deploy:deploy-file -e \
             -Dfile="$jar_file" \
