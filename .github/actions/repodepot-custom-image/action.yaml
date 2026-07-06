@@ -175,7 +175,13 @@ runs:
         }
 
         case "${{ inputs.component-name }}" in
-          unity-catalog-server|unitycatalog-client|unitycatalog-controlapi|unitycatalog-hadoop|unitycatalog-spark)
+          unity-catalog-server)
+            # Dockerfile runs sbt package with HOME=/home/unitycatalog. Host-side package
+            # writes server/target/classpath with runner $HOME (often /root/.cache) and
+            # breaks the runtime image when those paths are copied or cached.
+            echo "Skipping host sbt package; Docker build owns server compilation"
+            ;;
+          unitycatalog-client|unitycatalog-controlapi|unitycatalog-hadoop|unitycatalog-spark)
             build_sbt_module "${{ steps.component.outputs.sbt-project }}" "${{ steps.component.outputs.project-path }}"
             ;;
           unity-catalog-ui)
@@ -233,6 +239,12 @@ runs:
       if: steps.component.outputs.needs-image == 'true'
       uses: docker/setup-buildx-action@v3
 
+    - name: Prepare Docker context for unity-catalog-server
+      if: steps.component.outputs.needs-image == 'true' && inputs.component-name == 'unity-catalog-server'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: rm -rf server/target
+
     - name: Create Docker Image
       if: steps.component.outputs.needs-image == 'true'
       id: create-image
@@ -242,8 +254,22 @@ runs:
         push: true
         platforms: linux/amd64,linux/arm64
         tags: ${{ inputs.image-registry }}/${{ inputs.image-name }}:${{ inputs.image-tag }}
+        build-args: |
+          HOME=/home/unitycatalog
         cache-from: type=gha
         cache-to: type=gha,mode=max,ignore-error=true
+
+    - name: Verify unity-catalog-server image classpath
+      if: steps.component.outputs.needs-image == 'true' && inputs.component-name == 'unity-catalog-server'
+      shell: bash
+      env:
+        IMAGE: ${{ inputs.image-registry }}/${{ inputs.image-name }}:${{ inputs.image-tag }}
+      run: |
+        set -euo pipefail
+        docker run --rm --platform linux/amd64 --entrypoint sh "$IMAGE" -c '
+          grep -q "/home/unitycatalog/.cache" /home/unitycatalog/server/target/classpath
+          test -d /home/unitycatalog/.cache/coursier
+        '
 
     - name: Set empty image metadata
       if: steps.component.outputs.needs-image != 'true'
