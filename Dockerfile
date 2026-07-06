@@ -5,7 +5,7 @@ ARG HOME="/home/unitycatalog"
 FROM amazoncorretto:17-alpine3.20-jdk@sha256:c045f0537bc890f9e61924f33f35e9667f696b4f372dad4a73861a9396b5d0b5 as base
 
 # Dependencies are installed in $HOME/.cache by sbt
-ARG HOME
+ARG HOME=/home/unitycatalog
 ENV HOME=$HOME
 
 WORKDIR $HOME
@@ -20,7 +20,7 @@ FROM alpine:3.20@sha256:a4f4213abb84c497377b8544c81b3564f313746700372ec4fe84653e
 # Specific JAVA_HOME from Amazon Corretto
 ARG JAVA_HOME="/usr/lib/jvm/default-jvm"
 ARG USER="unitycatalog"
-ARG HOME
+ARG HOME=/home/unitycatalog
 
 # Copy Java from base
 COPY --from=base $JAVA_HOME $JAVA_HOME
