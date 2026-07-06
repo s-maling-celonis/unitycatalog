@@ -220,11 +220,15 @@ runs:
         set -euo pipefail
 
         case "${{ inputs.component-name }}" in
-          unity-catalog-server|unitycatalog-client|unitycatalog-controlapi|unitycatalog-hadoop)
-            build/sbt "${{ steps.component.outputs.sbt-project }}/test"
+          unity-catalog-server|unitycatalog-client|unitycatalog-controlapi)
+            build/sbt -J-Xmx6g "${{ steps.component.outputs.sbt-project }}/test"
+            ;;
+          unitycatalog-hadoop)
+            build/sbt -J-Xmx6g serverShaded/assembly \
+              "${{ steps.component.outputs.sbt-project }}/test"
             ;;
           unitycatalog-spark)
-            build/sbt -DsparkVersion=4.1.0 -DdeltaVersion=4.2.0 publishLocal \
+            build/sbt -J-Xmx6g -DsparkVersion=4.1.0 -DdeltaVersion=4.2.0 publishLocal \
               "${{ steps.component.outputs.sbt-project }}/test"
             ;;
           unity-catalog-ui)
