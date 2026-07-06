@@ -172,7 +172,6 @@ runs:
       with:
         distribution: zulu
         java-version: '21'
-        cache: false
         server-id: github
         server-username: REPO_DEPOT_MAVEN_USERNAME
         server-password: REPO_DEPOT_MAVEN_PASSWORD
