@@ -1122,9 +1122,11 @@ class CredPropsUtilTest {
   }
 
   @Test
-  void s3EndpointUrlAppliedFromTemporaryCredentials() {
+  void s3EndpointUrlAppliedFromTemporaryCredentials() throws Exception {
     TemporaryCredentials creds =
         s3Creds().endpointUrl("http://localhost:9000").expirationTime(Long.MAX_VALUE);
+    CredPropsUtil.genericCredFetcherFactory =
+        (apiClient, credId) -> mockGenericCredentialFetcher(creds);
 
     Map<String, String> props =
         CredPropsUtil.createTableCredProps(
@@ -1132,11 +1134,11 @@ class CredPropsUtilTest {
             true,
             new Configuration(false),
             "s3",
-            "http://uc",
             null,
+            "http://uc",
+            tokenProvider(),
             "tid",
-            TableOperation.READ_WRITE,
-            creds,
+            UCCredentialHadoopConfs.TableOperation.READ_WRITE,
             Map.of());
 
     assertThat(props.get("fs.s3a.endpoint")).isEqualTo("http://localhost:9000");
@@ -1145,9 +1147,11 @@ class CredPropsUtilTest {
   }
 
   @Test
-  void s3VendedEndpointDefersToClientConfiguredEndpoint() {
+  void s3VendedEndpointDefersToClientConfiguredEndpoint() throws Exception {
     TemporaryCredentials creds =
         s3Creds().endpointUrl("http://[::1]:9000").expirationTime(Long.MAX_VALUE);
+    CredPropsUtil.genericCredFetcherFactory =
+        (apiClient, credId) -> mockGenericCredentialFetcher(creds);
     Configuration conf = new Configuration(false);
     conf.set("fs.s3a.endpoint", "http://minio:9000");
 
@@ -1157,11 +1161,11 @@ class CredPropsUtilTest {
             true,
             conf,
             "s3",
-            "http://uc",
             null,
+            "http://uc",
+            tokenProvider(),
             "tid",
-            TableOperation.READ_WRITE,
-            creds,
+            UCCredentialHadoopConfs.TableOperation.READ_WRITE,
             Map.of());
 
     assertThat(props.get("fs.s3a.endpoint")).isEqualTo("http://minio:9000");
