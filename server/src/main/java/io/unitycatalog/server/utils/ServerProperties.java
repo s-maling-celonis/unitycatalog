@@ -210,7 +210,6 @@ public class ServerProperties {
     AWS_SECRET_KEY("aws.secretKey"),
     AWS_SESSION_TOKEN("aws.sessionToken"),
     AWS_REGION("aws.region"),
-    AWS_ENDPOINT_URL("aws.endpointUrl"),
     INCLUDE_STACK_TRACE_IN_ERROR("server.include-stacktrace-in-error", "false", BOOLEAN_VALIDATOR);
     // The is not an exhaustive list. Some property keys like s3.bucketPath.0 with a numbering
     // suffix is not included. They are only accessed internally from functions like
@@ -305,7 +304,6 @@ public class ServerProperties {
         .region(get(Property.AWS_REGION))
         .accessKey(get(Property.AWS_ACCESS_KEY))
         .secretKey(get(Property.AWS_SECRET_KEY))
-        .endpointUrl(get(Property.AWS_ENDPOINT_URL))
         // Does not take AWS_SESSION_TOKEN as it's only part of a temporary credential.
         .build();
   }
@@ -320,7 +318,6 @@ public class ServerProperties {
       String accessKey = getProperty("s3.accessKey." + i);
       String secretKey = getProperty("s3.secretKey." + i);
       String sessionToken = getProperty("s3.sessionToken." + i);
-      String endpointUrl = getProperty("s3.endpointUrl." + i);
       String credentialGenerator = getProperty("s3.credentialGenerator." + i);
       if ((bucketPath == null || region == null || awsRoleArn == null)
           && (accessKey == null || secretKey == null || sessionToken == null)) {
@@ -334,7 +331,6 @@ public class ServerProperties {
               .accessKey(accessKey)
               .secretKey(secretKey)
               .sessionToken(sessionToken)
-              .endpointUrl(endpointUrl)
               .credentialGenerator(credentialGenerator)
               .build();
       s3BucketConfigMap.put(NormalizedURL.from(bucketPath), s3StorageConfig);
@@ -521,7 +517,7 @@ public class ServerProperties {
    * <p>When authorization is enabled, tokens will only be accepted from issuers in this list. This
    * prevents attackers from using their own identity provider to forge tokens.
    *
-   * @return List of allowed issuer URLs (exact match or wildcard with {@code *})
+   * @return List of allowed issuer URLs (exact match required)
    */
   public List<String> getAllowedIssuers() {
     return getCommaSeparatedList("server.allowed-issuers");
