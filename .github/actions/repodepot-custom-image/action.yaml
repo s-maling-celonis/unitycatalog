@@ -85,18 +85,22 @@ runs:
           unitycatalog-client)
             echo "sbt-project=client"
             echo "project-path=clients/java"
+            echo "publishes-maven=true"
             ;;
           unitycatalog-controlapi)
             echo "sbt-project=controlApi"
             echo "project-path=target/control/java"
+            echo "publishes-maven=true"
             ;;
           unitycatalog-hadoop)
             echo "sbt-project=hadoop"
             echo "project-path=connectors/hadoop"
+            echo "publishes-maven=true"
             ;;
           unitycatalog-spark)
             echo "sbt-project=spark"
             echo "project-path=connectors/spark"
+            echo "publishes-maven=true"
             ;;
           *)
             echo "Unknown component: ${{ inputs.component-name }}" >&2
@@ -124,43 +128,10 @@ runs:
       shell: bash
       working-directory: ${{ inputs.working-directory }}
       env:
-        GITHUB_ACTOR: celobot
-        GITHUB_TOKEN: ${{ inputs.github-token }}
         MAVEN_OPTS: -XX:+TieredCompilation -XX:TieredStopAtLevel=1 -XX:+UseG1GC -Xmx16g -XX:-UseGCOverheadLimit
         REPO_DEPOT_VERSION: ${{ inputs.image-tag }}
       run: |
         set -euo pipefail
-
-        stamp_pom_version() {
-          local pom_file="$1"
-          local version="$2"
-          sed -i "0,/<version>/{s|<version>[^<]*</version>|<version>${version}</version>|}" "$pom_file"
-        }
-
-        publish_maven_artifact() {
-          local project_path="$1"
-          local pom_file=""
-          while IFS= read -r pom; do
-            local jar="${pom%.pom}.jar"
-            if [ -f "$jar" ]; then
-              pom_file="$pom"
-              break
-            fi
-          done < <(find "$project_path/target" -name '*.pom' ! -path '*/streams/*' | sort)
-          local jar_file="${pom_file%.pom}.jar"
-          if [ -z "$pom_file" ] || [ ! -f "$jar_file" ]; then
-            echo "Artifact not found. POM: $pom_file JAR: $jar_file" >&2
-            find "$project_path/target" \( -name '*.pom' -o -name '*.jar' \) | head -30 >&2 || true
-            exit 1
-          fi
-          stamp_pom_version "$pom_file" "$REPO_DEPOT_VERSION"
-          echo "Publishing ${pom_file} at version ${REPO_DEPOT_VERSION}"
-          mvn deploy:deploy-file -e \
-            -Dfile="$jar_file" \
-            -DrepositoryId=github \
-            -Durl=https://maven.pkg.github.com/celonis/maven-internal/ \
-            -DpomFile="$pom_file"
-        }
 
         build_sbt_module() {
           local sbt_project="$1"
@@ -171,7 +142,6 @@ runs:
             "$(find "$project_path" -name '*.pom')"
           sed -i 's#<groupId>io.unitycatalog</groupId>#<groupId>cloud.celonis</groupId>#g' \
             "$(find "$project_path" -name '*.pom')"
-          publish_maven_artifact "$project_path"
         }
 
         case "${{ inputs.component-name }}" in
@@ -195,6 +165,51 @@ runs:
         esac
 
         echo "status=true" >> "$GITHUB_OUTPUT"
+
+    - name: Setup Maven publish credentials
+      if: steps.component.outputs.publishes-maven == 'true'
+      uses: actions/setup-java@v4
+      with:
+        distribution: zulu
+        java-version: '21'
+        cache: false
+        server-id: github
+        server-username: REPO_DEPOT_MAVEN_USERNAME
+        server-password: REPO_DEPOT_MAVEN_PASSWORD
+
+    - name: Publish Maven artifact
+      if: steps.component.outputs.publishes-maven == 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        REPO_DEPOT_MAVEN_USERNAME: celobot
+        REPO_DEPOT_MAVEN_PASSWORD: ${{ inputs.github-token }}
+        REPO_DEPOT_VERSION: ${{ inputs.image-tag }}
+        PROJECT_PATH: ${{ steps.component.outputs.project-path }}
+      run: |
+        set -euo pipefail
+
+        pom_file=""
+        while IFS= read -r pom; do
+          jar="${pom%.pom}.jar"
+          if [ -f "$jar" ]; then
+            pom_file="$pom"
+            break
+          fi
+        done < <(find "$PROJECT_PATH/target" -name '*.pom' ! -path '*/streams/*' | sort)
+        jar_file="${pom_file%.pom}.jar"
+        if [ -z "$pom_file" ] || [ ! -f "$jar_file" ]; then
+          echo "Artifact not found. POM: $pom_file JAR: $jar_file" >&2
+          find "$PROJECT_PATH/target" \( -name '*.pom' -o -name '*.jar' \) | head -30 >&2 || true
+          exit 1
+        fi
+        sed -i "0,/<version>/{s|<version>[^<]*</version>|<version>${REPO_DEPOT_VERSION}</version>|}" "$pom_file"
+        echo "Publishing ${pom_file} at version ${REPO_DEPOT_VERSION}"
+        mvn deploy:deploy-file -e \
+          -Dfile="$jar_file" \
+          -DrepositoryId=github \
+          -Durl=https://maven.pkg.github.com/celonis/maven-internal/ \
+          -DpomFile="$pom_file"
 
     - name: Test
       id: test
