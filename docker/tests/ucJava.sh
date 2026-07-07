@@ -102,6 +102,26 @@ resolve_oauth_connect_url() {
   echo "$UC_OAUTH_CONNECT_URL"
 }
 
+resolve_oauth_team_id() {
+  if [[ -n "${UC_OAUTH_TEAM_ID:-}" ]]; then
+    echo "$UC_OAUTH_TEAM_ID"
+    return
+  fi
+  if command -v docker >/dev/null 2>&1; then
+    local celospark_dir team_id
+    celospark_dir="$(resolve_celospark_docker_dir)"
+    team_id="$(docker compose -f "$celospark_dir/compose.uc.yml" -f "$celospark_dir/uc/oidc/compose.yaml" \
+      exec -T postgres \
+      psql -U celonis -d team -tAc "SELECT cpm_id FROM cpm_team_team WHERE cpm_domain='dev' LIMIT 1" 2>/dev/null \
+      | tr -d '[:space:]')"
+    if [[ -n "$team_id" ]]; then
+      echo "$team_id"
+      return
+    fi
+  fi
+  echo ""
+}
+
 resolve_admin_token() {
   if [[ -n "${UC_ADMIN_TOKEN:-}" ]]; then
     echo "$UC_ADMIN_TOKEN"
@@ -200,13 +220,17 @@ to_s3_uri() {
 
 docker_test_env() {
   source_celospark_oauth_env
-  local celospark_bucket dp_bucket
+  local celospark_bucket dp_bucket oauth_team_id
   celospark_bucket="$(resolve_celospark_dotenv_var CELOSPARK_BUCKET_NAME celospark-bucket)"
   dp_bucket="$(resolve_celospark_dotenv_var DP_BUCKET_NAME data-pipeline-bucket)"
+  oauth_team_id="$(resolve_oauth_team_id)"
   echo "UC_SERVER_URL=${UC_SERVER_URL:-http://localhost:8181}"
   echo "SPARK_UC_SERVER_URI=${SPARK_UC_SERVER_URI:-http://unitycatalog:8080}"
   echo "UC_OAUTH_CONNECT_URL=$(resolve_oauth_connect_url)"
   echo "UC_OAUTH_HOST=${UC_OAUTH_HOST:-dev.dev.celonis.cloud}"
+  if [[ -n "$oauth_team_id" ]]; then
+    echo "UC_OAUTH_TEAM_ID=$oauth_team_id"
+  fi
   echo "UC_ADMIN_TOKEN=$(resolve_admin_token)"
   echo "BUCKET=${BUCKET:-$(to_s3_uri "$celospark_bucket")}"
   echo "DATA_BUCKET=${DATA_BUCKET:-$(to_s3_uri "$dp_bucket")}"

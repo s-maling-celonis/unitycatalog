@@ -60,14 +60,13 @@ public final class CelonisOAuthAuthorizationCodeFlow {
     HttpRequest request =
         oauthRequestBuilder(authorizeUri)
             .header("Authorization", "Bearer " + sessionJwt)
-            .header("X-Celonis-Team-Id", CelonisOAuthTestConstants.OAUTH_TEAM_ID)
-            .header("X-Celonis-Team-Domain", CelonisOAuthTestConstants.OAUTH_TEAM_DOMAIN)
             .GET()
             .build();
 
     HttpResponse<String> response =
         HTTP.send(request, HttpResponse.BodyHandlers.ofString());
-    if (response.statusCode() != 302) {
+    int status = response.statusCode();
+    if (status != 302 && status != 303) {
       throw new IllegalStateException(
           "OAuth authorize failed (" + response.statusCode() + "): " + response.body());
     }
@@ -104,8 +103,6 @@ public final class CelonisOAuthAuthorizationCodeFlow {
     HttpRequest request =
         oauthRequestBuilder(tokenUri)
             .header("Content-Type", "application/x-www-form-urlencoded")
-            .header("X-Celonis-Team-Id", CelonisOAuthTestConstants.OAUTH_TEAM_ID)
-            .header("X-Celonis-Team-Domain", CelonisOAuthTestConstants.OAUTH_TEAM_DOMAIN)
             .POST(HttpRequest.BodyPublishers.ofString(form))
             .build();
 
@@ -126,7 +123,7 @@ public final class CelonisOAuthAuthorizationCodeFlow {
   private static String createInternalSessionJwt(String email) throws IOException {
     Map<String, Object> team =
         Map.of(
-            "id", CelonisOAuthTestConstants.OAUTH_TEAM_ID,
+            "id", CelonisOAuthTestConstants.oauthTeamId(),
             "domain", CelonisOAuthTestConstants.OAUTH_TEAM_DOMAIN,
             "role", 1,
             "featureKeys", List.of(),

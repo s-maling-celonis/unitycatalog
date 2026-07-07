@@ -44,7 +44,8 @@ Defaults assume celospark port mapping:
 Tests reach OAuth via `127.0.0.1:9010` and send the tenant as a `Host` header, so `/etc/hosts`
 is not required for the JUnit suite.
 
-Override with `UC_SERVER_URL`, `UC_OAUTH_CONNECT_URL`, `UC_OAUTH_HOST`, `UC_ADMIN_TOKEN`, etc.
+Override with `UC_SERVER_URL`, `UC_OAUTH_CONNECT_URL`, `UC_OAUTH_HOST`, `UC_OAUTH_TEAM_ID`,
+`UC_ADMIN_TOKEN`, etc.
 
 ## Server image
 
