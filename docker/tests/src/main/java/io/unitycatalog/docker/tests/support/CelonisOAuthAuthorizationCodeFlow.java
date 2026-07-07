@@ -55,11 +55,10 @@ public final class CelonisOAuthAuthorizationCodeFlow {
                 "redirect_uri", CelonisOAuthTestConstants.OAUTH_REDIRECT_URI,
                 "state", "unitycatalog-docker-tests"));
     URI authorizeUri =
-        URI.create(CelonisOAuthTestConstants.oauthBaseUrl() + "/oauth2/authorize?" + query);
+        URI.create(CelonisOAuthTestConstants.oauthConnectUrl() + "/oauth2/authorize?" + query);
 
     HttpRequest request =
-        HttpRequest.newBuilder()
-            .uri(authorizeUri)
+        oauthRequestBuilder(authorizeUri)
             .header("Authorization", "Bearer " + sessionJwt)
             .GET()
             .build();
@@ -91,7 +90,7 @@ public final class CelonisOAuthAuthorizationCodeFlow {
 
   private static String exchangeAuthorizationCode(String code)
       throws IOException, InterruptedException {
-    URI tokenUri = URI.create(CelonisOAuthTestConstants.oauthBaseUrl() + "/oauth2/token");
+    URI tokenUri = URI.create(CelonisOAuthTestConstants.oauthConnectUrl() + "/oauth2/token");
     String form =
         formBody(
             Map.of(
@@ -102,8 +101,7 @@ public final class CelonisOAuthAuthorizationCodeFlow {
                 "client_secret", CelonisOAuthTestConstants.OAUTH_CLIENT_SECRET));
 
     HttpRequest request =
-        HttpRequest.newBuilder()
-            .uri(tokenUri)
+        oauthRequestBuilder(tokenUri)
             .header("Content-Type", "application/x-www-form-urlencoded")
             .POST(HttpRequest.BodyPublishers.ofString(form))
             .build();
@@ -160,6 +158,12 @@ public final class CelonisOAuthAuthorizationCodeFlow {
 
   private static String base64Url(byte[] value) {
     return Base64.getUrlEncoder().withoutPadding().encodeToString(value);
+  }
+
+  private static HttpRequest.Builder oauthRequestBuilder(URI uri) {
+    return HttpRequest.newBuilder()
+        .uri(uri)
+        .header("Host", CelonisOAuthTestConstants.oauthHostHeader());
   }
 
   private static String formBody(Map<String, String> fields) {
