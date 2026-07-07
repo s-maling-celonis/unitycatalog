@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Shared helpers for docker/tests JUnit integration suite.
+# Shared helpers for docker/tests JUnit integration suite (celospark stack).
 set -euo pipefail
 
 _uc_lib_dir() {
@@ -17,8 +17,6 @@ UC_CLIENT_JAR="$UC_JAVA_ROOT/clients/java/target/unitycatalog-client-${UC_VERSIO
 UC_CONTROL_API_JAR="$UC_JAVA_ROOT/target/control/java/target/unitycatalog-controlapi-${UC_VERSION}.jar"
 UC_CONTROL_MODELS_JAR="$UC_JAVA_ROOT/server/target/controlmodels/target/unitycatalog-controlmodels-${UC_VERSION}.jar"
 
-# Portable timeout (macOS has no GNU timeout; brew coreutils installs gtimeout).
-# Kills the full process tree so Maven/Surefire cannot outlive the limit.
 run_with_timeout() {
   local secs="$1"
   shift
@@ -68,43 +66,150 @@ _uc_java_install_local_jar() {
     -Dpackaging=jar
 }
 
-ensure_uc_server() {
-  if [[ "${DOCKER_TESTS_ENSURE_UC:-1}" == "0" ]]; then
+resolve_celospark_docker_dir() {
+  if [[ -n "${CELOSPARK_DOCKER_DIR:-}" ]]; then
+    echo "$(cd "$CELOSPARK_DOCKER_DIR" && pwd)"
     return
   fi
-
-  local mode="${UC_SERVER_MODE:-binary}"
-  echo "==> Ensuring UC server (mode: ${mode})" >&2
-  if [[ "$mode" == "docker" && -z "${UC_DOCKER_IMAGE:-}" ]]; then
-    echo "ERROR: UC_DOCKER_IMAGE is required when UC_SERVER_MODE=docker" >&2
-    exit 1
+  local sibling="$UC_JAVA_ROOT/../celospark/docker"
+  if [[ -d "$sibling" ]]; then
+    echo "$(cd "$sibling" && pwd)"
+    return
   fi
-  UC_OAUTH_BASE_URL="$(resolve_oauth_base_url)"
-  UC_SERVER_MODE="$mode" UC_DOCKER_IMAGE="${UC_DOCKER_IMAGE:-}" UC_ENABLE_OIDC="${UC_ENABLE_OIDC:-1}" \
-    UC_OAUTH_BASE_URL="$UC_OAUTH_BASE_URL" \
-    "$UC_JAVA_ROOT/docker/start-uc-for-tests.sh" "$UC_JAVA_ROOT"
+  echo "$sibling"
 }
 
-resolve_oauth_base_url() {
-  if [[ -n "${UC_OAUTH_BASE_URL:-}" ]]; then
-    echo "$UC_OAUTH_BASE_URL"
+source_celospark_oauth_env() {
+  local celospark_dir
+  celospark_dir="$(resolve_celospark_docker_dir)"
+  if [[ -f "$celospark_dir/uc/oidc/resolve-oauth-tenant.sh" ]]; then
+    # shellcheck source=/dev/null
+    source "$celospark_dir/uc/oidc/resolve-oauth-tenant.sh"
+  else
+    : "${UC_OAUTH_TEAM:=dev}"
+    : "${UC_OAUTH_REALM:=dev.celonis.cloud}"
+    UC_OAUTH_HOST="${UC_OAUTH_TEAM}.${UC_OAUTH_REALM}"
+  fi
+  : "${UC_OAUTH_CONNECT_URL:=http://127.0.0.1:9010}"
+}
+
+resolve_oauth_connect_url() {
+  if [[ -n "${UC_OAUTH_CONNECT_URL:-}" ]]; then
+    echo "$UC_OAUTH_CONNECT_URL"
     return
   fi
-  echo "http://localhost:9099"
+  source_celospark_oauth_env
+  echo "$UC_OAUTH_CONNECT_URL"
+}
+
+resolve_admin_token() {
+  if [[ -n "${UC_ADMIN_TOKEN:-}" ]]; then
+    echo "$UC_ADMIN_TOKEN"
+    return
+  fi
+  local metastore_token
+  metastore_token="$(
+    docker exec unitycatalog cat /home/unitycatalog/etc/conf/token.txt 2>/dev/null | tr -d '[:space:]'
+  )" || true
+  if [[ -n "$metastore_token" ]]; then
+    echo "$metastore_token"
+    return
+  fi
+  if [[ -f "$UC_JAVA_ROOT/etc/conf/token.txt" ]]; then
+    tr -d '[:space:]' <"$UC_JAVA_ROOT/etc/conf/token.txt"
+    return
+  fi
+  source_celospark_oauth_env
+  local oauth_connect_url oauth_host
+  oauth_connect_url="$(resolve_oauth_connect_url)"
+  oauth_host="${UC_OAUTH_HOST:-dev.dev.celonis.cloud}"
+  local token
+  token="$(curl -sf "${oauth_connect_url}/oauth2/token" \
+    -H "Host: ${oauth_host}" \
+    -u unity-catalog-local:unity-catalog-local-secret \
+    -d grant_type=client_credentials \
+    -d scope=openid \
+    | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])")" || true
+  if [[ -n "$token" && "$token" != "null" ]]; then
+    echo "$token"
+    return
+  fi
+  echo "ERROR: set UC_ADMIN_TOKEN or ensure celospark OAuth is running" >&2
+  exit 1
+}
+
+ensure_celospark_stack() {
+  if [[ "${DOCKER_TESTS_ENSURE_STACK:-1}" == "0" ]]; then
+    return
+  fi
+
+  local url="${UC_SERVER_URL:-http://localhost:8181}"
+  local code
+  code="$(curl -s -o /dev/null -w "%{http_code}" "${url}/api/2.1/unity-catalog/catalogs" || echo "000")"
+  if [[ "$code" == "401" || "$code" == "200" ]]; then
+    echo "==> UC API reachable at ${url} (HTTP ${code})" >&2
+    return
+  fi
+
+  local celospark_dir
+  celospark_dir="$(resolve_celospark_docker_dir)"
+  echo "ERROR: Celospark UC stack not reachable at ${url} (HTTP ${code})" >&2
+  echo "Start the stack from celospark/docker:" >&2
+  echo "  cd ${celospark_dir}" >&2
+  echo "  cp example.env .env   # set GITHUB_TOKEN, UC_SERVER_IMAGE*, etc." >&2
+  echo "  docker compose -f compose.uc.yml -f uc/oidc/compose.yaml up -d --build" >&2
+  exit 1
+}
+
+resolve_celospark_dotenv_var() {
+  local key="$1"
+  local default="${2:-}"
+  if [[ -n "${!key:-}" ]]; then
+    echo "${!key}"
+    return
+  fi
+  local celospark_dir env_file line name value
+  celospark_dir="$(resolve_celospark_docker_dir)"
+  env_file="$celospark_dir/.env"
+  if [[ -f "$env_file" ]]; then
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      line="${line%%#*}"
+      line="${line#"${line%%[![:space:]]*}"}"
+      line="${line%"${line##*[![:space:]]}"}"
+      [[ -z "$line" ]] && continue
+      [[ "$line" != *=* ]] && continue
+      name="${line%%=*}"
+      value="${line#*=}"
+      if [[ "$name" == "$key" ]]; then
+        echo "$value"
+        return
+      fi
+    done <"$env_file"
+  fi
+  echo "$default"
+}
+
+to_s3_uri() {
+  local bucket="$1"
+  if [[ "$bucket" == s3://* ]]; then
+    echo "$bucket"
+  else
+    echo "s3://${bucket}"
+  fi
 }
 
 docker_test_env() {
-  local oauth_url
-  oauth_url="$(resolve_oauth_base_url)"
-  if [[ -n "$oauth_url" ]]; then
-    echo "UC_OAUTH_BASE_URL=$oauth_url"
-  fi
-}
-
-stop_uc_server() {
-  if [[ -x "$UC_JAVA_ROOT/docker/stop-uc-for-tests.sh" ]]; then
-    "$UC_JAVA_ROOT/docker/stop-uc-for-tests.sh" "$UC_JAVA_ROOT"
-  fi
+  source_celospark_oauth_env
+  local celospark_bucket dp_bucket
+  celospark_bucket="$(resolve_celospark_dotenv_var CELOSPARK_BUCKET_NAME celospark-bucket)"
+  dp_bucket="$(resolve_celospark_dotenv_var DP_BUCKET_NAME data-pipeline-bucket)"
+  echo "UC_SERVER_URL=${UC_SERVER_URL:-http://localhost:8181}"
+  echo "SPARK_UC_SERVER_URI=${SPARK_UC_SERVER_URI:-http://unitycatalog:8080}"
+  echo "UC_OAUTH_CONNECT_URL=$(resolve_oauth_connect_url)"
+  echo "UC_OAUTH_HOST=${UC_OAUTH_HOST:-dev.dev.celonis.cloud}"
+  echo "UC_ADMIN_TOKEN=$(resolve_admin_token)"
+  echo "BUCKET=${BUCKET:-$(to_s3_uri "$celospark_bucket")}"
+  echo "DATA_BUCKET=${DATA_BUCKET:-$(to_s3_uri "$dp_bucket")}"
 }
 
 ensure_uc_client_jars() {
@@ -134,7 +239,7 @@ run_docker_tests() {
   shift
   local timeout_secs="${DOCKER_TESTS_TIMEOUT_SECS:-600}"
   local log="${DOCKER_TESTS_LOG:-$UC_JAVA_ROOT/docker/tests/target/last-test-run.log}"
-  ensure_uc_server
+  ensure_celospark_stack
   ensure_uc_client_jars
   mkdir -p "$(dirname "$log")"
   echo "==> Running $test_class (timeout ${timeout_secs}s, ETA ~2-4 min)" >&2
@@ -148,7 +253,7 @@ run_docker_tests() {
 run_all_docker_tests() {
   local timeout_secs="${DOCKER_TESTS_TIMEOUT_SECS:-480}"
   local log="${DOCKER_TESTS_LOG:-$UC_JAVA_ROOT/docker/tests/target/last-test-run.log}"
-  ensure_uc_server
+  ensure_celospark_stack
   ensure_uc_client_jars
   mkdir -p "$(dirname "$log")"
   echo "==> Running all docker tests (hard timeout ${timeout_secs}s, ETA ~4-6 min)" >&2
@@ -161,13 +266,13 @@ run_all_docker_tests() {
 }
 
 bootstrap_tenant_java() {
-  ensure_uc_server
+  ensure_celospark_stack
   ensure_uc_client_jars
   local args=""
   for arg in "$@"; do
     args="$args $(printf '%q' "$arg")"
   done
-  UC_REPO_ROOT="$UC_JAVA_ROOT" mvn -q -f "$UC_TESTS_POM" \
+  env UC_REPO_ROOT="$UC_JAVA_ROOT" $(docker_test_env) mvn -q -f "$UC_TESTS_POM" \
     org.codehaus.mojo:exec-maven-plugin:3.5.0:java \
     -Dexec.mainClass=io.unitycatalog.docker.tests.support.BootstrapCli \
     -Dexec.args="$args"

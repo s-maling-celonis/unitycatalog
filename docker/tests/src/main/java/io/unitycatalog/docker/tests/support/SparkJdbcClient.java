@@ -83,6 +83,9 @@ public final class SparkJdbcClient {
 
   private static Map<String, String> catalogSessionConf(String catalog, String token) {
     Map<String, String> conf = new LinkedHashMap<>();
+    conf.put(
+        "spark.sql.catalog.spark_catalog",
+        "org.apache.spark.sql.delta.catalog.DeltaCatalog");
     conf.put("spark.sql.catalog." + catalog, UC_CATALOG_CLASS);
     conf.put("spark.sql.catalog." + catalog + ".uri", DockerTestConfig.SPARK_UC_SERVER_URI);
     conf.put("spark.sql.catalog." + catalog + ".token", token);

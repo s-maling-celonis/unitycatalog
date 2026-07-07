@@ -140,6 +140,7 @@
           <printSummary>true</printSummary>
           <redirectTestOutputToFile>false</redirectTestOutputToFile>
           <trimStackTrace>false</trimStackTrace>
+          <argLine>-Djdk.httpclient.allowRestrictedHeaders=host</argLine>
         </configuration>
       </plugin>
       <plugin>

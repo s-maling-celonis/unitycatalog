@@ -41,7 +41,8 @@ public final class CelonisOAuthClients {
     WebClient webClient = WebClient.builder().filter(authFilter).build();
 
     ApiClient apiClient = new ApiClient(webClient);
-    apiClient.setBasePath(CelonisOAuthTestConstants.oauthBaseUrl());
+    apiClient.setBasePath(CelonisOAuthTestConstants.oauthConnectUrl());
+    apiClient.addDefaultHeader("Host", CelonisOAuthTestConstants.oauthHostHeader());
     apiClient.addDefaultHeader(
         SecurityConstants.TeamHeaders.TEAM_ID_HEADER, CelonisOAuthTestConstants.OAUTH_TEAM_ID);
     apiClient.addDefaultHeader(

@@ -1,58 +1,59 @@
-# Docker Developer Docs
+# Docker integration tests
 
-## Overview
-Build the Unity Catalog Docker image for a specific ref by locally checking out
-the ref and then running `docker build -t <tag> .` from the main project
-directory.
+Integration tests for Unity Catalog against the **celospark** Docker stack. This repo does
+not ship its own compose files for MinIO, OAuth, Spark, or UC — use
+[celospark/docker](https://github.com/celonis/celospark/tree/main/docker) instead.
 
-It is recommended to use the forthcoming offical DockerHub image, with the
-specific version tag, rather than building the images locally from a ref.
+## Prerequisites
 
-## Local object storage (MinIO)
+1. Clone [celospark](https://github.com/celonis/celospark) as a sibling of this repo
+   (`../celospark`), or set `CELOSPARK_DOCKER_DIR` to your `celospark/docker` path.
 
-Start S3-compatible storage for catalog managed tables and models:
-
-```sh
-docker compose -f docker/compose.yaml up -d
-```
-
-See [minio/README.md](minio/README.md) for `server.properties` settings and
-verification steps.
-
-## Local OIDC (auth testing)
-
-To run Unity Catalog with authorization enabled, start a local OpenID Connect
-provider:
+2. Start the UC stack from celospark:
 
 ```sh
-docker compose -f docker/oidc/compose.yaml up -d
+cd ../celospark/docker
+cp example.env .env
+# Edit .env: GITHUB_TOKEN, UC_SERVER_IMAGE*, etc.
+docker compose -f compose.uc.yml -f uc/oidc/compose.yaml up -d --build
 ```
 
-See [oidc/README.md](oidc/README.md) for Celonis OAuth setup, `server.properties`
-snippets, and a lighter mock-oauth2 alternative.
-
-### MinIO + OIDC together
+3. Optional host entry for manual OAuth in a browser (automated tests do **not** need this):
 
 ```sh
-docker compose -f docker/compose.yaml -f docker/oidc/compose.yaml up -d
+echo '127.0.0.1 dev.dev.celonis.cloud' | sudo tee -a /etc/hosts
 ```
 
-Merge `minio/server.properties.snippet` and `oidc/server.properties.snippet`
-into `etc/conf/server.properties`.
-
-## Spark SQL (optional profile)
-
-Spark **4.1.2** with Unity Catalog, Delta Lake, and `hadoop-aws` for MinIO:
+## Run tests
 
 ```sh
-docker/spark/run-test.sh
+./docker/tests/run-tests.sh
+./docker/tests/run-tests.sh io.unitycatalog.docker.tests.BootstrapTenantTest
 ```
 
-See [spark/README.md](spark/README.md). UC always runs on the host via
-`bin/start-uc-server`. Merge `spark/server.properties.snippet` so vended S3
-credentials use an endpoint reachable from inside Docker (`host.docker.internal:9000`).
+Defaults assume celospark port mapping:
 
-## Further Reading
-To extend the Unity Catalog image, refer to the [Docker
-documentation](https://docs.docker.com/build/building/base-images/) on building
-images using base images.
+| Setting | Default |
+|---------|---------|
+| UC API | `http://localhost:8181` |
+| Spark Thrift | `localhost:10000` |
+| OAuth connect URL | `http://127.0.0.1:9010` (local Envoy) |
+| OAuth `Host` header | `dev.dev.celonis.cloud` (tenant virtual host) |
+| Spark → UC URI | `http://unitycatalog:8080` (Docker network) |
+
+Tests reach OAuth via `127.0.0.1:9010` and send the tenant as a `Host` header, so `/etc/hosts`
+is not required for the JUnit suite.
+
+Override with `UC_SERVER_URL`, `UC_OAUTH_CONNECT_URL`, `UC_OAUTH_HOST`, `UC_ADMIN_TOKEN`, etc.
+
+## Server image
+
+UC runs from the ECR image configured in celospark `example.env` (`UC_SERVER_IMAGE`). Build
+new images via celonis/unitycatalog RepoDepot CI — not from this repo's root `Dockerfile`
+during integration testing.
+
+## Further reading
+
+- Celospark stack: `celospark/docker/README.md`
+- OAuth overlay: `celospark/docker/uc/oidc/README.md`
+- OSS quickstart (separate from celospark): root `compose.yaml` and `docs/docker_compose.md`

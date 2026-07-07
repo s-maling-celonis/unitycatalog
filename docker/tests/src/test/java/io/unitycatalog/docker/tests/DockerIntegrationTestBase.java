@@ -26,7 +26,10 @@ abstract class DockerIntegrationTestBase {
     adminToken = DockerTestConfig.adminToken();
     Assumptions.assumeTrue(
         DockerTestConfig.isServerReachable(adminToken),
-        () -> "UC server not reachable at " + SERVER + " (start docker stack first)");
+        () ->
+            "UC server not reachable at "
+                + SERVER
+                + " (start celospark/docker: compose.uc.yml + uc/oidc/compose.yaml)");
     UcOperations.waitForServer(SERVER, adminToken);
   }
 
