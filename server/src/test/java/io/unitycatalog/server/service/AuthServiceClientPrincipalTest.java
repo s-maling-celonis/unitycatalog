@@ -14,23 +14,19 @@ import com.linecorp.armeria.common.HttpMethod;
 import com.linecorp.armeria.common.HttpStatus;
 import com.linecorp.armeria.common.MediaType;
 import com.linecorp.armeria.common.RequestHeaders;
-import com.linecorp.armeria.common.RequestHeadersBuilder;
 import io.unitycatalog.server.base.auth.BaseAuthCRUDTest;
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.util.Base64;
 import java.util.Date;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-/** Token exchange tests for email-first and externalId principal resolution. */
+/** Token exchange tests for email-first and subject-token externalId principal resolution. */
 public class AuthServiceClientPrincipalTest extends BaseAuthCRUDTest {
 
   private static final String TOKEN_ENDPOINT = "/api/1.0/unity-control/auth/tokens";
   private static final String SCIM_USERS_PATH = "/api/1.0/unity-control/scim2/Users";
   private static final String OAUTH_CLIENT_ID = "oauth-client-uuid";
-  private static final String OAUTH_CLIENT_SECRET = "oauth-client-secret";
   private static final String SERVICE_EMAIL = "storium-uc-test@example.com";
   private static final ObjectMapper MAPPER = new ObjectMapper();
 
@@ -51,7 +47,7 @@ public class AuthServiceClientPrincipalTest extends BaseAuthCRUDTest {
             testIssuer, OAUTH_CLIENT_ID, SERVICE_EMAIL, testIssuerAlgorithm, testIssuerKeyId);
 
     AggregatedHttpResponse response =
-        exchangeToken(token, "urn:ietf:params:oauth:token-type:id_token", true);
+        exchangeToken(token, "urn:ietf:params:oauth:token-type:id_token");
 
     assertThat(response.status()).isEqualTo(HttpStatus.OK);
     JsonNode body = MAPPER.readTree(response.contentUtf8());
@@ -69,7 +65,7 @@ public class AuthServiceClientPrincipalTest extends BaseAuthCRUDTest {
             testIssuerKeyId);
 
     AggregatedHttpResponse response =
-        exchangeToken(token, "urn:ietf:params:oauth:token-type:id_token", true);
+        exchangeToken(token, "urn:ietf:params:oauth:token-type:id_token");
 
     assertThat(response.status()).isEqualTo(HttpStatus.OK);
     JsonNode body = MAPPER.readTree(response.contentUtf8());
@@ -82,45 +78,39 @@ public class AuthServiceClientPrincipalTest extends BaseAuthCRUDTest {
         createAccessTokenSubject(testIssuer, OAUTH_CLIENT_ID, testIssuerAlgorithm, testIssuerKeyId);
 
     AggregatedHttpResponse response =
-        exchangeToken(token, "urn:ietf:params:oauth:token-type:access_token", true);
+        exchangeToken(token, "urn:ietf:params:oauth:token-type:access_token");
 
     assertThat(response.status()).isEqualTo(HttpStatus.OK);
   }
 
   @Test
-  public void testClientPrincipalRejectsMismatchedAudience() {
+  public void testSubjectTokenRejectsUnknownExternalId() {
     String token =
         createIdentityToken(
-            testIssuer, "other-client-id", SERVICE_EMAIL, testIssuerAlgorithm, testIssuerKeyId);
+            testIssuer,
+            "unknown-client-id",
+            "unknown-email@example.com",
+            testIssuerAlgorithm,
+            testIssuerKeyId);
 
     AggregatedHttpResponse response =
-        exchangeToken(token, "urn:ietf:params:oauth:token-type:id_token", true);
+        exchangeToken(token, "urn:ietf:params:oauth:token-type:id_token");
 
     assertThat(response.status()).isEqualTo(HttpStatus.UNAUTHORIZED);
     assertThat(response.contentUtf8()).contains("Invalid audience");
   }
 
   @Test
-  public void testClientPrincipalRejectsWhenEmailAndExternalIdBothFail() {
-    String unknownClientId = "unknown-client-id";
+  public void testSubjectTokenRejectsAudienceOutsideAllowlistWithoutClientId() {
     String token =
-        createIdentityToken(
-            testIssuer,
-            unknownClientId,
-            "unknown-email@example.com",
-            testIssuerAlgorithm,
-            testIssuerKeyId);
+        createRealmOnlyAccessToken(
+            testIssuer, "https://unknown.example.com", testIssuerAlgorithm, testIssuerKeyId);
 
     AggregatedHttpResponse response =
-        exchangeToken(
-            token,
-            "urn:ietf:params:oauth:token-type:id_token",
-            unknownClientId,
-            OAUTH_CLIENT_SECRET,
-            true);
+        exchangeToken(token, "urn:ietf:params:oauth:token-type:access_token");
 
-    assertThat(response.status()).isEqualTo(HttpStatus.BAD_REQUEST);
-    assertThat(response.contentUtf8()).contains("User not allowed");
+    assertThat(response.status()).isEqualTo(HttpStatus.UNAUTHORIZED);
+    assertThat(response.contentUtf8()).contains("Invalid audience");
   }
 
   private void createServiceUser() {
@@ -175,18 +165,19 @@ public class AuthServiceClientPrincipalTest extends BaseAuthCRUDTest {
         .sign(algorithm);
   }
 
-  private AggregatedHttpResponse exchangeToken(
-      String subjectToken, String subjectTokenType, boolean includeClientAuth) {
-    return exchangeToken(
-        subjectToken, subjectTokenType, OAUTH_CLIENT_ID, OAUTH_CLIENT_SECRET, includeClientAuth);
+  private static String createRealmOnlyAccessToken(
+      String issuer, String realmAudience, Algorithm algorithm, String keyId) {
+    return JWT.create()
+        .withSubject("subject-uuid")
+        .withAudience(realmAudience)
+        .withIssuer(issuer)
+        .withIssuedAt(new Date())
+        .withKeyId(keyId)
+        .withJWTId(UUID.randomUUID().toString())
+        .sign(algorithm);
   }
 
-  private AggregatedHttpResponse exchangeToken(
-      String subjectToken,
-      String subjectTokenType,
-      String clientId,
-      String clientSecret,
-      boolean includeClientAuth) {
+  private AggregatedHttpResponse exchangeToken(String subjectToken, String subjectTokenType) {
     String formBody =
         "grant_type=urn:ietf:params:oauth:grant-type:token-exchange"
             + "&requested_token_type=urn:ietf:params:oauth:token-type:access_token"
@@ -195,18 +186,13 @@ public class AuthServiceClientPrincipalTest extends BaseAuthCRUDTest {
             + "&subject_token="
             + subjectToken;
 
-    RequestHeadersBuilder builder =
+    RequestHeaders headers =
         RequestHeaders.builder()
             .method(HttpMethod.POST)
             .path(TOKEN_ENDPOINT)
-            .contentType(MediaType.FORM_DATA);
-    if (includeClientAuth) {
-      String basic =
-          Base64.getEncoder()
-              .encodeToString((clientId + ":" + clientSecret).getBytes(StandardCharsets.UTF_8));
-      builder.add(HttpHeaderNames.AUTHORIZATION, "Basic " + basic);
-    }
+            .contentType(MediaType.FORM_DATA)
+            .build();
 
-    return client.execute(builder.build(), HttpData.ofUtf8(formBody)).aggregate().join();
+    return client.execute(headers, HttpData.ofUtf8(formBody)).aggregate().join();
   }
 }

@@ -57,7 +57,6 @@ public class AuthService {
   private static final Logger LOGGER = LoggerFactory.getLogger(AuthService.class);
   private final UserRepository userRepository;
   private final TokenExchangePrincipalResolver tokenExchangePrincipalResolver;
-  private final TokenExchangeClientAuthenticator clientAuthenticator;
 
   private final SecurityContext securityContext;
   private final JwksOperations jwksOperations;
@@ -73,7 +72,6 @@ public class AuthService {
     this.jwksOperations = new JwksOperations(securityContext);
     this.serverProperties = serverProperties;
     this.userRepository = repositories.getUserRepository();
-    this.clientAuthenticator = new TokenExchangeClientAuthenticator(serverProperties);
     this.tokenExchangePrincipalResolver =
         new TokenExchangePrincipalResolver(serverProperties, userRepository);
   }
@@ -99,14 +97,12 @@ public class AuthService {
    * </ul>
    *
    * <p>Principal resolution tries email mode first ({@code email} claim or {@code sub} fallback),
-   * then external id mode when client credentials are presented ({@code Authorization: Basic} or
-   * form fields) and email resolution fails. External id mode requires the subject token to be
-   * issued for that client ({@code aud} or {@code azp}) and looks up the UC user by {@code
-   * externalId}. Audience validation uses {@code server.audiences}, with additional acceptance when
-   * the subject token references the authenticated OAuth client.
+   * then external id mode when email resolution fails. External id mode reads the OAuth client id
+   * from the subject token ({@code azp}, or a non-URL {@code aud} value) and looks up the UC user
+   * by {@code externalId}. Audience validation uses {@code server.audiences}, with additional
+   * acceptance when the signed subject token carries an OAuth client id.
    *
    * @param ext Specifies whether the issued token should be set as a cookie.
-   * @param request The aggregated HTTP request (for client credential parsing).
    * @param form The OAuth 2.0 token exchange request form.
    * @return The token exchange response
    */
@@ -114,7 +110,6 @@ public class AuthService {
   @com.linecorp.armeria.server.annotation.Blocking
   public HttpResponse grantToken(
       @Param("ext") Optional<TokenEndpointExtensionType> ext,
-      AggregatedHttpRequest request,
       @RequestConverter(ToOAuthTokenExchangeFormConverter.class) OAuthTokenExchangeForm form) {
     LOGGER.debug("Got token: {}", form);
 
@@ -153,14 +148,6 @@ public class AuthService {
           "No allowed issuers configured. Set server.allowed-issuers in server.properties");
     }
 
-    List<String> audiences = serverProperties.getAudiences();
-    if (audiences.isEmpty() && !clientAuthenticator.hasCredentials(request)) {
-      LOGGER.error("No audiences configured");
-      throw new OAuthInvalidRequestException(
-          ErrorCode.INVALID_ARGUMENT,
-          "No audiences configured. Set server.audiences in server.properties");
-    }
-
     DecodedJWT decodedJWT;
     try {
       decodedJWT = JWT.decode(form.getSubjectToken());
@@ -195,7 +182,7 @@ public class AuthService {
 
     String principalEmail =
         tokenExchangePrincipalResolver.resolvePrincipalEmail(
-            form.getSubjectTokenType(), decodedJWT, request);
+            form.getSubjectTokenType(), decodedJWT);
 
     LOGGER.debug("Validated. Creating access token for principal {}.", principalEmail);
 

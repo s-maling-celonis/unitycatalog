@@ -56,22 +56,18 @@ server.audiences=<Client ID provided earlier>
 When authorization is enabled, the server validates incoming identity tokens against configured issuers and audiences:
 
 - **server.allowed-issuers**: Comma-separated list of allowed token issuers (exact match or wildcard with `*`). Tokens from issuers not in this list will be rejected. This prevents attackers from using their own identity provider to forge tokens.
-- **server.audiences**: Comma-separated list of expected JWT audience values for token exchange requests **without** OAuth client credentials. When client credentials are presented (`Authorization: Basic` or form `client_id`/`client_secret`), the subject token must be issued for that client (`aud` or `azp`) and the UC user is resolved via `externalId` instead.
+- **server.audiences**: Comma-separated list of expected JWT audience values. Tokens must match the allowlist unless the signed subject token carries an OAuth client id in `azp` or a non-URL `aud` value (used for programmatic `externalId` resolution).
 
-#### OAuth client credentials (programmatic exchange)
+#### Programmatic exchange (service principals)
 
-Service integrations can authenticate with OAuth client credentials on `POST /auth/tokens`.
-UC resolves the principal in two steps:
+Service integrations exchange an upstream OAuth access token on `POST /auth/tokens` without client credentials on the UC request. UC resolves the principal in two steps:
 
 1. **Email mode** — look up the user by the token `email` claim (or `sub` fallback).
-2. **External id mode** — when email resolution fails and client credentials are present, look up
-   the user by `externalId` matching the authenticated OAuth `client_id`. The subject token must be
-   issued for that client (`aud` or `azp`).
+2. **External id mode** — when email resolution fails, read the OAuth client id from the subject token (`azp`, or the first non-URL `aud` value) and look up the user by `externalId`.
 
-Create UC users with a human-readable `email` for grants and set `externalId` to the OAuth client id
-for programmatic exchange. The issued UC access token always uses the resolved user's `email`.
+Create UC users with a human-readable `email` for grants and set `externalId` to the OAuth client id for programmatic exchange. The issued UC access token always uses the resolved user's `email`.
 
-CLI and browser login flows without client credentials use email mode only.
+CLI and browser login flows use email mode only.
 
 #### Multiple Identity Providers
 
@@ -96,15 +92,17 @@ accepts tokens whose `aud` includes `https://dev.dev.example.com` or
 server.audiences=unity-catalog-local,https://*.dev.example.com
 ```
 
-When email-based exchange cannot list dynamic OAuth client UUID audiences, use `*` alone to skip
-audience allowlist validation for requests **without** client credentials:
+When email-based exchange cannot list dynamic OAuth client UUID audiences, tokens whose `azp` or
+non-URL `aud` matches a registered UC user's `externalId` are accepted even when the client UUID is
+not listed in `server.audiences`. As a fallback for human login only, `*` alone skips audience
+allowlist validation:
 
 ```properties
 server.audiences=*
 server.allowed-issuers=https://*.dev.example.com
 ```
 
-Prefer the OAuth client credentials + `externalId` flow for per-tenant service principals instead of `audiences=*`.
+Prefer the subject-token `externalId` flow for per-tenant service principals instead of `audiences=*`.
 
 ### Restart the UC Server
 
