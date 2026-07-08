@@ -15,6 +15,7 @@ import com.linecorp.armeria.common.HttpStatus;
 import com.linecorp.armeria.common.MediaType;
 import com.linecorp.armeria.common.RequestHeaders;
 import io.unitycatalog.server.base.auth.BaseAuthCRUDTest;
+import io.unitycatalog.server.security.JwtClaim;
 import java.io.IOException;
 import java.util.Date;
 import java.util.UUID;
@@ -51,7 +52,7 @@ public class AuthServiceClientPrincipalTest extends BaseAuthCRUDTest {
 
     assertThat(response.status()).isEqualTo(HttpStatus.OK);
     JsonNode body = MAPPER.readTree(response.contentUtf8());
-    assertThat(body.has("access_token")).isTrue();
+    assertIssuedUcTokenSubject(body, SERVICE_EMAIL);
   }
 
   @Test
@@ -69,7 +70,7 @@ public class AuthServiceClientPrincipalTest extends BaseAuthCRUDTest {
 
     assertThat(response.status()).isEqualTo(HttpStatus.OK);
     JsonNode body = MAPPER.readTree(response.contentUtf8());
-    assertThat(body.has("access_token")).isTrue();
+    assertIssuedUcTokenSubject(body, SERVICE_EMAIL);
   }
 
   @Test
@@ -81,6 +82,26 @@ public class AuthServiceClientPrincipalTest extends BaseAuthCRUDTest {
         exchangeToken(token, "urn:ietf:params:oauth:token-type:access_token");
 
     assertThat(response.status()).isEqualTo(HttpStatus.OK);
+    JsonNode body = MAPPER.readTree(response.contentUtf8());
+    assertIssuedUcTokenSubject(body, SERVICE_EMAIL);
+  }
+
+  @Test
+  public void testAccessTokenExchangePrefersExternalIdWhenEmailClaimMissing() throws IOException {
+    String token =
+        createAccessTokenSubjectWithoutEmail(
+            testIssuer,
+            OAUTH_CLIENT_ID,
+            "wrong-email@example.com",
+            testIssuerAlgorithm,
+            testIssuerKeyId);
+
+    AggregatedHttpResponse response =
+        exchangeToken(token, "urn:ietf:params:oauth:token-type:access_token");
+
+    assertThat(response.status()).isEqualTo(HttpStatus.OK);
+    JsonNode body = MAPPER.readTree(response.contentUtf8());
+    assertIssuedUcTokenSubject(body, SERVICE_EMAIL);
   }
 
   @Test
@@ -111,6 +132,13 @@ public class AuthServiceClientPrincipalTest extends BaseAuthCRUDTest {
 
     assertThat(response.status()).isEqualTo(HttpStatus.UNAUTHORIZED);
     assertThat(response.contentUtf8()).contains("Invalid audience");
+  }
+
+  private static void assertIssuedUcTokenSubject(JsonNode body, String expectedSubject) {
+    assertThat(body.has("access_token")).isTrue();
+    String accessToken = body.get("access_token").asText();
+    String subject = JWT.decode(accessToken).getClaim(JwtClaim.SUBJECT.key()).asString();
+    assertThat(subject).isEqualTo(expectedSubject);
   }
 
   private void createServiceUser() {
@@ -156,6 +184,19 @@ public class AuthServiceClientPrincipalTest extends BaseAuthCRUDTest {
       String issuer, String clientId, Algorithm algorithm, String keyId) {
     return JWT.create()
         .withSubject("subject-uuid")
+        .withClaim("azp", clientId)
+        .withAudience(clientId, "https://dev.dev.example.com")
+        .withIssuer(issuer)
+        .withIssuedAt(new Date())
+        .withKeyId(keyId)
+        .withJWTId(UUID.randomUUID().toString())
+        .sign(algorithm);
+  }
+
+  private static String createAccessTokenSubjectWithoutEmail(
+      String issuer, String clientId, String subject, Algorithm algorithm, String keyId) {
+    return JWT.create()
+        .withSubject(subject)
         .withClaim("azp", clientId)
         .withAudience(clientId, "https://dev.dev.example.com")
         .withIssuer(issuer)

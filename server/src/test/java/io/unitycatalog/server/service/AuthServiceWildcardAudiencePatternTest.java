@@ -14,6 +14,7 @@ import com.linecorp.armeria.common.HttpStatus;
 import com.linecorp.armeria.common.MediaType;
 import com.linecorp.armeria.common.RequestHeaders;
 import io.unitycatalog.server.base.auth.BaseAuthCRUDTest;
+import io.unitycatalog.server.security.JwtClaim;
 import java.io.IOException;
 import java.util.Date;
 import java.util.UUID;
@@ -51,7 +52,11 @@ public class AuthServiceWildcardAudiencePatternTest extends BaseAuthCRUDTest {
 
     assertThat(response.status()).isEqualTo(HttpStatus.OK);
     JsonNode body = MAPPER.readTree(response.contentUtf8());
-    assertThat(body.has("access_token")).isTrue();
+    assertThat(
+            JWT.decode(body.get("access_token").asText())
+                .getClaim(JwtClaim.SUBJECT.key())
+                .asString())
+        .isEqualTo("admin");
   }
 
   @Test
@@ -63,6 +68,12 @@ public class AuthServiceWildcardAudiencePatternTest extends BaseAuthCRUDTest {
     AggregatedHttpResponse response = exchangeToken(token);
 
     assertThat(response.status()).isEqualTo(HttpStatus.OK);
+    JsonNode body = MAPPER.readTree(response.contentUtf8());
+    assertThat(
+            JWT.decode(body.get("access_token").asText())
+                .getClaim(JwtClaim.SUBJECT.key())
+                .asString())
+        .isEqualTo("admin");
   }
 
   @Test

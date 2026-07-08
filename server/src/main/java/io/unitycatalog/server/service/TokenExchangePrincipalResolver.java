@@ -33,23 +33,52 @@ public class TokenExchangePrincipalResolver {
   /**
    * Validates audience rules and returns the UC principal email for the issued access token.
    *
-   * <p>Resolution order: match by token {@code email} (or {@code sub}), then by OAuth client id
-   * from the subject token ({@code azp} or non-URL {@code aud}) mapped to {@code externalId}.
+   * <p>For {@code id_token} subjects, resolution order is email (or {@code sub}) then OAuth client
+   * id from {@code azp} or non-URL {@code aud} mapped to {@code externalId}. For {@code
+   * access_token} subjects without an {@code email} claim, {@code externalId} is tried before
+   * {@code sub}.
    */
   public String resolvePrincipalEmail(TokenType subjectTokenType, DecodedJWT decodedJWT) {
     validateAudience(subjectTokenType, decodedJWT);
+
+    if (subjectTokenType == TokenType.ACCESS_TOKEN && !hasEmailClaim(decodedJWT)) {
+      Optional<String> clientPrincipal = tryResolvePrincipalEmailForClient(decodedJWT);
+      if (clientPrincipal.isPresent()) {
+        return clientPrincipal.get();
+      }
+
+      Optional<String> principalEmail = tryResolvePrincipalEmailFromTokenClaims(decodedJWT);
+      if (principalEmail.isPresent()) {
+        return principalEmail.get();
+      }
+
+      throw new OAuthInvalidRequestException(ErrorCode.INVALID_ARGUMENT, "User not allowed");
+    }
 
     Optional<String> principalEmail = tryResolvePrincipalEmailFromTokenClaims(decodedJWT);
     if (principalEmail.isPresent()) {
       return principalEmail.get();
     }
 
-    Optional<String> clientId = extractOAuthClientId(decodedJWT);
-    if (clientId.isPresent()) {
-      return resolvePrincipalEmailForClient(clientId.get());
+    Optional<String> clientPrincipal = tryResolvePrincipalEmailForClient(decodedJWT);
+    if (clientPrincipal.isPresent()) {
+      return clientPrincipal.get();
     }
 
     throw new OAuthInvalidRequestException(ErrorCode.INVALID_ARGUMENT, "User not allowed");
+  }
+
+  private Optional<String> tryResolvePrincipalEmailForClient(DecodedJWT decodedJWT) {
+    Optional<String> clientId = extractOAuthClientId(decodedJWT);
+    if (clientId.isEmpty()) {
+      return Optional.empty();
+    }
+    return tryResolvePrincipalEmailForClient(clientId.get());
+  }
+
+  static boolean hasEmailClaim(DecodedJWT decodedJWT) {
+    Claim email = decodedJWT.getClaim(JwtClaim.EMAIL.key());
+    return !email.isNull() && email.asString() != null && !email.asString().isBlank();
   }
 
   /**
@@ -146,19 +175,18 @@ public class TokenExchangePrincipalResolver {
     return audiences != null && audiences.contains(clientId);
   }
 
-  private String resolvePrincipalEmailForClient(String clientId) {
+  private Optional<String> tryResolvePrincipalEmailForClient(String clientId) {
     LOGGER.debug("Resolving principal for OAuth client id {}", clientId);
     try {
       User user = userRepository.getUserByExternalId(clientId);
       if (user != null && user.getState() == User.StateEnum.ENABLED) {
         LOGGER.debug("Principal for client {} resolved to {}", clientId, user.getEmail());
-        return user.getEmail();
+        return Optional.of(user.getEmail());
       }
     } catch (Exception e) {
       // IGNORE
     }
-    throw new OAuthInvalidRequestException(
-        ErrorCode.INVALID_ARGUMENT, "User not allowed: " + clientId);
+    return Optional.empty();
   }
 
   private Optional<String> tryResolvePrincipalEmailFromTokenClaims(DecodedJWT decodedJWT) {

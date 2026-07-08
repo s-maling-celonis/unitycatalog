@@ -14,6 +14,13 @@ class TokenExchangePrincipalResolverTest {
   private static final String CLIENT_ID = "6e8bc60c-5e4d-4cd8-93ce-0b7c02b32499";
 
   @Test
+  void hasEmailClaimDetectsMissingEmailClaim() {
+    DecodedJWT jwt = decode(tokenWithAzpAndAud(CLIENT_ID, "https://dev.dev.example.com"));
+
+    assertThat(TokenExchangePrincipalResolver.hasEmailClaim(jwt)).isFalse();
+  }
+
+  @Test
   void extractOAuthClientIdPrefersAzp() {
     DecodedJWT jwt = decode(tokenWithAzpAndAud(CLIENT_ID, "https://dev.dev.example.com"));
 

@@ -44,11 +44,15 @@ public class UserRepository {
     return TransactionManager.executeWithTransaction(
         sessionFactory,
         session -> {
-          if (getUserByEmail(session, user.getEmail()) != null
-              || (user.getExternalId() != null
-                  && getUserByExternalId(session, user.getExternalId()) != null)) {
+          if (getUserByEmail(session, user.getEmail()) != null) {
             throw new BaseException(
                 ErrorCode.ALREADY_EXISTS, "User already exists: " + user.getEmail());
+          }
+          if (user.getExternalId() != null
+              && getUserByExternalId(session, user.getExternalId()) != null) {
+            throw new BaseException(
+                ErrorCode.ALREADY_EXISTS,
+                "User already exists with external id: " + user.getExternalId());
           }
           session.persist(UserDAO.from(user));
           return user;
@@ -183,6 +187,14 @@ public class UserRepository {
                     : User.StateEnum.DISABLED.toString());
           }
           if (updateUser.getExternalId() != null) {
+            UserDAO existingExternalIdUser =
+                getUserByExternalId(session, updateUser.getExternalId());
+            if (existingExternalIdUser != null
+                && !existingExternalIdUser.getId().equals(userDAO.getId())) {
+              throw new BaseException(
+                  ErrorCode.ALREADY_EXISTS,
+                  "User already exists with external id: " + updateUser.getExternalId());
+            }
             userDAO.setExternalId(updateUser.getExternalId());
           }
           session.merge(userDAO);
