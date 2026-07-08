@@ -20,7 +20,7 @@ import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-/** Integration tests for wildcard audience patterns in server.audiences. */
+/** Integration tests for wildcard audience patterns on access-token subject exchange. */
 public class AuthServiceWildcardAudiencePatternTest extends BaseAuthCRUDTest {
 
   private static final String TOKEN_ENDPOINT = "/api/1.0/unity-control/auth/tokens";
@@ -43,10 +43,9 @@ public class AuthServiceWildcardAudiencePatternTest extends BaseAuthCRUDTest {
   }
 
   @Test
-  public void testTokenExchangeAcceptsExactConfiguredAudience() throws IOException {
+  public void testAccessTokenExchangeAcceptsExactConfiguredAudience() throws IOException {
     String token =
-        createIdentityToken(
-            testIssuer, "unity-catalog-local", testIssuerAlgorithm, testIssuerKeyId);
+        createAccessToken(testIssuer, "unity-catalog-local", testIssuerAlgorithm, testIssuerKeyId);
 
     AggregatedHttpResponse response = exchangeToken(token);
 
@@ -56,9 +55,9 @@ public class AuthServiceWildcardAudiencePatternTest extends BaseAuthCRUDTest {
   }
 
   @Test
-  public void testTokenExchangeAcceptsWildcardAudienceMatch() throws IOException {
+  public void testAccessTokenExchangeAcceptsWildcardAudienceMatch() throws IOException {
     String token =
-        createIdentityToken(
+        createAccessToken(
             testIssuer, "https://dev.dev.example.com", testIssuerAlgorithm, testIssuerKeyId);
 
     AggregatedHttpResponse response = exchangeToken(token);
@@ -67,9 +66,9 @@ public class AuthServiceWildcardAudiencePatternTest extends BaseAuthCRUDTest {
   }
 
   @Test
-  public void testTokenExchangeRejectsAudienceOutsideAllowlist() {
+  public void testAccessTokenExchangeRejectsAudienceOutsideAllowlist() {
     String token =
-        createIdentityToken(
+        createAccessToken(
             testIssuer, "dynamic-oauth-client-uuid", testIssuerAlgorithm, testIssuerKeyId);
 
     AggregatedHttpResponse response = exchangeToken(token);
@@ -78,7 +77,7 @@ public class AuthServiceWildcardAudiencePatternTest extends BaseAuthCRUDTest {
     assertThat(response.contentUtf8()).contains("Invalid audience");
   }
 
-  private String createIdentityToken(
+  private String createAccessToken(
       String issuer, String audience, Algorithm algorithm, String keyId) {
     var builder =
         JWT.create()
@@ -93,13 +92,13 @@ public class AuthServiceWildcardAudiencePatternTest extends BaseAuthCRUDTest {
     return builder.sign(algorithm);
   }
 
-  private AggregatedHttpResponse exchangeToken(String identityToken) {
+  private AggregatedHttpResponse exchangeToken(String accessToken) {
     String formBody =
         "grant_type=urn:ietf:params:oauth:grant-type:token-exchange"
             + "&requested_token_type=urn:ietf:params:oauth:token-type:access_token"
-            + "&subject_token_type=urn:ietf:params:oauth:token-type:id_token"
+            + "&subject_token_type=urn:ietf:params:oauth:token-type:access_token"
             + "&subject_token="
-            + identityToken;
+            + accessToken;
 
     RequestHeaders headers =
         RequestHeaders.builder()

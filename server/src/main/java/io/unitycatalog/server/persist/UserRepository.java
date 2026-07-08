@@ -136,6 +136,20 @@ public class UserRepository {
         /* readOnly = */ true);
   }
 
+  public User getUserByExternalId(String externalId) {
+    return TransactionManager.executeWithTransaction(
+        sessionFactory,
+        session -> {
+          UserDAO userDAO = getUserByExternalId(session, externalId);
+          if (userDAO == null) {
+            throw new BaseException(ErrorCode.NOT_FOUND, "User not found: " + externalId);
+          }
+          return userDAO.toUser();
+        },
+        "Failed to get user by external id",
+        /* readOnly = */ true);
+  }
+
   public UserDAO getUserByEmail(Session session, String email) {
     Query<UserDAO> query = session.createQuery("FROM UserDAO WHERE email = :email", UserDAO.class);
     query.setParameter("email", email);

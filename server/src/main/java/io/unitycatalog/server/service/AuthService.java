@@ -30,16 +30,13 @@ import io.unitycatalog.control.model.OAuthTokenExchangeForm;
 import io.unitycatalog.control.model.OAuthTokenExchangeInfo;
 import io.unitycatalog.control.model.TokenEndpointExtensionType;
 import io.unitycatalog.control.model.TokenType;
-import io.unitycatalog.control.model.User;
 import io.unitycatalog.server.auth.annotation.AuthorizeExpression;
 import io.unitycatalog.server.exception.ErrorCode;
 import io.unitycatalog.server.exception.GlobalExceptionHandler;
 import io.unitycatalog.server.exception.OAuthInvalidRequestException;
 import io.unitycatalog.server.persist.Repositories;
 import io.unitycatalog.server.persist.UserRepository;
-import io.unitycatalog.server.security.JwtClaim;
 import io.unitycatalog.server.security.SecurityContext;
-import io.unitycatalog.server.utils.AudienceAllowlist;
 import io.unitycatalog.server.utils.IssuerAllowlist;
 import io.unitycatalog.server.utils.JwksOperations;
 import io.unitycatalog.server.utils.ServerProperties;
@@ -59,6 +56,8 @@ public class AuthService {
 
   private static final Logger LOGGER = LoggerFactory.getLogger(AuthService.class);
   private final UserRepository userRepository;
+  private final TokenExchangePrincipalResolver tokenExchangePrincipalResolver;
+  private final TokenExchangeClientAuthenticator clientAuthenticator;
 
   private final SecurityContext securityContext;
   private final JwksOperations jwksOperations;
@@ -74,6 +73,9 @@ public class AuthService {
     this.jwksOperations = new JwksOperations(securityContext);
     this.serverProperties = serverProperties;
     this.userRepository = repositories.getUserRepository();
+    this.clientAuthenticator = new TokenExchangeClientAuthenticator(serverProperties);
+    this.tokenExchangePrincipalResolver =
+        new TokenExchangePrincipalResolver(serverProperties, userRepository);
   }
 
   /**
@@ -96,13 +98,13 @@ public class AuthService {
    *   <li>scope: Not supported
    * </ul>
    *
-   * <p>The issuer of the incoming token must be in the configured allowlist
-   * (server.allowed-issuers) and the token must contain a valid audience claim matching the
-   * configured audiences (server.audiences). Audience entries support exact match or wildcard
-   * patterns with {@code *} (same rules as server.allowed-issuers). A single value of {@code *}
-   * disables audience validation. Both configurations are required when authorization is enabled.
+   * <p>When OAuth client credentials are presented ({@code Authorization: Basic} or form fields),
+   * the subject token must be issued for that client ({@code aud} or {@code azp}) and the UC user
+   * is resolved via {@code externalId}. Otherwise the UC user is resolved from the token {@code
+   * email} claim (or {@code sub} fallback) and audiences must match {@code server.audiences}.
    *
    * @param ext Specifies whether the issued token should be set as a cookie.
+   * @param request The aggregated HTTP request (for client credential parsing).
    * @param form The OAuth 2.0 token exchange request form.
    * @return The token exchange response
    */
@@ -110,6 +112,7 @@ public class AuthService {
   @com.linecorp.armeria.server.annotation.Blocking
   public HttpResponse grantToken(
       @Param("ext") Optional<TokenEndpointExtensionType> ext,
+      AggregatedHttpRequest request,
       @RequestConverter(ToOAuthTokenExchangeFormConverter.class) OAuthTokenExchangeForm form) {
     LOGGER.debug("Got token: {}", form);
 
@@ -149,7 +152,7 @@ public class AuthService {
     }
 
     List<String> audiences = serverProperties.getAudiences();
-    if (audiences.isEmpty()) {
+    if (audiences.isEmpty() && !clientAuthenticator.hasCredentials(request)) {
       LOGGER.error("No audiences configured");
       throw new OAuthInvalidRequestException(
           ErrorCode.INVALID_ARGUMENT,
@@ -188,17 +191,13 @@ public class AuthService {
           ErrorCode.UNAUTHENTICATED, "Token verification failed: " + e.getMessage(), e);
     }
 
-    if (!serverProperties.isAudienceValidationDisabled()
-        && !AudienceAllowlist.isAllowed(decodedJWT.getAudience(), audiences)) {
-      LOGGER.debug("Token rejected: audience not in allowlist");
-      throw new OAuthInvalidRequestException(ErrorCode.UNAUTHENTICATED, "Invalid audience");
-    }
+    String principalEmail =
+        tokenExchangePrincipalResolver.resolvePrincipalEmail(
+            form.getSubjectTokenType(), decodedJWT, request);
 
-    verifyPrincipal(decodedJWT);
+    LOGGER.debug("Validated. Creating access token for principal {}.", principalEmail);
 
-    LOGGER.debug("Validated. Creating access token.");
-
-    String accessToken = securityContext.createAccessToken(decodedJWT);
+    String accessToken = securityContext.createAccessToken(principalEmail);
 
     OAuthTokenExchangeInfo tokenExchangeInfo =
         new OAuthTokenExchangeInfo()
@@ -241,34 +240,6 @@ public class AuthService {
               return HttpResponse.of(headers, HttpData.ofUtf8(EMPTY_RESPONSE));
             })
         .orElse(HttpResponse.of(HttpStatus.OK, MediaType.JSON, EMPTY_RESPONSE));
-  }
-
-  private void verifyPrincipal(DecodedJWT decodedJWT) {
-    String subject =
-        decodedJWT
-            .getClaims()
-            .getOrDefault(JwtClaim.EMAIL.key(), decodedJWT.getClaim(JwtClaim.SUBJECT.key()))
-            .asString();
-
-    LOGGER.debug("Validating principal: {}", subject);
-
-    if (subject.equals("admin")) {
-      LOGGER.debug("admin always allowed");
-      return;
-    }
-
-    try {
-      User user = userRepository.getUserByEmail(subject);
-      if (user != null && user.getState() == User.StateEnum.ENABLED) {
-        LOGGER.debug("Principal {} is enabled", subject);
-        return;
-      }
-    } catch (Exception e) {
-      // IGNORE
-    }
-
-    throw new OAuthInvalidRequestException(
-        ErrorCode.INVALID_ARGUMENT, "User not allowed: " + subject);
   }
 
   private Cookie createCookie(String key, String value, String path, String maxAge) {

@@ -56,7 +56,18 @@ server.audiences=<Client ID provided earlier>
 When authorization is enabled, the server validates incoming identity tokens against configured issuers and audiences:
 
 - **server.allowed-issuers**: Comma-separated list of allowed token issuers (exact match or wildcard with `*`). Tokens from issuers not in this list will be rejected. This prevents attackers from using their own identity provider to forge tokens.
-- **server.audiences**: Comma-separated list of expected JWT audience values. Tokens must contain an `aud` value matching one of these entries (exact match or wildcard with `*`, same rules as allowed issuers). A single value of `*` disables audience validation (issuer and user checks still apply); that sentinel cannot be combined with other values.
+- **server.audiences**: Comma-separated list of expected JWT audience values for token exchange requests **without** OAuth client credentials. When client credentials are presented (`Authorization: Basic` or form `client_id`/`client_secret`), the subject token must be issued for that client (`aud` or `azp`) and the UC user is resolved via `externalId` instead.
+
+#### OAuth client credentials (programmatic exchange)
+
+Service integrations can authenticate with OAuth client credentials on `POST /auth/tokens` and resolve the UC principal by storing the OAuth `client_id` in the user's `externalId`:
+
+1. Create the UC user with a human-readable `email` and `externalId` set to the OAuth client id.
+2. Exchange a subject token (`id_token` or `access_token`) with `Authorization: Basic <client_id:client_secret>`.
+3. UC verifies the subject token was issued for that client and looks up the user by `externalId`.
+4. The issued UC access token uses the user's `email` for authorization checks.
+
+CLI and browser login flows without client credentials continue to resolve users from the token `email` claim (or `sub` fallback) against `server.audiences`.
 
 #### Multiple Identity Providers
 
@@ -81,14 +92,14 @@ accepts tokens whose `aud` includes `https://dev.dev.example.com` or
 server.audiences=unity-catalog-local,https://*.dev.example.com
 ```
 
-When the identity provider issues per-client UUID audiences that cannot be pre-listed (for example
-dynamic OAuth client IDs in `id_token.aud`), use `*` alone to skip audience validation while still
-enforcing issuer and user checks:
+When legacy email-based exchange cannot list dynamic OAuth client UUID audiences, use `*` alone to skip audience allowlist validation for requests **without** client credentials:
 
 ```properties
 server.audiences=*
 server.allowed-issuers=https://*.dev.example.com
 ```
+
+Prefer the OAuth client credentials + `externalId` flow for per-tenant service principals instead of `audiences=*`.
 
 ### Restart the UC Server
 
