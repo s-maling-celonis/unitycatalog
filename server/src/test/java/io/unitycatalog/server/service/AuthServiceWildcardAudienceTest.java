@@ -20,7 +20,7 @@ import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-/** Integration tests for audiences=* on legacy email-based token exchange. */
+/** Integration tests for audiences=* on email-based token exchange. */
 public class AuthServiceWildcardAudienceTest extends BaseAuthCRUDTest {
 
   private static final String TOKEN_ENDPOINT = "/api/1.0/unity-control/auth/tokens";

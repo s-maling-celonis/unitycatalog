@@ -33,18 +33,29 @@ public class TokenExchangePrincipalResolver {
     this.clientAuthenticator = new TokenExchangeClientAuthenticator(serverProperties);
   }
 
-  /** Validates audience rules and returns the UC principal email for the issued access token. */
+  /**
+   * Validates audience rules and returns the UC principal email for the issued access token.
+   *
+   * <p>Resolution order: match by token {@code email} (or {@code sub}), then by authenticated OAuth
+   * {@code client_id} mapped to {@code User.externalId}.
+   */
   public String resolvePrincipalEmail(
       TokenType subjectTokenType, DecodedJWT decodedJWT, AggregatedHttpRequest request) {
     Optional<String> authenticatedClientId = clientAuthenticator.authenticate(request);
+    validateAudience(subjectTokenType, decodedJWT, authenticatedClientId);
+
+    Optional<String> principalEmail = tryResolvePrincipalEmailFromTokenClaims(decodedJWT);
+    if (principalEmail.isPresent()) {
+      return principalEmail.get();
+    }
+
     if (authenticatedClientId.isPresent()) {
       String clientId = authenticatedClientId.get();
       validateSubjectTokenForClient(decodedJWT, clientId);
       return resolvePrincipalEmailForClient(clientId);
     }
 
-    validateConfiguredAudience(subjectTokenType, decodedJWT);
-    return resolvePrincipalEmailFromTokenClaims(decodedJWT);
+    throw new OAuthInvalidRequestException(ErrorCode.INVALID_ARGUMENT, "User not allowed");
   }
 
   private void validateSubjectTokenForClient(DecodedJWT decodedJWT, String clientId) {
@@ -64,13 +75,18 @@ public class TokenExchangePrincipalResolver {
     return audiences != null && audiences.contains(clientId);
   }
 
-  private void validateConfiguredAudience(TokenType subjectTokenType, DecodedJWT decodedJWT) {
+  private void validateAudience(
+      TokenType subjectTokenType, DecodedJWT decodedJWT, Optional<String> authenticatedClientId) {
     List<String> audiences = serverProperties.getAudiences();
-    if (audiences.isEmpty()) {
+    if (audiences.isEmpty() && authenticatedClientId.isEmpty()) {
       LOGGER.error("No audiences configured");
       throw new OAuthInvalidRequestException(
           ErrorCode.INVALID_ARGUMENT,
           "No audiences configured. Set server.audiences in server.properties");
+    }
+
+    if (audiences.isEmpty()) {
+      return;
     }
 
     if (serverProperties.isAudienceValidationDisabled()) {
@@ -87,6 +103,11 @@ public class TokenExchangePrincipalResolver {
           && subjectTokenReferencesClient(decodedJWT, configuredClientId)) {
         return;
       }
+    }
+
+    if (authenticatedClientId.isPresent()
+        && subjectTokenReferencesClient(decodedJWT, authenticatedClientId.get())) {
+      return;
     }
 
     LOGGER.debug("Token rejected: audience not in allowlist");
@@ -108,31 +129,34 @@ public class TokenExchangePrincipalResolver {
         ErrorCode.INVALID_ARGUMENT, "User not allowed: " + clientId);
   }
 
-  private String resolvePrincipalEmailFromTokenClaims(DecodedJWT decodedJWT) {
+  private Optional<String> tryResolvePrincipalEmailFromTokenClaims(DecodedJWT decodedJWT) {
     String subject =
         decodedJWT
             .getClaims()
             .getOrDefault(JwtClaim.EMAIL.key(), decodedJWT.getClaim(JwtClaim.SUBJECT.key()))
             .asString();
 
-    LOGGER.debug("Validating principal from token claims: {}", subject);
+    if (subject == null || subject.isBlank()) {
+      return Optional.empty();
+    }
+
+    LOGGER.debug("Trying principal resolution from token claims: {}", subject);
 
     if ("admin".equals(subject)) {
       LOGGER.debug("admin always allowed");
-      return subject;
+      return Optional.of(subject);
     }
 
     try {
       User user = userRepository.getUserByEmail(subject);
       if (user != null && user.getState() == User.StateEnum.ENABLED) {
-        LOGGER.debug("Principal {} is enabled", subject);
-        return user.getEmail();
+        LOGGER.debug("Principal {} resolved from token email", subject);
+        return Optional.of(user.getEmail());
       }
     } catch (Exception e) {
       // IGNORE
     }
 
-    throw new OAuthInvalidRequestException(
-        ErrorCode.INVALID_ARGUMENT, "User not allowed: " + subject);
+    return Optional.empty();
   }
 }

@@ -24,7 +24,7 @@ import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-/** Token exchange tests for OAuth client id to UC externalId principal matching. */
+/** Token exchange tests for email-first and externalId principal resolution. */
 public class AuthServiceClientPrincipalTest extends BaseAuthCRUDTest {
 
   private static final String TOKEN_ENDPOINT = "/api/1.0/unity-control/auth/tokens";
@@ -42,6 +42,20 @@ public class AuthServiceClientPrincipalTest extends BaseAuthCRUDTest {
     super.setUp();
     client = WebClient.builder(serverConfig.getServerUrl()).build();
     createServiceUser();
+  }
+
+  @Test
+  public void testIdTokenExchangeResolvesPrincipalByEmailBeforeExternalId() throws IOException {
+    String token =
+        createIdentityToken(
+            testIssuer, OAUTH_CLIENT_ID, SERVICE_EMAIL, testIssuerAlgorithm, testIssuerKeyId);
+
+    AggregatedHttpResponse response =
+        exchangeToken(token, "urn:ietf:params:oauth:token-type:id_token", true);
+
+    assertThat(response.status()).isEqualTo(HttpStatus.OK);
+    JsonNode body = MAPPER.readTree(response.contentUtf8());
+    assertThat(body.has("access_token")).isTrue();
   }
 
   @Test
@@ -87,11 +101,15 @@ public class AuthServiceClientPrincipalTest extends BaseAuthCRUDTest {
   }
 
   @Test
-  public void testClientPrincipalRejectsUnknownExternalId() {
+  public void testClientPrincipalRejectsWhenEmailAndExternalIdBothFail() {
     String unknownClientId = "unknown-client-id";
     String token =
         createIdentityToken(
-            testIssuer, unknownClientId, SERVICE_EMAIL, testIssuerAlgorithm, testIssuerKeyId);
+            testIssuer,
+            unknownClientId,
+            "unknown-email@example.com",
+            testIssuerAlgorithm,
+            testIssuerKeyId);
 
     AggregatedHttpResponse response =
         exchangeToken(

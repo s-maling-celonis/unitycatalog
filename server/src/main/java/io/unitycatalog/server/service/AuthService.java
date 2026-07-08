@@ -98,10 +98,12 @@ public class AuthService {
    *   <li>scope: Not supported
    * </ul>
    *
-   * <p>When OAuth client credentials are presented ({@code Authorization: Basic} or form fields),
-   * the subject token must be issued for that client ({@code aud} or {@code azp}) and the UC user
-   * is resolved via {@code externalId}. Otherwise the UC user is resolved from the token {@code
-   * email} claim (or {@code sub} fallback) and audiences must match {@code server.audiences}.
+   * <p>Principal resolution tries email mode first ({@code email} claim or {@code sub} fallback),
+   * then external id mode when client credentials are presented ({@code Authorization: Basic} or
+   * form fields) and email resolution fails. External id mode requires the subject token to be
+   * issued for that client ({@code aud} or {@code azp}) and looks up the UC user by {@code
+   * externalId}. Audience validation uses {@code server.audiences}, with additional acceptance when
+   * the subject token references the authenticated OAuth client.
    *
    * @param ext Specifies whether the issued token should be set as a cookie.
    * @param request The aggregated HTTP request (for client credential parsing).

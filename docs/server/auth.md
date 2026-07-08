@@ -60,14 +60,18 @@ When authorization is enabled, the server validates incoming identity tokens aga
 
 #### OAuth client credentials (programmatic exchange)
 
-Service integrations can authenticate with OAuth client credentials on `POST /auth/tokens` and resolve the UC principal by storing the OAuth `client_id` in the user's `externalId`:
+Service integrations can authenticate with OAuth client credentials on `POST /auth/tokens`.
+UC resolves the principal in two steps:
 
-1. Create the UC user with a human-readable `email` and `externalId` set to the OAuth client id.
-2. Exchange a subject token (`id_token` or `access_token`) with `Authorization: Basic <client_id:client_secret>`.
-3. UC verifies the subject token was issued for that client and looks up the user by `externalId`.
-4. The issued UC access token uses the user's `email` for authorization checks.
+1. **Email mode** — look up the user by the token `email` claim (or `sub` fallback).
+2. **External id mode** — when email resolution fails and client credentials are present, look up
+   the user by `externalId` matching the authenticated OAuth `client_id`. The subject token must be
+   issued for that client (`aud` or `azp`).
 
-CLI and browser login flows without client credentials continue to resolve users from the token `email` claim (or `sub` fallback) against `server.audiences`.
+Create UC users with a human-readable `email` for grants and set `externalId` to the OAuth client id
+for programmatic exchange. The issued UC access token always uses the resolved user's `email`.
+
+CLI and browser login flows without client credentials use email mode only.
 
 #### Multiple Identity Providers
 
@@ -92,7 +96,8 @@ accepts tokens whose `aud` includes `https://dev.dev.example.com` or
 server.audiences=unity-catalog-local,https://*.dev.example.com
 ```
 
-When legacy email-based exchange cannot list dynamic OAuth client UUID audiences, use `*` alone to skip audience allowlist validation for requests **without** client credentials:
+When email-based exchange cannot list dynamic OAuth client UUID audiences, use `*` alone to skip
+audience allowlist validation for requests **without** client credentials:
 
 ```properties
 server.audiences=*
