@@ -19,6 +19,8 @@
 
 package org.apache.spark.sql.catalyst.parser.extensions
 
+import io.unitycatalog.spark.ResolvePathCredentials
+
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.{FunctionIdentifier, TableIdentifier}
 import org.apache.spark.sql.catalyst.analysis.RewriteViewCommands
@@ -80,7 +82,10 @@ class UCSparkSqlExtensionsParser(delegate: ParserInterface) extends ParserInterf
    * Parse a string to a LogicalPlan.
    */
   override def parsePlan(sqlText: String): LogicalPlan = {
-    RewriteViewCommands(SparkSession.active).apply(delegate.parsePlan(sqlText))
+    val spark = SparkSession.active
+    val plan = RewriteViewCommands(spark).apply(delegate.parsePlan(sqlText))
+    // Vend credentials for bare cloud paths before the analyzer resolves (and lists) them.
+    ResolvePathCredentials(spark).apply(plan)
   }
 
   override def parseQuery(sqlText: String): LogicalPlan = {
