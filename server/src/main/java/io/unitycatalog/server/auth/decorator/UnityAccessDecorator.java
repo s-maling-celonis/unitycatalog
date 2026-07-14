@@ -415,7 +415,7 @@ public class UnityAccessDecorator implements DecoratingHttpServiceFunction {
     private boolean processPeekData(HttpData data) {
       // TODO: For now, we're going to assume JSON data, but might need to support other
       // content types.
-      if (contentType.is(MediaType.JSON)) {
+      if (contentType.equals(MediaType.JSON)) {
         try {
           dataStream.write(data.array());
           LOGGER.debug("Payload: {}", dataStream.toString());
