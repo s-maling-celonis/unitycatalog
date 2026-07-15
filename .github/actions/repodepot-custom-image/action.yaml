@@ -271,7 +271,9 @@ runs:
         context: ${{ format('{0}/{1}', inputs.working-directory, steps.component.outputs.docker-context) }}
         push: true
         platforms: linux/amd64,linux/arm64
-        tags: ${{ inputs.image-registry }}/${{ inputs.image-name }}:${{ inputs.image-tag }}
+        tags: |
+          ${{ inputs.image-registry }}/${{ inputs.image-name }}:${{ inputs.image-tag }}
+          ghcr.io/celonis/${{ inputs.image-name }}:${{ inputs.image-tag }}
         build-args: |
           HOME=/home/unitycatalog
         cache-from: type=gha
