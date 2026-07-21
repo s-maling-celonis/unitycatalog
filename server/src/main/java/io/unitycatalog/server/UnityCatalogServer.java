@@ -47,7 +47,6 @@ import io.unitycatalog.server.service.TemporaryModelVersionCredentialsService;
 import io.unitycatalog.server.service.TemporaryPathCredentialsService;
 import io.unitycatalog.server.service.TemporaryTableCredentialsService;
 import io.unitycatalog.server.service.TemporaryVolumeCredentialsService;
-import io.unitycatalog.server.service.ViewService;
 import io.unitycatalog.server.service.VolumeService;
 import io.unitycatalog.server.service.credential.CloudCredentialVendor;
 import io.unitycatalog.server.service.credential.StorageCredentialVendor;
@@ -110,7 +109,9 @@ public class UnityCatalogServer {
 
     // Init hibernate
     HibernateConfigurator hibernateConfigurator =
-        new HibernateConfigurator(unityCatalogServerBuilder.serverProperties);
+        unityCatalogServerBuilder.hibernateConfigurator != null
+            ? unityCatalogServerBuilder.hibernateConfigurator
+            : new HibernateConfigurator(unityCatalogServerBuilder.serverProperties);
     // Init all repositories
     Repositories repositories =
         new Repositories(hibernateConfigurator.getSessionFactory(), serverProperties);
@@ -179,7 +180,6 @@ public class UnityCatalogServer {
     SchemaService schemaService = new SchemaService(authorizer, repositories, serverProperties);
     VolumeService volumeService = new VolumeService(authorizer, repositories, serverProperties);
     TableService tableService = new TableService(authorizer, repositories, serverProperties);
-    ViewService viewService = new ViewService(authorizer, repositories, serverProperties);
     StagingTableService stagingTableService =
         new StagingTableService(authorizer, repositories, serverProperties);
     FunctionService functionService =
@@ -232,7 +232,6 @@ public class UnityCatalogServer {
         .annotatedService(BASE_PATH + "schemas", schemaService, requestConverterFunction)
         .annotatedService(BASE_PATH + "volumes", volumeService, requestConverterFunction)
         .annotatedService(BASE_PATH + "tables", tableService, requestConverterFunction)
-        .annotatedService(BASE_PATH + "views", viewService, requestConverterFunction)
         .annotatedService(
             BASE_PATH + "staging-tables", stagingTableService, requestConverterFunction)
         .annotatedService(BASE_PATH + "functions", functionService, requestConverterFunction)
@@ -399,6 +398,7 @@ public class UnityCatalogServer {
   public static class Builder {
     private int port;
     private ServerProperties serverProperties;
+    private HibernateConfigurator hibernateConfigurator;
     private CloudCredentialVendor cloudCredentialVendor;
 
     private Builder() {}
@@ -410,6 +410,18 @@ public class UnityCatalogServer {
 
     public UnityCatalogServer.Builder serverProperties(ServerProperties serverProperties) {
       this.serverProperties = serverProperties;
+      return this;
+    }
+
+    /**
+     * Uses the given {@link HibernateConfigurator} instead of creating one from the server
+     * properties. Lets tests share the server's session factory and customize the hibernate
+     * properties (e.g. run against PostgreSQL via Testcontainers). The server never closes this
+     * factory, so the caller owns its lifecycle.
+     */
+    public UnityCatalogServer.Builder hibernateConfigurator(
+        HibernateConfigurator hibernateConfigurator) {
+      this.hibernateConfigurator = hibernateConfigurator;
       return this;
     }
 
