@@ -14,7 +14,7 @@ metadata:
     repo-depot.celonis.dev/project-type: CUSTOM
     repo-depot.celonis.dev/image-name: celospark/unitycatalog-server
     repo-depot.celonis.dev/dply-release-approval-team: Storium
-    repo-depot.celonis.dev/workflow-runner-release: runner=4cpu-linux-x64
+    repo-depot.celonis.dev/workflow-runner-release: runner=8cpu-linux-x64
     repo-depot.celonis.dev/deploy-strategy: kargo
 spec:
   type: service
