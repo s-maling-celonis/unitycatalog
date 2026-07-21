@@ -66,9 +66,7 @@ public class TableRepository {
   private final FileOperations fileOperations;
   private final ServerProperties serverProperties;
   private static final PagedListingHelper<TableInfoDAO> LISTING_HELPER =
-      new PagedListingHelper<>(
-          TableInfoDAO.class,
-          (cb, root) -> cb.notEqual(root.get("type"), TableType.VIEW.toString()));
+      new PagedListingHelper<>(TableInfoDAO.class);
 
   public TableRepository(
       Repositories repositories, SessionFactory sessionFactory, ServerProperties serverProperties) {
@@ -106,7 +104,7 @@ public class TableRepository {
         session -> {
           LOGGER.debug("Getting storage location of table by id: {}", tableId);
           TableInfoDAO tableInfoDAO = session.get(TableInfoDAO.class, tableId);
-          if (tableInfoDAO != null && isTable(tableInfoDAO)) {
+          if (tableInfoDAO != null) {
             return new TableStorageLocationInfo(
                 NormalizedURL.from(tableInfoDAO.getUrl()),
                 TableType.fromValue(tableInfoDAO.getType()));
@@ -244,9 +242,6 @@ public class TableRepository {
           String schemaName = parts[1];
           String tableName = parts[2];
           TableInfoDAO tableInfoDAO = findTableOrThrow(session, catalogName, schemaName, tableName);
-          if (!isTable(tableInfoDAO)) {
-            throw new BaseException(ErrorCode.TABLE_NOT_FOUND, "Table not found: " + fullName);
-          }
           TableInfo tableInfo = tableInfoDAO.toTableInfo(true, catalogName, schemaName);
           RepositoryUtils.attachProperties(
               tableInfo, tableInfo.getTableId(), Constants.TABLE, session);
@@ -578,10 +573,6 @@ public class TableRepository {
     return dao;
   }
 
-  private boolean isTable(TableInfoDAO tableInfoDAO) {
-    return tableInfoDAO != null && !TableType.VIEW.toString().equals(tableInfoDAO.getType());
-  }
-
   public TableInfo createTable(CreateTable createTable) {
     return createTableImpl(createTable, Optional.empty(), (session, dao, tableInfo) -> tableInfo);
   }
@@ -690,7 +681,11 @@ public class TableRepository {
                 createTable.getProperties(), tableUUID.toString());
           } else if (tableType == TableType.METRIC_VIEW) {
             storageLocation = null;
-            validateMetricView(createTable);
+            validateMetricView(session, createTable);
+            tableUUID = UUID.randomUUID();
+          } else if (tableType == TableType.VIEW) {
+            storageLocation = null;
+            validateView(session, createTable);
             tableUUID = UUID.randomUUID();
           } else if (tableType == TableType.STREAMING_TABLE) {
             throw new BaseException(
@@ -738,7 +733,7 @@ public class TableRepository {
           // entity is still transient so they're folded into the single INSERT below.
           DeltaUniformUtils.applyToDao(tableInfoDAO, uniformFields);
           session.persist(tableInfoDAO);
-          if (tableType == TableType.METRIC_VIEW) {
+          if (RepositoryUtils.isViewLike(tableType.getValue())) {
             DependencyDAO.DependentType dependentType = DependencyDAO.DependentType.TABLE;
             List<DependencyDAO> depDAOs =
                 createTable.getViewDependencies().getDependencies().stream()
@@ -747,6 +742,8 @@ public class TableRepository {
             repositories
                 .getDependencyRepository()
                 .createDependencies(session, tableUUID, dependentType, depDAOs);
+            tableInfo.setViewDependencies(
+                new DependencyList().dependencies(DependencyDAO.toDependencyList(depDAOs)));
           }
           return mapper.apply(session, tableInfoDAO, tableInfo);
         },
@@ -759,29 +756,74 @@ public class TableRepository {
     T apply(Session session, TableInfoDAO dao, TableInfo tableInfo);
   }
 
-  private static void validateMetricView(CreateTable createTable) {
-    if (createTable.getViewDefinition() == null || createTable.getViewDefinition().isEmpty()) {
-      throw new BaseException(
-          ErrorCode.INVALID_ARGUMENT, "view_definition is required for metric view");
-    }
-    DependencyList viewDeps = createTable.getViewDependencies();
-    if (viewDeps == null || viewDeps.getDependencies() == null) {
-      throw new BaseException(
-          ErrorCode.INVALID_ARGUMENT, "view_dependencies is required for metric view");
-    }
-    if (viewDeps.getDependencies().isEmpty()) {
+  private void validateMetricView(Session session, CreateTable createTable) {
+    validateViewLike(session, createTable, "metric view");
+    if (createTable.getViewDependencies().getDependencies().isEmpty()) {
       throw new BaseException(
           ErrorCode.INVALID_ARGUMENT,
           "view_dependencies must contain at least one entry for metric view");
     }
   }
 
+  private void validateView(Session session, CreateTable createTable) {
+    validateViewLike(session, createTable, "view");
+  }
+
+  private void validateViewLike(Session session, CreateTable createTable, String entityLabel) {
+    if (createTable.getViewDefinition() == null || createTable.getViewDefinition().isEmpty()) {
+      throw new BaseException(
+          ErrorCode.INVALID_ARGUMENT, "view_definition is required for " + entityLabel);
+    }
+    DependencyList viewDeps = createTable.getViewDependencies();
+    if (viewDeps == null || viewDeps.getDependencies() == null) {
+      throw new BaseException(
+          ErrorCode.INVALID_ARGUMENT, "view_dependencies is required for " + entityLabel);
+    }
+    List<DependencyDAO> depDAOs =
+        viewDeps.getDependencies().stream()
+            .map(dep -> DependencyDAO.from(dep, null, DependencyDAO.DependentType.TABLE))
+            .collect(Collectors.toList());
+    validateDependenciesExist(session, depDAOs);
+  }
+
+  private void validateDependenciesExist(Session session, List<DependencyDAO> depDAOs) {
+    for (DependencyDAO dep : depDAOs) {
+      String fullName =
+          dep.getDependencyCatalog()
+              + "."
+              + dep.getDependencySchema()
+              + "."
+              + dep.getDependencyName();
+      UUID schemaId =
+          repositories
+              .getSchemaRepository()
+              .getSchemaIdOrThrow(session, dep.getDependencyCatalog(), dep.getDependencySchema());
+      switch (dep.getDependencyType()) {
+        case TABLE:
+          if (findBySchemaIdAndName(session, schemaId, dep.getDependencyName()) == null) {
+            throw new BaseException(
+                ErrorCode.NOT_FOUND, "View dependency table does not exist: " + fullName);
+          }
+          break;
+        case FUNCTION:
+          if (repositories
+                  .getFunctionRepository()
+                  .getFunctionDAO(session, schemaId, dep.getDependencyName())
+              == null) {
+            throw new BaseException(
+                ErrorCode.NOT_FOUND, "View dependency function does not exist: " + fullName);
+          }
+          break;
+        default:
+          throw new BaseException(
+              ErrorCode.INVALID_ARGUMENT,
+              "View dependency type " + dep.getDependencyType() + " not supported: " + fullName);
+      }
+    }
+  }
+
   public TableInfoDAO findBySchemaIdAndName(Session session, UUID schemaId, String name) {
-    // Tables API covers MANAGED, EXTERNAL, METRIC_VIEW, etc. SQL VIEWs use ViewRepository.
-    String hql =
-        "FROM TableInfoDAO t WHERE t.schemaId = :schemaId AND t.name = :name AND t.type <> '"
-            + TableType.VIEW
-            + "'";
+    String hql = "FROM TableInfoDAO t WHERE t.schemaId = :schemaId AND t.name = :name";
     Query<TableInfoDAO> query = session.createQuery(hql, TableInfoDAO.class);
     query.setParameter("schemaId", schemaId);
     query.setParameter("name", name);
@@ -862,31 +904,37 @@ public class TableRepository {
     return new ListTablesResponse().tables(result).nextPageToken(nextPageToken);
   }
 
-  public void deleteTable(String fullName) {
-    TransactionManager.executeWithTransaction(
+  /**
+   * Variant of {@link #deleteTable(String, String, String)} taking the table's three-part name as a
+   * single dotted string.
+   */
+  public TableInfoDAO deleteTable(String fullName) {
+    String[] parts = fullName.split("\\.");
+    if (parts.length != 3) {
+      throw new BaseException(ErrorCode.INVALID_ARGUMENT, "Invalid table name: " + fullName);
+    }
+    return deleteTable(parts[0], parts[1], parts[2]);
+  }
+
+  /**
+   * Deletes a table and returns the deleted table's DAO. The DAO is detached; do not access its
+   * lazy fields.
+   */
+  public TableInfoDAO deleteTable(String catalog, String schema, String table) {
+    return TransactionManager.executeWithTransaction(
         sessionFactory,
         session -> {
-          String[] parts = fullName.split("\\.");
-          if (parts.length != 3) {
-            throw new BaseException(ErrorCode.INVALID_ARGUMENT, "Invalid table name: " + fullName);
-          }
-          String catalogName = parts[0];
-          String schemaName = parts[1];
-          String tableName = parts[2];
           UUID schemaId =
-              repositories
-                  .getSchemaRepository()
-                  .getSchemaIdOrThrow(session, catalogName, schemaName);
-          deleteTable(session, schemaId, tableName);
-          return null;
+              repositories.getSchemaRepository().getSchemaIdOrThrow(session, catalog, schema);
+          return deleteTable(session, schemaId, table);
         },
         "Failed to delete table",
         /* readOnly = */ false);
   }
 
-  public void deleteTable(Session session, UUID schemaId, String tableName) {
+  TableInfoDAO deleteTable(Session session, UUID schemaId, String tableName) {
     TableInfoDAO tableInfoDAO = findBySchemaIdAndName(session, schemaId, tableName);
-    if (!isTable(tableInfoDAO)) {
+    if (tableInfoDAO == null) {
       throw new BaseException(ErrorCode.TABLE_NOT_FOUND, "Table not found: " + tableName);
     }
     if (TableType.MANAGED.getValue().equals(tableInfoDAO.getType())) {
@@ -899,7 +947,7 @@ public class TableRepository {
           .getDeltaCommitRepository()
           .permanentlyDeleteTableCommits(session, tableInfoDAO.getId());
     }
-    if (TableType.METRIC_VIEW.getValue().equals(tableInfoDAO.getType())) {
+    if (RepositoryUtils.isViewLike(tableInfoDAO.getType())) {
       repositories
           .getDependencyRepository()
           .deleteDependencies(session, tableInfoDAO.getId(), DependencyDAO.DependentType.TABLE);
@@ -907,5 +955,6 @@ public class TableRepository {
     PropertyRepository.findProperties(session, tableInfoDAO.getId(), Constants.TABLE)
         .forEach(session::remove);
     session.remove(tableInfoDAO);
+    return tableInfoDAO;
   }
 }
