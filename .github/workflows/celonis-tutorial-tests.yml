@@ -24,6 +24,10 @@ jobs:
       with:
         java-version: '17'
         distribution: 'temurin'
+        cache: 'sbt'
+
+    - name: Build server and CLI for tutorial smoke test
+      run: ./build/sbt -J-Xmx2G server/package examples/cli/package
 
     - name: Set up Python
       uses: actions/setup-python@7f4fc3e22c37d6ff65e88745f38bd3157c663f7c # v4.9.1
