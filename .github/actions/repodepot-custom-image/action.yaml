@@ -146,10 +146,12 @@ runs:
 
         case "${{ inputs.component-name }}" in
           unity-catalog-server)
-            # Dockerfile runs sbt package with HOME=/home/unitycatalog. Host-side package
-            # writes server/target/classpath with runner $HOME (often /root/.cache) and
-            # breaks the runtime image when those paths are copied or cached.
-            echo "Skipping host sbt package; Docker build owns server compilation"
+            # Keep Coursier cache under the repo so Docker can COPY it; classpath paths
+            # are rewritten to /home/unitycatalog in the Dockerfile PREBUILT path.
+            UC_HOME="${{ inputs.working-directory }}/build/ci-staging/home"
+            echo "UC_HOME=$UC_HOME" >> "$GITHUB_ENV"
+            echo "HOME=$UC_HOME" >> "$GITHUB_ENV"
+            mkdir -p "$UC_HOME"
             ;;
           unitycatalog-client|unitycatalog-controlapi|unitycatalog-hadoop|unitycatalog-spark)
             build_sbt_module "${{ steps.component.outputs.sbt-project }}" "${{ steps.component.outputs.project-path }}"
@@ -216,19 +218,26 @@ runs:
       working-directory: ${{ inputs.working-directory }}
       env:
         CI: true
+        REPO_DEPOT_VERSION: ${{ inputs.image-tag }}
+        # sbt JVM heap for RepoDepot test/assembly (tuned for ~8GB runners; bump if OOM on larger runners).
+        SBT_HEAP: -J-Xmx6g
       run: |
         set -euo pipefail
 
         case "${{ inputs.component-name }}" in
-          unity-catalog-server|unitycatalog-client|unitycatalog-controlapi)
-            build/sbt -J-Xmx6g "${{ steps.component.outputs.sbt-project }}/test"
+          unity-catalog-server)
+            build/sbt "set ThisBuild / version := \"${REPO_DEPOT_VERSION}\"" \
+              $SBT_HEAP server/test server/package
+            ;;
+          unitycatalog-client|unitycatalog-controlapi)
+            build/sbt $SBT_HEAP "${{ steps.component.outputs.sbt-project }}/test"
             ;;
           unitycatalog-hadoop)
-            build/sbt -J-Xmx6g serverShaded/assembly \
+            build/sbt $SBT_HEAP serverShaded/assembly \
               "${{ steps.component.outputs.sbt-project }}/test"
             ;;
           unitycatalog-spark)
-            build/sbt -J-Xmx6g -DsparkVersion=4.1.0 -DdeltaVersion=4.2.0 publishLocal \
+            build/sbt $SBT_HEAP -DsparkVersion=4.1.0 -DdeltaVersion=4.2.0 publishLocal \
               "${{ steps.component.outputs.sbt-project }}/test"
             ;;
           unity-catalog-ui)
@@ -257,12 +266,6 @@ runs:
       if: steps.component.outputs.needs-image == 'true'
       uses: docker/setup-buildx-action@v3
 
-    - name: Prepare Docker context for unity-catalog-server
-      if: steps.component.outputs.needs-image == 'true' && inputs.component-name == 'unity-catalog-server'
-      shell: bash
-      working-directory: ${{ inputs.working-directory }}
-      run: rm -rf server/target
-
     - name: Create Docker Image
       if: steps.component.outputs.needs-image == 'true'
       id: create-image
@@ -276,6 +279,9 @@ runs:
           ghcr.io/celonis/${{ inputs.image-name }}:${{ inputs.image-tag }}
         build-args: |
           HOME=/home/unitycatalog
+          PREBUILT=${{ inputs.component-name == 'unity-catalog-server' && 'true' || 'false' }}
+          BUILD_ROOT=${{ inputs.working-directory }}
+          BUILD_HOME=${{ inputs.working-directory }}/build/ci-staging/home
         cache-from: type=gha
         cache-to: type=gha,mode=max,ignore-error=true
 
