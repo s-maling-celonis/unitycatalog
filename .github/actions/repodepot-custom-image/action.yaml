@@ -258,6 +258,21 @@ runs:
       with:
         node-version-file: tooling/package.json
 
+    # Re-login immediately before buildx push. Parent RepoDepot ECR login happens before
+    # CUSTOM (and before long sbt test/package); buildx's docker-container driver may not
+    # inherit those credentials when pushing after a new builder is created.
+    - name: Login to AWS ECR
+      if: steps.component.outputs.needs-image == 'true'
+      uses: aws-actions/amazon-ecr-login@v2
+
+    - name: Login to GHCR
+      if: steps.component.outputs.needs-image == 'true'
+      uses: docker/login-action@v3
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ inputs.github-token }}
+
     - name: Set up QEMU
       if: steps.component.outputs.needs-image == 'true'
       uses: docker/setup-qemu-action@v3
