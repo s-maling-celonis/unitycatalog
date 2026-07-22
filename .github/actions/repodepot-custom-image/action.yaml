@@ -219,23 +219,25 @@ runs:
       env:
         CI: true
         REPO_DEPOT_VERSION: ${{ inputs.image-tag }}
+        # sbt JVM heap for RepoDepot test/assembly (tuned for ~8GB runners; bump if OOM on larger runners).
+        SBT_HEAP: -J-Xmx6g
       run: |
         set -euo pipefail
 
         case "${{ inputs.component-name }}" in
           unity-catalog-server)
             build/sbt "set ThisBuild / version := \"${REPO_DEPOT_VERSION}\"" \
-              -J-Xmx6g server/test server/package
+              $SBT_HEAP server/test server/package
             ;;
           unitycatalog-client|unitycatalog-controlapi)
-            build/sbt -J-Xmx6g "${{ steps.component.outputs.sbt-project }}/test"
+            build/sbt $SBT_HEAP "${{ steps.component.outputs.sbt-project }}/test"
             ;;
           unitycatalog-hadoop)
-            build/sbt -J-Xmx6g serverShaded/assembly \
+            build/sbt $SBT_HEAP serverShaded/assembly \
               "${{ steps.component.outputs.sbt-project }}/test"
             ;;
           unitycatalog-spark)
-            build/sbt -J-Xmx6g -DsparkVersion=4.1.0 -DdeltaVersion=4.2.0 publishLocal \
+            build/sbt $SBT_HEAP -DsparkVersion=4.1.0 -DdeltaVersion=4.2.0 publishLocal \
               "${{ steps.component.outputs.sbt-project }}/test"
             ;;
           unity-catalog-ui)
