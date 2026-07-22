@@ -164,7 +164,7 @@ runs:
             ;;
           unitycatalog-spark)
             build/sbt "set ThisBuild / version := \"\${REPO_DEPOT_VERSION}\"" \
-              -DsparkVersion=4.2.0 -DdeltaVersion=4.2.0 \
+              -DsparkVersion=4.2.0 -DdeltaVersion=4.3.1 \
               "spark/package" "spark/makePom"
             sed -i 's#git@github.com:unitycatalog/unitycatalog.git#git@github.com:celonis/unitycatalog.git#g' \
               "$(find "${{ steps.component.outputs.project-path }}" -name '*.pom')"
@@ -252,7 +252,7 @@ runs:
               "${{ steps.component.outputs.sbt-project }}/test"
             ;;
           unitycatalog-spark)
-            build/sbt $SBT_HEAP -DsparkVersion=4.2.0 -DdeltaVersion=4.2.0 publishLocal \
+            build/sbt $SBT_HEAP -DsparkVersion=4.2.0 -DdeltaVersion=4.3.1 publishLocal \
               "${{ steps.component.outputs.sbt-project }}/test"
             ;;
           unity-catalog-ui)
