@@ -12,7 +12,7 @@ inputs:
   delta-version:
     description: Delta version used to compile integration tests.
     required: false
-    default: '4.3.1'
+    default: '4.2.0'
 
 runs:
   using: composite
