@@ -159,8 +159,17 @@ runs:
             # PREBUILT staging home is configured before Setup Java.
             mkdir -p "${HOME}/.cache/coursier"
             ;;
-          unitycatalog-client|unitycatalog-controlapi|unitycatalog-hadoop|unitycatalog-spark)
+          unitycatalog-client|unitycatalog-controlapi|unitycatalog-hadoop)
             build_sbt_module "${{ steps.component.outputs.sbt-project }}" "${{ steps.component.outputs.project-path }}"
+            ;;
+          unitycatalog-spark)
+            build/sbt "set ThisBuild / version := \"\${REPO_DEPOT_VERSION}\"" \
+              -DsparkVersion=4.2.0 -DdeltaVersion=4.2.0 \
+              "spark/package" "spark/makePom"
+            sed -i 's#git@github.com:unitycatalog/unitycatalog.git#git@github.com:celonis/unitycatalog.git#g' \
+              "$(find "${{ steps.component.outputs.project-path }}" -name '*.pom')"
+            sed -i 's#<groupId>io.unitycatalog</groupId>#<groupId>cloud.celonis</groupId>#g' \
+              "$(find "${{ steps.component.outputs.project-path }}" -name '*.pom')"
             ;;
           unity-catalog-ui)
             cd ui
@@ -243,7 +252,7 @@ runs:
               "${{ steps.component.outputs.sbt-project }}/test"
             ;;
           unitycatalog-spark)
-            build/sbt $SBT_HEAP -DsparkVersion=4.1.0 -DdeltaVersion=4.2.0 publishLocal \
+            build/sbt $SBT_HEAP -DsparkVersion=4.2.0 -DdeltaVersion=4.2.0 publishLocal \
               "${{ steps.component.outputs.sbt-project }}/test"
             ;;
           unity-catalog-ui)
