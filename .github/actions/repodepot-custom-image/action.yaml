@@ -108,6 +108,16 @@ runs:
             ;;
         esac >> "$GITHUB_OUTPUT"
 
+    - name: Prepare PREBUILT staging home
+      if: inputs.component-name == 'unity-catalog-server'
+      shell: bash
+      run: |
+        UC_HOME="${GITHUB_WORKSPACE}/${{ inputs.working-directory }}/build/ci-staging/home"
+        echo "UC_HOME=$UC_HOME" >> "$GITHUB_ENV"
+        echo "HOME=$UC_HOME" >> "$GITHUB_ENV"
+        echo "COURSIER_CACHE=$UC_HOME/.cache/coursier" >> "$GITHUB_ENV"
+        mkdir -p "$UC_HOME/.cache/coursier"
+
     - name: Setup Java
       if: inputs.component-name != 'unity-catalog-ui'
       uses: celonis/core-setup-java-action@v4.0.2
@@ -146,12 +156,8 @@ runs:
 
         case "${{ inputs.component-name }}" in
           unity-catalog-server)
-            # Keep Coursier cache under the repo so Docker can COPY it; classpath paths
-            # are rewritten to /home/unitycatalog in the Dockerfile PREBUILT path.
-            UC_HOME="${GITHUB_WORKSPACE}/${{ inputs.working-directory }}/build/ci-staging/home"
-            echo "UC_HOME=$UC_HOME" >> "$GITHUB_ENV"
-            echo "HOME=$UC_HOME" >> "$GITHUB_ENV"
-            mkdir -p "$UC_HOME"
+            # PREBUILT staging home is configured before Setup Java.
+            mkdir -p "${HOME}/.cache/coursier"
             ;;
           unitycatalog-client|unitycatalog-controlapi|unitycatalog-hadoop|unitycatalog-spark)
             build_sbt_module "${{ steps.component.outputs.sbt-project }}" "${{ steps.component.outputs.project-path }}"
@@ -265,9 +271,24 @@ runs:
       run: |
         set -euo pipefail
         # .dockerignore excludes server/target/; stage under build/ so COPY build/ includes it.
-        rm -rf build/ci-staging/prebuilt/server/target
-        mkdir -p build/ci-staging/prebuilt/server
+        rm -rf build/ci-staging/prebuilt/server/target build/ci-staging/prebuilt/home
+        mkdir -p build/ci-staging/prebuilt/server build/ci-staging/prebuilt/home
         cp -a server/target build/ci-staging/prebuilt/server/
+
+        if [ -d "${HOME}/.cache/coursier" ]; then
+          cp -a "${HOME}/.cache" build/ci-staging/prebuilt/home/
+        elif [ -d /home/runner/.cache/coursier ]; then
+          mkdir -p build/ci-staging/prebuilt/home/.cache
+          cp -a /home/runner/.cache/coursier build/ci-staging/prebuilt/home/.cache/
+        else
+          echo "No coursier cache found under HOME or /home/runner/.cache" >&2
+          exit 1
+        fi
+
+        # Normalize runner-local cache paths before Docker rewrites BUILD_HOME/BUILD_ROOT.
+        if [ -f build/ci-staging/prebuilt/server/target/classpath ]; then
+          sed -i "s|/home/runner/.cache|${HOME}/.cache|g" build/ci-staging/prebuilt/server/target/classpath
+        fi
 
     # Re-login immediately before buildx push. Parent RepoDepot ECR login happens before
     # CUSTOM (and before long sbt test/package); buildx's docker-container driver may not

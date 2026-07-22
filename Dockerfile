@@ -35,12 +35,16 @@ RUN if [ "$PREBUILT" = "true" ]; then \
       && chown -R "$USER:$USER" "$HOME/server/target"; \
     fi
 RUN if [ "$PREBUILT" = "true" ]; then \
-      if [ ! -d "$HOME/build/ci-staging/home/.cache" ]; then \
-        echo "PREBUILT build requires $HOME/build/ci-staging/home/.cache from host sbt" >&2; \
+      if [ -d "$HOME/build/ci-staging/prebuilt/home/.cache" ]; then \
+        CACHE_SRC="$HOME/build/ci-staging/prebuilt/home/.cache"; \
+      elif [ -d "$HOME/build/ci-staging/home/.cache" ]; then \
+        CACHE_SRC="$HOME/build/ci-staging/home/.cache"; \
+      else \
+        echo "PREBUILT build requires coursier cache under build/ci-staging" >&2; \
         exit 1; \
       fi; \
       mkdir -p "$HOME/.cache" \
-      && cp -a "$HOME/build/ci-staging/home/.cache/." "$HOME/.cache/" \
+      && cp -a "$CACHE_SRC/." "$HOME/.cache/" \
       && chown -R "$USER:$USER" "$HOME/.cache"; \
     fi
 USER $USER
@@ -83,6 +87,8 @@ RUN --mount=type=bind,from=base,source=/home/unitycatalog,target=/base,readonly 
 set -e
 if [ -d /base/.cache ]; then
   cp -a /base/.cache /home/unitycatalog/.cache
+elif [ -d /base/build/ci-staging/prebuilt/home/.cache ]; then
+  cp -a /base/build/ci-staging/prebuilt/home/.cache /home/unitycatalog/.cache
 elif [ -d /base/build/ci-staging/home/.cache ]; then
   cp -a /base/build/ci-staging/home/.cache /home/unitycatalog/.cache
 else
