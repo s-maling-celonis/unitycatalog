@@ -38,6 +38,33 @@ Verify all repository facts on every run.
   permanent facts.
 - Preserve source-SHA and PR traceability for every reapplied group.
 
+## Confirmation gates
+
+Confirmation prompts are safety gates before destructive writes, not optional
+skip paths. Do not offer "skip for now" alternatives for required steps.
+
+For a full reconciliation run, both branches are in scope:
+
+- **Step 1 (`main` rewrite) is required.** Ask yes/no before the
+  `--force-with-lease` push. The only legitimate deferrals are when the user
+  explicitly asked to reconcile **only** `develop`, or `main` was already
+  rewritten to the current `UP_SHA` in the same run.
+- **Upstream is always the rebuild base.** The `-after` branch starts at `UP`;
+  every upstream commit on `UP` is included automatically. Never list upstream
+  commits as a multi-select inclusion group.
+- **Only Celonis-specific groups are selectable** in Step 6 (CI, storage,
+  auth, etc.). Superseded or retired groups stay omitted unless the user
+  objects.
+- **Conflicts need explicit resolution** (Step 5), not inclusion toggles — e.g.
+  when upstream and Celonis both extend the same API, present adaptation
+  options, not "include upstream commits yes/no".
+
+Use at most three confirmation prompts before Step 7:
+
+1. Yes/no — proceed with develop reconciliation (after Step 1 completes).
+2. Multi-select — which Celonis groups to replay.
+3. Single choice — any unresolved semantic conflict.
+
 ## Recorded state
 
 Record these values once at the indicated gates; never silently recompute one
@@ -87,7 +114,9 @@ re-evaluate every group against current upstream.
 
 ### Step 1: Rewrite main
 
-Do this only after explicit confirmation.
+Required on every full reconciliation run. Do this only after explicit yes/no
+confirmation immediately before the push — not as an optional branch of the
+workflow.
 
 1. Record the current `origin/main` SHA as `EXPECTED_MAIN`.
 2. Create `MAIN_REWRITE` from `UP` and a timestamped backup at `origin/main`.
@@ -163,16 +192,23 @@ Assign one status, splitting mixed groups first:
 
 ### Steps 4–6: Decide
 
-Present `Group | # commits | Status | Notes/risk`, with detailed evidence and
-SHA mappings below it.
+Present two tables:
+
+1. **Upstream delta since the last reconciliation** — informational only.
+   These commits are absorbed automatically because `-after` starts at `UP`.
+   Classify each as clean adopt or needs adaptation alongside a Celonis group.
+2. **Celonis groups** — `Group | # commits | Status | Notes/risk`, with
+   detailed evidence and SHA mappings below it.
 
 For conflicts and ambiguous adaptations, explain the concrete behavioral
 tension and offer 2–3 resolution options using `AskQuestion`. Never choose a
-semantic resolution silently.
+semantic resolution silently. Adaptation of upstream changes (e.g. merging two
+API fields) belongs here, not in the group-inclusion prompt.
 
-Then use one multi-select `AskQuestion` for group inclusion. Recommend
-still-required groups, omit superseded groups while allowing objections, and
-get explicit confirmation before any Step 7 write.
+Then use one multi-select `AskQuestion` for **Celonis group inclusion only**.
+Recommend still-required groups, omit superseded groups while allowing
+objections, and get explicit confirmation before any Step 7 write. Do not list
+upstream commits in this prompt.
 
 ### Step 7: Build the reviewed branch
 
