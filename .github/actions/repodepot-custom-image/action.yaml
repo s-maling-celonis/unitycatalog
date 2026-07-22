@@ -148,7 +148,7 @@ runs:
           unity-catalog-server)
             # Keep Coursier cache under the repo so Docker can COPY it; classpath paths
             # are rewritten to /home/unitycatalog in the Dockerfile PREBUILT path.
-            UC_HOME="${{ inputs.working-directory }}/build/ci-staging/home"
+            UC_HOME="${GITHUB_WORKSPACE}/${{ inputs.working-directory }}/build/ci-staging/home"
             echo "UC_HOME=$UC_HOME" >> "$GITHUB_ENV"
             echo "HOME=$UC_HOME" >> "$GITHUB_ENV"
             mkdir -p "$UC_HOME"
@@ -258,6 +258,17 @@ runs:
       with:
         node-version-file: tooling/package.json
 
+    - name: Stage PREBUILT server artifacts for Docker
+      if: steps.component.outputs.needs-image == 'true' && inputs.component-name == 'unity-catalog-server'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        set -euo pipefail
+        # .dockerignore excludes server/target/; stage under build/ so COPY build/ includes it.
+        rm -rf build/ci-staging/prebuilt/server/target
+        mkdir -p build/ci-staging/prebuilt/server
+        cp -a server/target build/ci-staging/prebuilt/server/
+
     # Re-login immediately before buildx push. Parent RepoDepot ECR login happens before
     # CUSTOM (and before long sbt test/package); buildx's docker-container driver may not
     # inherit those credentials when pushing after a new builder is created.
@@ -295,8 +306,8 @@ runs:
         build-args: |
           HOME=/home/unitycatalog
           PREBUILT=${{ inputs.component-name == 'unity-catalog-server' && 'true' || 'false' }}
-          BUILD_ROOT=${{ inputs.working-directory }}
-          BUILD_HOME=${{ inputs.working-directory }}/build/ci-staging/home
+          BUILD_ROOT=${{ github.workspace }}/${{ inputs.working-directory }}
+          BUILD_HOME=${{ github.workspace }}/${{ inputs.working-directory }}/build/ci-staging/home
         cache-from: type=gha
         cache-to: type=gha,mode=max,ignore-error=true
 

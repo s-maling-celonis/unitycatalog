@@ -25,7 +25,20 @@ RUN apk add --no-cache bash \
  && chown -R "$USER:$USER" "$HOME"
 
 USER root
-RUN if [ "$PREBUILT" = "true" ] && [ -d "$HOME/build/ci-staging/home/.cache" ]; then \
+RUN if [ "$PREBUILT" = "true" ]; then \
+      if [ ! -d "$HOME/build/ci-staging/prebuilt/server/target" ]; then \
+        echo "PREBUILT build requires $HOME/build/ci-staging/prebuilt/server/target from host sbt" >&2; \
+        exit 1; \
+      fi; \
+      mkdir -p "$HOME/server/target" \
+      && cp -a "$HOME/build/ci-staging/prebuilt/server/target/." "$HOME/server/target/" \
+      && chown -R "$USER:$USER" "$HOME/server/target"; \
+    fi
+RUN if [ "$PREBUILT" = "true" ]; then \
+      if [ ! -d "$HOME/build/ci-staging/home/.cache" ]; then \
+        echo "PREBUILT build requires $HOME/build/ci-staging/home/.cache from host sbt" >&2; \
+        exit 1; \
+      fi; \
       mkdir -p "$HOME/.cache" \
       && cp -a "$HOME/build/ci-staging/home/.cache/." "$HOME/.cache/" \
       && chown -R "$USER:$USER" "$HOME/.cache"; \
@@ -37,6 +50,9 @@ USER root
 RUN if [ "$PREBUILT" = "true" ] && [ -f "$HOME/server/target/classpath" ]; then \
       sed -i "s|${BUILD_HOME}|${HOME}|g; s|${BUILD_ROOT}|${HOME}|g" "$HOME/server/target/classpath" \
       && chown "$USER:$USER" "$HOME/server/target/classpath"; \
+    elif [ "$PREBUILT" = "true" ]; then \
+      echo "PREBUILT build requires $HOME/server/target/classpath" >&2; \
+      exit 1; \
     fi
 USER $USER
 
@@ -61,8 +77,22 @@ COPY --from=base $HOME/examples $HOME/examples
 COPY --from=base $HOME/server $HOME/server
 COPY --from=base $HOME/api $HOME/api
 COPY --from=base $HOME/clients $HOME/clients
-COPY --from=base $HOME/target $HOME/target
-COPY --from=base $HOME/.cache $HOME/.cache
+# Root target/ exists only after in-Docker sbt (non-PREBUILT). Coursier cache
+# lives at $HOME/.cache after base RUN (PREBUILT) or in-Docker sbt (non-PREBUILT).
+RUN --mount=type=bind,from=base,source=/home/unitycatalog,target=/base,readonly <<'EOF'
+set -e
+if [ -d /base/.cache ]; then
+  cp -a /base/.cache /home/unitycatalog/.cache
+elif [ -d /base/build/ci-staging/home/.cache ]; then
+  cp -a /base/build/ci-staging/home/.cache /home/unitycatalog/.cache
+else
+  echo "No coursier cache found in base image" >&2
+  exit 1
+fi
+if [ -d /base/target ]; then
+  cp -a /base/target /home/unitycatalog/target
+fi
+EOF
 
 # Create a service user with read and execute permissions and write permissions of the ./etc directory
 RUN <<EOF
