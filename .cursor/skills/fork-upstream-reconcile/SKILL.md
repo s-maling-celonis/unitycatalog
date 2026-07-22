@@ -43,27 +43,38 @@ Verify all repository facts on every run.
 Confirmation prompts are safety gates before destructive writes, not optional
 skip paths. Do not offer "skip for now" alternatives for required steps.
 
+**Selecting "no" (or cancelling) fails the skill.** Stop immediately, report
+what completed and what remains, and do not continue to later steps or perform
+any destructive writes. A "no" is not a deferral — the run is incomplete until
+the user starts again and confirms.
+
 For a full reconciliation run, both branches are in scope:
 
 - **Step 1 (`main` rewrite) is required.** Ask yes/no before the
-  `--force-with-lease` push. The only legitimate deferrals are when the user
-  explicitly asked to reconcile **only** `develop`, or `main` was already
-  rewritten to the current `UP_SHA` in the same run.
+  `--force-with-lease` push. **"No" fails the run** — do not proceed to Step 2.
+  The only legitimate deferrals are when the user explicitly asked to reconcile
+  **only** `develop`, or `main` was already rewritten to the current `UP_SHA`
+  in the same run.
 - **Upstream is always the rebuild base.** The `-after` branch starts at `UP`;
   every upstream commit on `UP` is included automatically. Never list upstream
   commits as a multi-select inclusion group.
 - **Only Celonis-specific groups are selectable** in Step 6 (CI, storage,
   auth, etc.). Superseded or retired groups stay omitted unless the user
-  objects.
+  objects. **An empty selection or cancellation fails the run** — do not build
+  with zero groups unless the user explicitly chose to drop everything.
 - **Conflicts need explicit resolution** (Step 5), not inclusion toggles — e.g.
   when upstream and Celonis both extend the same API, present adaptation
-  options, not "include upstream commits yes/no".
+  options, not "include upstream commits yes/no". **Unresolved conflicts fail
+  the run.**
 
-Use at most three confirmation prompts before Step 7:
+Use at most three confirmation prompts before Step 7. Label each "no" option
+so the user knows the run will stop (e.g. "No — stop reconciliation"):
 
-1. Yes/no — proceed with develop reconciliation (after Step 1 completes).
-2. Multi-select — which Celonis groups to replay.
-3. Single choice — any unresolved semantic conflict.
+1. Yes/no — proceed with develop reconciliation (after Step 1 completes). **No
+   fails the run.**
+2. Multi-select — which Celonis groups to replay. **Empty/cancel fails the run.**
+3. Single choice — any unresolved semantic conflict. **No selection fails the
+   run.**
 
 ## Recorded state
 
