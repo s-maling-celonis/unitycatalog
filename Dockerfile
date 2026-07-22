@@ -55,15 +55,14 @@ ENV HOME=$HOME \
     JAVA_HOME=$JAVA_HOME \
     PATH="${JAVA_HOME}/bin:${PATH}"
 
-# Copy build artifacts from base stage
-COPY --from=base --parents \
-    $HOME/examples/ \
-    $HOME/server/ \
-    $HOME/api/ \
-    $HOME/clients/ \
-    $HOME/target/ \
-    $HOME/.cache/ \
-    /
+# Copy build artifacts from base stage. Use directory-to-directory COPY (not
+# --parents with trailing slashes) so server/target/ is preserved under server/.
+COPY --from=base $HOME/examples $HOME/examples
+COPY --from=base $HOME/server $HOME/server
+COPY --from=base $HOME/api $HOME/api
+COPY --from=base $HOME/clients $HOME/clients
+COPY --from=base $HOME/target $HOME/target
+COPY --from=base $HOME/.cache $HOME/.cache
 
 # Create a service user with read and execute permissions and write permissions of the ./etc directory
 RUN <<EOF

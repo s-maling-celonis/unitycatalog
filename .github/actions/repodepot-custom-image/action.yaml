@@ -307,8 +307,14 @@ runs:
         IMAGE: ${{ inputs.image-registry }}/${{ inputs.image-name }}:${{ inputs.image-tag }}
       run: |
         set -euo pipefail
-        docker run --rm --platform linux/amd64 --entrypoint sh "$IMAGE" -c '
-          grep -q "/home/unitycatalog/.cache" /home/unitycatalog/server/target/classpath
+        docker run --rm --platform linux/amd64 --user root --entrypoint sh "$IMAGE" -c '
+          CLASSPATH=/home/unitycatalog/server/target/classpath
+          if [ ! -f "$CLASSPATH" ]; then
+            echo "Missing $CLASSPATH; listing /home/unitycatalog/server/target:" >&2
+            ls -la /home/unitycatalog/server/target 2>&1 || ls -la /home/unitycatalog/server 2>&1 || true
+            exit 1
+          fi
+          grep -q "/home/unitycatalog/.cache" "$CLASSPATH"
           test -d /home/unitycatalog/.cache/coursier
         '
 
