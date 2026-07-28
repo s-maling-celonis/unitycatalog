@@ -1,9 +1,20 @@
 package io.unitycatalog.spark
 
+import java.net.URI
+import java.util
+import java.util.Locale
+
+import scala.collection.JavaConverters._
+import scala.collection.convert.ImplicitConversions._
+import scala.collection.mutable.ArrayBuffer
+import scala.language.existentials
+
 import io.unitycatalog.client.api.{SchemasApi, TablesApi}
 import io.unitycatalog.client.auth.TokenProvider
-import io.unitycatalog.client.model._
-import io.unitycatalog.client.model.TableInfo
+import io.unitycatalog.client.model.{
+  TableInfo => UCTableInfo,
+  _
+}
 import io.unitycatalog.client.retry.JitterDelayRetryPolicy
 import io.unitycatalog.client.{ApiClient, ApiException}
 import io.unitycatalog.hadoop.UCCredentialHadoopConfs
@@ -14,25 +25,15 @@ import io.unitycatalog.spark.utils.OptionsUtil
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 import org.apache.spark.internal.Logging
-import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.analysis.{NamespaceAlreadyExistsException, NoSuchNamespaceException, NoSuchTableException}
-import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType, CatalogUtils}
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.catalyst.analysis.{NamespaceAlreadyExistsException, NoSuchNamespaceException, NoSuchTableException, TableAlreadyExistsException, ViewAlreadyExistsException}
+import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType, CatalogUtils}
 import org.apache.spark.sql.connector.catalog._
 import org.apache.spark.sql.connector.expressions.Transform
 import org.apache.spark.sql.types._
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
-import org.json4s.JsonDSL._
-import org.json4s.jackson.JsonMethods.{compact, parse, render}
 import org.sparkproject.guava.base.Preconditions
-
-import java.net.URI
-import java.util
-import java.util.Locale
-import scala.collection.JavaConverters._
-import scala.collection.convert.ImplicitConversions._
-import scala.collection.mutable.ArrayBuffer
-import scala.language.existentials
 
 /**
  * A Spark catalog plugin to get/manage tables in Unity Catalog.
@@ -40,6 +41,7 @@ import scala.language.existentials
 class UCSingleCatalog
   extends StagingTableCatalog
   with SupportsNamespaces
+  with UCSingleCatalogViewSupport
   with Logging {
 
   private[this] var uri: URI = null
@@ -60,7 +62,22 @@ class UCSingleCatalog
   // Delta creates can take the new path.
   private[this] var deltaCatalogLoaded: Boolean = false
 
-  @volatile private var delegate: TableCatalog = null
+  // The connector keeps two references to the catalog underneath:
+  //
+  //   - `delegate` is the *outermost* `TableCatalog` the connector exposes for table
+  //     operations. When DeltaCatalog is on the classpath it wraps `ucProxy` via
+  //     `DelegatingCatalogExtension`, so Delta can intercept managed / external Delta-table
+  //     create / load paths and add Delta-specific behavior. When DeltaCatalog is not on the
+  //     classpath, `delegate` is set to `ucProxy` itself so non-Delta table paths still work.
+  //
+  //   - `ucProxy` is the underlying UC REST client wrapped as a Spark `RelationCatalog`. It
+  //     is always the real `UCProxy` instance so we can route view operations directly. Delta
+  //     has no role in view handling, so view-side methods (`createView` / `loadView` /
+  //     `dropView` / `listViews`) bypass `delegate` and call `ucProxy` directly, avoiding the
+  //     need to unwrap the `DelegatingCatalogExtension` chain.
+  // Protected so the per-Spark-version `UCSingleCatalogViewSupport` trait can read them.
+  @volatile protected[spark] var delegate: TableCatalog = null
+  @volatile protected[spark] var ucProxy: UCProxy = null
 
   override def initialize(name: String, options: CaseInsensitiveStringMap): Unit = {
     val urlStr = options.get(OptionsUtil.URI)
@@ -80,26 +97,36 @@ class UCSingleCatalog
     apiClient = ApiClientFactory.createApiClient(
       JitterDelayRetryPolicy.builder().build(),uri, tokenProvider)
     tablesApi = new TablesApi(apiClient)
-    val proxy = new UCProxy(uri, tokenProvider, renewCredEnabled, credScopedFsEnabled,
+    ucProxy = new UCProxy(uri, tokenProvider, renewCredEnabled, credScopedFsEnabled,
       serverSidePlanningEnabled, apiClient, tablesApi)
-    proxy.initialize(name, options)
+    ucProxy.initialize(name, options)
     if (UCSingleCatalog.LOAD_DELTA_CATALOG.get()) {
       try {
         delegate = Class.forName("org.apache.spark.sql.delta.catalog.DeltaCatalog")
           .getDeclaredConstructor().newInstance().asInstanceOf[TableCatalog]
-        delegate.asInstanceOf[DelegatingCatalogExtension].setDelegateCatalog(proxy)
+        delegate.asInstanceOf[DelegatingCatalogExtension].setDelegateCatalog(ucProxy)
         delegate.initialize(name, options)
         UCSingleCatalog.DELTA_CATALOG_LOADED.set(true)
         deltaCatalogLoaded = true
       } catch {
         case e: ClassNotFoundException =>
           logWarning("DeltaCatalog is not available in the classpath", e)
-          delegate = proxy
+          delegate = ucProxy
       }
     } else {
-      delegate = proxy
+      delegate = ucProxy
     }
   }
+
+  /**
+   * The catalog to route `SupportsNamespaces` operations to.
+   *
+   * Both possible values of `delegate` are a `SupportsNamespaces`: when DeltaCatalog is on the
+   * classpath `delegate` is a `DelegatingCatalogExtension` (a `SupportsNamespaces` via
+   * `CatalogExtension`), and when it is absent `delegate` is `ucProxy` itself (a plain
+   * `TableCatalog with SupportsNamespaces`). So we can cast unconditionally.
+   */
+  private def namespaceCatalog: SupportsNamespaces = delegate.asInstanceOf[SupportsNamespaces]
 
   /** See [[DeltaVersionUtils.isDeltaRestApiReady]] for the predicate. */
   private def shouldUseDeltaAPI: Boolean =
@@ -154,6 +181,7 @@ class UCSingleCatalog
       columns: Array[Column],
       partitions: Array[Transform],
       properties: util.Map[String, String]): Table = {
+    val schema = CatalogV2UtilWithColumnMetadata.v2ColumnsToStructType(columns)
     UCSingleCatalog.checkUnsupportedNestedNamespace(ident.namespace())
     val hasExternalClause = properties.containsKey(TableCatalog.PROP_EXTERNAL)
     val hasLocationClause = properties.containsKey(TableCatalog.PROP_LOCATION)
@@ -165,7 +193,7 @@ class UCSingleCatalog
       if (UCSingleCatalog.hasDeltaProvider(properties)) {
         // Managed Delta table
         val newProps = managedDeltaCreatePropsForDelegate(ident, properties)
-        delegate.createTable(ident, columns, partitions, newProps)
+        delegate.createTable(ident, schema, partitions, newProps)
       } else {
         // Managed (no LOCATION, no EXTERNAL) but not Delta: UC doesn't support non-Delta managed
         // tables. Surface the same friendly error the legacy staging path used to produce.
@@ -173,12 +201,12 @@ class UCSingleCatalog
       }
     } else if (hasLocationClause) {
       val newProps = prepareExternalTableProperties(properties)
-      delegate.createTable(ident, columns, partitions, newProps)
+      delegate.createTable(ident, schema, partitions, newProps)
     } else {
       // Path-based identifiers (e.g. `delta`.`/tmp/foo`) fall through to the delegate.
       // TODO: for path-based tables, Spark should generate a location property using the qualified
       //       path string.
-      delegate.createTable(ident, columns, partitions, properties)
+      delegate.createTable(ident, schema, partitions, properties)
     }
   }
 
@@ -256,7 +284,7 @@ class UCSingleCatalog
    */
   private def loadExistingManagedTablePropsForReplace(
       ident: Identifier,
-      tableInfo: TableInfo,
+      tableInfo: UCTableInfo,
       properties: util.Map[String, String],
       operation: String): util.Map[String, String] = {
     val fullTableName = UCSingleCatalog.fullTableNameForApi(name(), ident)
@@ -327,7 +355,7 @@ class UCSingleCatalog
       .foreach(p => throw new ApiException(s"Cannot specify property '$p'."))
   }
 
-  private def isCatalogManagedDeltaTable(tableInfo: TableInfo): Boolean = {
+  private def isCatalogManagedDeltaTable(tableInfo: UCTableInfo): Boolean = {
     val tableProperties = Option(tableInfo.getProperties)
     tableInfo.getTableType == TableType.MANAGED &&
     tableInfo.getDataSourceFormat == DataSourceFormat.DELTA &&
@@ -378,30 +406,42 @@ class UCSingleCatalog
   }
 
   override def listNamespaces(): Array[Array[String]] = {
-    delegate.asInstanceOf[DelegatingCatalogExtension].listNamespaces()
+    namespaceCatalog.listNamespaces()
   }
 
   override def listNamespaces(namespace: Array[String]): Array[Array[String]] = {
-    delegate.asInstanceOf[DelegatingCatalogExtension].listNamespaces(namespace)
+    namespaceCatalog.listNamespaces(namespace)
   }
 
   override def loadNamespaceMetadata(namespace: Array[String]): util.Map[String, String] = {
-    delegate.asInstanceOf[DelegatingCatalogExtension].loadNamespaceMetadata(namespace)
+    namespaceCatalog.loadNamespaceMetadata(namespace)
   }
 
   override def createNamespace(namespace: Array[String], metadata: util.Map[String, String]): Unit = {
-    delegate.asInstanceOf[DelegatingCatalogExtension].createNamespace(namespace, metadata)
+    namespaceCatalog.createNamespace(namespace, metadata)
   }
 
   override def alterNamespace(namespace: Array[String], changes: NamespaceChange*): Unit = {
-    delegate.asInstanceOf[DelegatingCatalogExtension].alterNamespace(namespace, changes: _*)
+    namespaceCatalog.alterNamespace(namespace, changes: _*)
   }
 
   override def dropNamespace(namespace: Array[String], cascade: Boolean): Boolean = {
-    delegate.asInstanceOf[DelegatingCatalogExtension].dropNamespace(namespace, cascade)
+    namespaceCatalog.dropNamespace(namespace, cascade)
   }
 
   /** Only called for REPLACE TABLE and RTAS */
+  override def stageReplace(
+      ident: Identifier,
+      columns: Array[Column],
+      partitions: Array[Transform],
+      properties: util.Map[String, String]): StagedTable = {
+    stageReplace(
+      ident,
+      CatalogV2UtilWithColumnMetadata.v2ColumnsToStructType(columns),
+      partitions,
+      properties)
+  }
+
   override def stageReplace(
       ident: Identifier,
       schema: StructType,
@@ -426,6 +466,18 @@ class UCSingleCatalog
   }
 
   /** Only called for CREATE OR REPLACE TABLE ... [AS SELECT] */
+  override def stageCreateOrReplace(
+      ident: Identifier,
+      columns: Array[Column],
+      partitions: Array[Transform],
+      properties: util.Map[String, String]): StagedTable = {
+    stageCreateOrReplace(
+      ident,
+      CatalogV2UtilWithColumnMetadata.v2ColumnsToStructType(columns),
+      partitions,
+      properties)
+  }
+
   override def stageCreateOrReplace(
       ident: Identifier,
       schema: StructType,
@@ -462,7 +514,7 @@ class UCSingleCatalog
    */
   private def resolveExistingTableForReplace(
       ident: Identifier,
-      allowMissingTable: Boolean): Option[TableInfo] = {
+      allowMissingTable: Boolean): Option[UCTableInfo] = {
     UCSingleCatalog.checkUnsupportedNestedNamespace(ident.namespace())
     val fullTableName = UCSingleCatalog.fullTableNameForApi(name(), ident)
     try {
@@ -481,6 +533,18 @@ class UCSingleCatalog
   }
 
   /** Only called for CTAS */
+  override def stageCreate(
+      ident: Identifier,
+      columns: Array[Column],
+      partitions: Array[Transform],
+      properties: util.Map[String, String]): StagedTable = {
+    stageCreate(
+      ident,
+      CatalogV2UtilWithColumnMetadata.v2ColumnsToStructType(columns),
+      partitions,
+      properties)
+  }
+
   override def stageCreate(
       ident: Identifier,
       schema: StructType,
@@ -600,17 +664,28 @@ object UCSingleCatalog {
     checkUnsupportedNestedNamespace(ident.namespace())
     Seq(catalogName, ident.namespace()(0), ident.name()).mkString(".")
   }
+
 }
 
+/** Internal signal that preserves a view row rejected by the table-only catalog surface. */
+private[spark] final class ViewFoundDuringTableLoadException(
+    ident: Identifier,
+    val tableInfo: UCTableInfo)
+  extends NoSuchTableException(ident)
+
 // An internal proxy to talk to the UC client.
-private class UCProxy(
+private[spark] class UCProxy(
     uri: URI,
     tokenProvider: TokenProvider,
     renewCredEnabled: Boolean,
     credScopedFsEnabled: Boolean,
     serverSidePlanningEnabled: Boolean,
     apiClient: ApiClient,
-    tablesApi: TablesApi) extends TableCatalog with SupportsNamespaces with Logging {
+    protected[spark] val tablesApi: TablesApi)
+  extends TableCatalog
+  with UCProxyViewSupport
+  with SupportsNamespaces
+  with Logging {
   private[this] var name: String = null
   private[this] var schemasApi: SchemasApi = null
 
@@ -626,29 +701,55 @@ private class UCProxy(
 
   override def listTables(namespace: Array[String]): Array[Identifier] = {
     UCSingleCatalog.checkUnsupportedNestedNamespace(namespace)
+    // Per the RelationCatalog contract, listTables must return tables only -- view-like UC
+    // table types (metric views, materialized views) belong on listViews.
+    listUCTableLikes(namespace)
+      .filterNot(t => UCViewTypes.isViewLikeTableType(t.getTableType))
+      .map(table => Identifier.of(namespace, table.getName))
+      .toArray
+  }
 
+  private[spark] def listUCTableLikes(namespace: Array[String]): Seq[UCTableInfo] = {
     val catalogName = this.name
     val schemaName = namespace.head
-    val tables = ArrayBuffer.empty[Identifier]
+    val tables = ArrayBuffer.empty[UCTableInfo]
     var pageToken: String = null
     do {
       val response = tablesApi.listTables(catalogName, schemaName, /* limit */ 0, pageToken)
-      tables ++= response.getTables.asScala.map(table => Identifier.of(namespace, table.getName))
+      tables ++= response.getTables.asScala
       pageToken = response.getNextPageToken
     } while (pageToken != null && pageToken.nonEmpty)
-    tables.toArray
+    tables.toSeq
   }
 
-  override def loadTable(ident: Identifier): Table = {
-    val t = try {
-      tablesApi.getTable(
-        UCSingleCatalog.fullTableNameForApi(this.name, ident),
+  // Returns `None` on a 404 so callers can branch on presence/absence without catching an
+  // exception. `loadTable` re-raises `NoSuchTableException` on `None` (Spark's resolver expects
+  // that); the passive-filter paths (`dropTable`, `dropView`) and `loadView` map `None` to their
+  // own not-found result.
+  private[spark] def getUCTableLike(ident: Identifier): Option[UCTableInfo] = {
+    val fullName = UCSingleCatalog.fullTableNameForApi(this.name, ident)
+    try {
+      Some(tablesApi.getTable(
+        fullName,
         /* readStreamingTableAsManaged = */ true,
-        /* readMaterializedViewAsManaged = */ true)
+        /* readMaterializedViewAsManaged = */ true))
     } catch {
-      case e: ApiException if e.getCode == 404 =>
-        throw new NoSuchTableException(ident)
+      case e: ApiException if e.getCode == 404 => None
     }
+  }
+
+  // Single-RPC table path. Calls UC `getTable` once and rejects view-like rows from the
+  // table-only surface by throwing `NoSuchTableException`.
+  override def loadTable(ident: Identifier): Table = {
+    val t = getUCTableLike(ident).getOrElse(throw new NoSuchTableException(ident))
+    if (UCViewTypes.isViewLikeTableType(t.getTableType)) {
+      throw new ViewFoundDuringTableLoadException(ident, t)
+    } else {
+      loadV1Table(t)
+    }
+  }
+
+  private[spark] def loadV1Table(t: UCTableInfo): Table = {
     val identifier = TableIdentifier(t.getName, Some(t.getSchemaName), Some(t.getCatalogName))
     val partitionCols = scala.collection.mutable.ArrayBuffer.empty[(String, Int)]
     val fields = t.getColumns.asScala.map { col =>
@@ -725,6 +826,12 @@ private class UCProxy(
       .asInstanceOf[Table]
   }
 
+  /**
+   * Spark 4.2's `TableCatalog` made `createTable(ident, TableInfo)` the canonical entry
+   * point; this legacy 4-arg method carries all the create-table logic, which keeps the diff
+   * vs. main scoped to "add the new overload + 409 -> TableAlreadyExistsException catch required
+   * by the relation catalog's active-rejection contract".
+   */
   override def createTable(ident: Identifier, schema: StructType, partitions: Array[Transform], properties: util.Map[String, String]): Table = {
     UCSingleCatalog.checkUnsupportedNestedNamespace(ident.namespace())
     UCSingleCatalog.requireProviderSpecified("CREATE TABLE", properties)
@@ -751,19 +858,8 @@ private class UCProxy(
     }
     createTable.setStorageLocation(storageLocation)
 
-    val partitionColNames: Seq[String] = partitions.flatMap { t =>
-      t.name() match {
-        case "identity" =>
-          val fieldNames = t.references().flatMap(_.fieldNames())
-          require(fieldNames.length == 1,
-            s"Expected single-field partition reference but got: ${fieldNames.mkString(".")}")
-          Some(fieldNames.head)
-        case "cluster_by" =>
-          None
-        case other =>
-          throw new ApiException(s"Unsupported partition transform: $other")
-      }
-    }.toSeq
+    val partitionColNames: Seq[String] =
+      UCColumnConversions.partitionColumnNames(partitions).asScala.toSeq
     val columns: Seq[ColumnInfo] = schema.fields.toSeq.zipWithIndex.map { case (field, i) =>
       val column = new ColumnInfo()
       column.setName(field.name)
@@ -773,7 +869,7 @@ private class UCProxy(
       column.setNullable(field.nullable)
       column.setTypeText(field.dataType.catalogString)
       column.setTypeName(convertDataTypeToTypeName(field.dataType))
-      column.setTypeJson(toStructFieldJson(field))
+      column.setTypeJson(UCColumnConversions.toStructFieldJson(field))
       column.setPosition(i)
       val partitionIdx = partitionColNames.indexWhere(_.equalsIgnoreCase(field.name))
       if (partitionIdx >= 0) column.setPartitionIndex(partitionIdx)
@@ -787,17 +883,18 @@ private class UCProxy(
     val propertiesToServer =
       properties.view.filterKeys(!UCTableProperties.V2_TABLE_PROPERTIES.contains(_)).toMap
     createTable.setProperties(propertiesToServer)
-    tablesApi.createTable(createTable)
+    try {
+      tablesApi.createTable(createTable)
+    } catch {
+      // RelationCatalog's active-rejection contract: createTable must throw
+      // TableAlreadyExistsException when a view (or another table, race) already sits at
+      // `ident`. UC returns 409 in both cases.
+      case e: ApiException if e.getCode == 409 =>
+        throw new TableAlreadyExistsException(ident)
+    }
     loadTable(ident)
   }
 
-  private def toStructFieldJson(field: StructField): String = {
-    compact(render(
-      ("name" -> field.name) ~
-        ("type" -> parse(field.dataType.json)) ~
-        ("nullable" -> field.nullable) ~
-        ("metadata" -> parse(field.metadata.json))))
-  }
 
   private def convertDatasourceFormat(format: String): DataSourceFormat = {
     format.toUpperCase match {
@@ -812,7 +909,7 @@ private class UCProxy(
     }
   }
 
-  private def convertDataTypeToTypeName(dataType: DataType): ColumnTypeName = {
+  private[spark] def convertDataTypeToTypeName(dataType: DataType): ColumnTypeName = {
     dataType match {
       case _: BooleanType => ColumnTypeName.BOOLEAN
       case _: ByteType => ColumnTypeName.BYTE
@@ -867,10 +964,28 @@ private class UCProxy(
   }
 
   override def dropTable(ident: Identifier): Boolean = {
-    val ret = tablesApi.deleteTable(UCSingleCatalog.fullTableNameForApi(this.name, ident))
-    if (ret == 200) true else false
+    // Spark's `DROP TABLE` always lands in `TableCatalog.dropTable`, regardless of what kind
+    // of object actually sits at `ident`. `RelationCatalog` puts tables and views in a
+    // shared identifier namespace, and the spec requires `dropTable` to passive-filter
+    // view-like rows -- a `DROP TABLE <view>` must look like "nothing here" and return false
+    // rather than delete the view. (`dropView` is symmetric: returns false for a table.)
+    // We resolve the kind via UC `getTable` first so a view-like row never reaches
+    // `tablesApi.deleteTable`.
+    val t = getUCTableLike(ident) match {
+      case Some(t) => t
+      case None => return false
+    }
+    if (UCViewTypes.isViewLikeTableType(t.getTableType)) {
+      return false
+    }
+    // `deleteTable` returns the (empty) response body, not an HTTP status; a real failure throws
+    // ApiException. Issue the delete for its side effect and report success.
+    tablesApi.deleteTable(UCSingleCatalog.fullTableNameForApi(this.name, ident))
+    true
   }
 
+  // UC OSS does not currently expose a rename endpoint for tables or views; stub until UC adds
+  // a rename API. `UCProxyViewSupport.renameView` mirrors this stub.
   override def renameTable(oldIdent: Identifier, newIdent: Identifier): Unit = {
     throw new UnsupportedOperationException("Renaming a table is not supported yet")
   }
@@ -918,10 +1033,9 @@ private class UCProxy(
     createSchema.setCatalogName(this.name)
     createSchema.setName(namespace.head)
     createSchema.setProperties(metadata)
-    // SPARK-55250 (Spark 4.2+): CreateNamespaceExec no longer pre-checks
-    // namespaceExists() before calling createNamespace(). It relies on the
-    // catalog throwing NamespaceAlreadyExistsException for IF NOT EXISTS
-    // handling. On Spark 4.0/4.1 the pre-check prevents this path.
+    // Spark 4.2 removed the namespaceExists() pre-check from CreateNamespaceExec. It relies on the
+    // catalog throwing NamespaceAlreadyExistsException for IF NOT EXISTS handling. On Spark 4.0/4.1
+    // the pre-check prevents this path.
     try {
       schemasApi.createSchema(createSchema)
     } catch {

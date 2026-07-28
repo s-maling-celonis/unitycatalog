@@ -12,10 +12,12 @@ import com.linecorp.armeria.server.Server;
 import com.linecorp.armeria.server.ServerBuilder;
 import com.linecorp.armeria.server.annotation.JacksonRequestConverterFunction;
 import com.linecorp.armeria.server.annotation.JacksonResponseConverterFunction;
+import com.linecorp.armeria.server.annotation.RequestConverterFunction;
 import com.linecorp.armeria.server.docs.DocService;
 import io.unitycatalog.server.auth.AllowingAuthorizer;
 import io.unitycatalog.server.auth.JCasbinAuthorizer;
 import io.unitycatalog.server.auth.UnityCatalogAuthorizer;
+import io.unitycatalog.server.auth.decorator.AuthorizationGateConverter;
 import io.unitycatalog.server.auth.decorator.UnityAccessDecorator;
 import io.unitycatalog.server.auth.decorator.UnityAccessUtil;
 import io.unitycatalog.server.exception.BaseException;
@@ -66,7 +68,7 @@ import org.apache.logging.log4j.core.config.Configurator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-public class UnityCatalogServer {
+public class UnityCatalogServer implements AutoCloseable {
   private static final Logger LOGGER = LoggerFactory.getLogger(UnityCatalogServer.class);
   private static final String BASE_PATH = "/api/2.1/unity-catalog/";
   private static final String CONTROL_PATH = "/api/1.0/unity-control/";
@@ -75,6 +77,9 @@ public class UnityCatalogServer {
   private final Server server;
   private final ServerProperties serverProperties;
   private final SecurityContext securityContext;
+  private final HibernateConfigurator hibernateConfigurator;
+  /** True when this server built the configurator itself and must therefore close it. */
+  private final boolean ownsHibernateConfigurator;
 
   static {
     System.setProperty("log4j.configurationFile", "etc/conf/server.log4j2.properties");
@@ -89,7 +94,36 @@ public class UnityCatalogServer {
     this.securityContext =
         new SecurityContext(configurationFolder, securityConfiguration, "server", INTERNAL);
     this.serverProperties = unityCatalogServerBuilder.serverProperties;
-    this.server = initializeServer(unityCatalogServerBuilder);
+    // An injected configurator stays the caller's to close; only a self-built one is ours.
+    this.ownsHibernateConfigurator = unityCatalogServerBuilder.hibernateConfigurator == null;
+    this.hibernateConfigurator =
+        ownsHibernateConfigurator
+            ? new HibernateConfigurator(serverProperties)
+            : unityCatalogServerBuilder.hibernateConfigurator;
+    try {
+      this.server = initializeServer(unityCatalogServerBuilder);
+    } catch (Throwable t) {
+      // Construction failed after the SessionFactory was built; close it so a failed boot does
+      // not leak its connection pool. Errors matter as much as RuntimeExceptions here: a
+      // NoClassDefFoundError out of initializeServer() would leak the pool just the same.
+      closeOwnedSessionFactory(t);
+      throw t;
+    }
+  }
+
+  /**
+   * Closes the SessionFactory if this server created it, leaving an injected one to its owner. A
+   * failure to close is attached to {@code primaryFailure} so it cannot mask the original error.
+   */
+  private void closeOwnedSessionFactory(Throwable primaryFailure) {
+    if (!ownsHibernateConfigurator) {
+      return;
+    }
+    try {
+      hibernateConfigurator.getSessionFactory().close();
+    } catch (Throwable closeFailure) {
+      primaryFailure.addSuppressed(closeFailure);
+    }
   }
 
   private void setDefaults(UnityCatalogServer.Builder unityCatalogServerBuilder) {
@@ -107,9 +141,6 @@ public class UnityCatalogServer {
             .http(unityCatalogServerBuilder.port)
             .serviceUnder("/docs", new DocService());
 
-    // Init hibernate
-    HibernateConfigurator hibernateConfigurator =
-        new HibernateConfigurator(unityCatalogServerBuilder.serverProperties);
     // Init all repositories
     Repositories repositories =
         new Repositories(hibernateConfigurator.getSessionFactory(), serverProperties);
@@ -147,7 +178,7 @@ public class UnityCatalogServer {
         new UnityAccessUtil(repositories).initializeAdmin(authorizer);
         return authorizer;
       } catch (Exception e) {
-        throw new BaseException(ErrorCode.INTERNAL, "Problem initializing authorizer.");
+        throw new BaseException(ErrorCode.INTERNAL, "Problem initializing authorizer.", e);
       }
     } else {
       LOGGER.info("Authorization disabled. Using AllowingAuthorizer.");
@@ -201,8 +232,8 @@ public class UnityCatalogServer {
     TemporaryPathCredentialsService temporaryPathCredentialsService =
         new TemporaryPathCredentialsService(storageCredentialVendor);
 
-    JacksonRequestConverterFunction requestConverterFunction =
-        new JacksonRequestConverterFunction(
+    RequestConverterFunction requestConverterFunction =
+        gatedJackson(
             JsonMapper.builder()
                 .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
                 .build());
@@ -268,6 +299,17 @@ public class UnityCatalogServer {
         armeriaServerBuilder, authorizer, repositories, serverProperties, storageCredentialVendor);
   }
 
+  /**
+   * Wraps a Jackson body converter with {@link AuthorizationGateConverter}. Every annotated
+   * service's request converter must go through this so the PAYLOAD-source auth check fires before
+   * body binding. Using a wrapper (rather than registering the gate as a separate chain element per
+   * {@code annotatedService(...)} call) makes the gate impossible to forget when a new service is
+   * added.
+   */
+  private static RequestConverterFunction gatedJackson(ObjectMapper mapper) {
+    return new AuthorizationGateConverter(new JacksonRequestConverterFunction(mapper));
+  }
+
   private void addIcebergApiServices(
       ServerBuilder armeriaServerBuilder,
       ServerProperties serverProperties,
@@ -280,8 +322,7 @@ public class UnityCatalogServer {
 
     // Add support for Iceberg REST APIs
     ObjectMapper icebergMapper = IcebergObjectMapper.mapper();
-    JacksonRequestConverterFunction icebergRequestConverter =
-        new JacksonRequestConverterFunction(icebergMapper);
+    RequestConverterFunction icebergRequestConverter = gatedJackson(icebergMapper);
     JacksonResponseConverterFunction icebergResponseConverter =
         new JacksonResponseConverterFunction(icebergMapper);
     MetadataService metadataService =
@@ -310,7 +351,7 @@ public class UnityCatalogServer {
     armeriaServerBuilder.annotatedService(
         BASE_PATH,
         deltaApiService,
-        new JacksonRequestConverterFunction(deltaMapper),
+        gatedJackson(deltaMapper),
         new JacksonResponseConverterFunction(deltaMapper));
   }
 
@@ -367,9 +408,29 @@ public class UnityCatalogServer {
     LOGGER.info("Unity Catalog server started.");
   }
 
+  /** Stops the HTTP server. The server can be restarted afterwards with {@link #start()}. */
   public void stop() {
     server.stop().join();
     LOGGER.info("Unity Catalog server stopped.");
+  }
+
+  /**
+   * Stops the server and closes the Hibernate SessionFactory it created, releasing its pooled
+   * database connections, which the Armeria shutdown does not touch and which would otherwise stay
+   * open until the JVM exits. A configurator supplied via {@link Builder#hibernateConfigurator} is
+   * left open — the caller owns its lifecycle. Unlike {@link #stop()}, a server that owns its
+   * SessionFactory must not be restarted after this call: the factory is closed, so all persistence
+   * operations would fail. Safe to call more than once and safe to call before {@link #start()}.
+   */
+  @Override
+  public void close() {
+    try {
+      stop();
+    } finally {
+      if (ownsHibernateConfigurator) {
+        hibernateConfigurator.getSessionFactory().close();
+      }
+    }
   }
 
   private void printArt() {
@@ -396,6 +457,7 @@ public class UnityCatalogServer {
   public static class Builder {
     private int port;
     private ServerProperties serverProperties;
+    private HibernateConfigurator hibernateConfigurator;
     private CloudCredentialVendor cloudCredentialVendor;
 
     private Builder() {}
@@ -407,6 +469,18 @@ public class UnityCatalogServer {
 
     public UnityCatalogServer.Builder serverProperties(ServerProperties serverProperties) {
       this.serverProperties = serverProperties;
+      return this;
+    }
+
+    /**
+     * Uses the given {@link HibernateConfigurator} instead of creating one from the server
+     * properties. Lets tests share the server's session factory and customize the hibernate
+     * properties (e.g. run against PostgreSQL via Testcontainers). The server never closes this
+     * factory, so the caller owns its lifecycle.
+     */
+    public UnityCatalogServer.Builder hibernateConfigurator(
+        HibernateConfigurator hibernateConfigurator) {
+      this.hibernateConfigurator = hibernateConfigurator;
       return this;
     }
 
