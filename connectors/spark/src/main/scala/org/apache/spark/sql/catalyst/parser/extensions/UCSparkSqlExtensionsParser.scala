@@ -19,7 +19,7 @@
 
 package org.apache.spark.sql.catalyst.parser.extensions
 
-import io.unitycatalog.spark.ResolveUcViewDdlInParser
+import io.unitycatalog.spark.{ResolvePathCredentials, ResolveUcViewDdlInParser}
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.{FunctionIdentifier, TableIdentifier}
@@ -28,7 +28,18 @@ import org.apache.spark.sql.catalyst.parser.ParserInterface
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.types.{DataType, StructType}
 
-class UCSparkSqlExtensionsParser(delegate: ParserInterface) extends ParserInterface {
+class UCSparkSqlExtensionsParser(spark: SparkSession, delegate: ParserInterface)
+    extends ParserInterfaceShim {
+
+  protected def delegateParser: ParserInterface = delegate
+
+  protected def applyPathCredentials(plan: LogicalPlan): LogicalPlan =
+    ResolvePathCredentials(spark).apply(plan)
+
+  private def applyUcExtensions(plan: LogicalPlan): LogicalPlan = {
+    // Route UC view DDL to REST before ResolveSessionCatalog rejects catalogs without ViewCatalog.
+    ResolveUcViewDdlInParser(spark, plan)
+  }
 
   override def parseDataType(sqlText: String): DataType = delegate.parseDataType(sqlText)
 
@@ -45,14 +56,12 @@ class UCSparkSqlExtensionsParser(delegate: ParserInterface) extends ParserInterf
 
   override def parseTableSchema(sqlText: String): StructType = delegate.parseTableSchema(sqlText)
 
-  override def parseRoutineParam(sqlText: String): StructType = delegate.parseTableSchema(sqlText)
+  override def parseRoutineParam(sqlText: String): StructType =
+    delegate.parseRoutineParam(sqlText)
 
-  override def parsePlan(sqlText: String): LogicalPlan = {
-    val spark = SparkSession.active
-    val plan = delegate.parsePlan(sqlText)
-    // Route UC view DDL to REST before ResolveSessionCatalog rejects catalogs without ViewCatalog.
-    ResolveUcViewDdlInParser(spark, plan)
-  }
+  override def parsePlan(sqlText: String): LogicalPlan =
+    applyPathCredentials(applyUcExtensions(delegate.parsePlan(sqlText)))
 
-  override def parseQuery(sqlText: String): LogicalPlan = parsePlan(sqlText)
+  override def parseQuery(sqlText: String): LogicalPlan =
+    applyPathCredentials(applyUcExtensions(delegate.parseQuery(sqlText)))
 }
