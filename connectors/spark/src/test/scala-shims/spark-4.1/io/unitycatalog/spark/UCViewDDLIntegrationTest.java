@@ -10,7 +10,7 @@ import org.apache.spark.sql.SparkSession;
 import org.junit.jupiter.api.Test;
 
 /**
- * Spark 4.0/4.1 lack native {@code ViewCatalog}; view DDL is routed to UC REST via
+ * Spark 4.1 lacks native {@code ViewCatalog}; view DDL is routed to UC REST via
  * {@link UCSparkSessionExtensions}. Exercises the full CREATE / SHOW / DROP round-trip through SQL.
  */
 public class UCViewDDLIntegrationTest extends AbstractViewReadIntegrationTest {

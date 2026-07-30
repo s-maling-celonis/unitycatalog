@@ -21,7 +21,7 @@ import org.junit.jupiter.api.Test
 import org.mockito.ArgumentMatchers.{any, anyString}
 import org.mockito.Mockito.{clearInvocations, never, verify, when}
 
-/** Unit tests for [[UCViewRestOps]] used by Spark 4.0/4.1 view DDL routing. */
+/** Unit tests for [[UCViewRestOps]] used by Spark 4.1 view DDL routing. */
 class UCViewDdlViaRestSuite {
 
   private val fixture = new UCProxyTestFixture().build()

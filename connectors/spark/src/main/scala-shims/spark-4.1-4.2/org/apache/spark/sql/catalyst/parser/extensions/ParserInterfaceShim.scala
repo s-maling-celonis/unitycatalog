@@ -10,10 +10,11 @@ import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
  */
 trait ParserInterfaceShim extends ParserInterface {
   protected def delegateParser: ParserInterface
-  protected def applyPathCredentials(plan: LogicalPlan): LogicalPlan
+  protected def applyParserExtensions(plan: LogicalPlan): LogicalPlan
 
   override def parsePlanWithParameters(
       sqlText: String,
       parameterContext: ParameterContext): LogicalPlan =
-    applyPathCredentials(delegateParser.parsePlanWithParameters(sqlText, parameterContext))
+    applyParserExtensions(
+      delegateParser.parsePlanWithParameters(sqlText, parameterContext))
 }

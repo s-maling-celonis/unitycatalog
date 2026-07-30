@@ -10,7 +10,7 @@ import org.apache.spark.sql.connector.catalog.{Identifier, Table}
 import org.apache.spark.sql.types.StructType
 
 /**
- * Spark 4.0 / 4.1 lack the Spark 4.2 v2 view API (`RelationCatalog` / `ViewCatalog` / `View`), so
+ * Spark 4.1 lacks the Spark 4.2 v2 view API (`RelationCatalog` / `ViewCatalog` / `View`), so
  * views cannot be created, listed as views, replaced, renamed, or dropped through the *catalog*
  * surface on these versions. Plain SQL views are still readable: they are surfaced on the table
  * listing and resolved from their SQL text via a V1 VIEW `CatalogTable`. With
