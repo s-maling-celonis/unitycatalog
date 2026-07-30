@@ -1,0 +1,117 @@
+# This workflow uses actions that are not certified by GitHub.
+# They are provided by a third-party and are governed by
+# separate terms of service, privacy policy, and support
+# documentation.
+
+name: (Celonis) Unit Tests
+
+on:
+  push:
+    branches: [ "main", "develop", "branch-*" ]
+  pull_request:
+    branches: [ "main", "develop", "branch-*" ]
+
+permissions:
+  contents: read
+
+# Build once, then shard JaCoCo across parallel jobs. Non-Spark modules (server, hadoop,
+# client, cli) do not need a Spark/Delta matrix. Spark connector tests run in parallel for
+# each supported Spark version. The publish job also compiles integration tests (not in the
+# root aggregate) so compilation and checkstyle issues are caught before Spark shards run.
+#
+# Cache model: publish saves ~/.ivy2/local, ~/.m2/repository/io/unitycatalog, and module
+# target/ trees under uc-build-${{ github.run_id }}. Downstream jobs restore that exact key.
+jobs:
+  publish:
+    name: Publish UC locally
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Branch
+        uses: actions/checkout@v4.1.2
+        with:
+          ref: ${{ github.ref }}
+          token: ${{ secrets.CELOBOT_GITHUB_TOKEN }}
+      - name: Publish UC build
+        uses: ./.github/actions/publish-uc-build
+
+  unit-tests:
+    name: Unit tests (${{ matrix.project }})
+    needs: publish
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        project:
+          - server
+          - hadoop
+          - client
+          - cli
+    steps:
+      - name: Checkout Branch
+        uses: actions/checkout@v4.1.2
+        with:
+          ref: ${{ github.ref }}
+          token: ${{ secrets.CELOBOT_GITHUB_TOKEN }}
+      - name: Run module JaCoCo
+        uses: ./.github/actions/run-uc-jacoco
+        with:
+          sbt-targets: ${{ matrix.project }}/jacoco
+
+  aggregate-module-tests:
+    name: Unit tests (generated modules)
+    needs: publish
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Branch
+        uses: actions/checkout@v4.1.2
+        with:
+          ref: ${{ github.ref }}
+          token: ${{ secrets.CELOBOT_GITHUB_TOKEN }}
+      - name: Run generated module JaCoCo
+        uses: ./.github/actions/run-uc-jacoco
+        with:
+          sbt-targets: >-
+            serverModels/jacoco controlApi/jacoco controlModels/jacoco apiDocs/jacoco
+
+  spark-tests:
+    name: Spark tests (Spark ${{ matrix.spark-version }}, Delta ${{ matrix.delta-version }})
+    needs: publish
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - spark-version: "4.0.0"
+            delta-version: "4.3.1"
+            source-build: false
+          - spark-version: "4.1.0"
+            delta-version: "4.3.1"
+            source-build: false
+    steps:
+      - name: Checkout Branch
+        uses: actions/checkout@v4.1.2
+        with:
+          ref: ${{ github.ref }}
+          token: ${{ secrets.CELOBOT_GITHUB_TOKEN }}
+      - name: Run Spark connector JaCoCo
+        uses: ./.github/actions/run-spark-jacoco
+        with:
+          spark-version: ${{ matrix.spark-version }}
+          delta-version: ${{ matrix.delta-version }}
+          use-spark-source-cache: ${{ matrix.source-build }}
+
+  license:
+    name: License check
+    needs: publish
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Branch
+        uses: actions/checkout@v4.1.2
+        with:
+          ref: ${{ github.ref }}
+          token: ${{ secrets.CELOBOT_GITHUB_TOKEN }}
+      - name: Restore UC build cache
+        uses: ./.github/actions/restore-uc-build-cache
+      - name: Run license check
+        shell: bash
+        run: build/sbt licenseCheck
