@@ -33,13 +33,13 @@ class UCSparkSqlExtensionsParser(spark: SparkSession, delegate: ParserInterface)
 
   protected def delegateParser: ParserInterface = delegate
 
-  protected def applyPathCredentials(plan: LogicalPlan): LogicalPlan =
-    ResolvePathCredentials(spark).apply(plan)
-
   private def applyUcExtensions(plan: LogicalPlan): LogicalPlan = {
     // Route UC view DDL to REST before ResolveSessionCatalog rejects catalogs without ViewCatalog.
     ResolveUcViewDdlInParser(spark, plan)
   }
+
+  protected def applyParserExtensions(plan: LogicalPlan): LogicalPlan =
+    ResolvePathCredentials(spark).apply(applyUcExtensions(plan))
 
   override def parseDataType(sqlText: String): DataType = delegate.parseDataType(sqlText)
 
@@ -60,8 +60,8 @@ class UCSparkSqlExtensionsParser(spark: SparkSession, delegate: ParserInterface)
     delegate.parseRoutineParam(sqlText)
 
   override def parsePlan(sqlText: String): LogicalPlan =
-    applyPathCredentials(applyUcExtensions(delegate.parsePlan(sqlText)))
+    applyParserExtensions(delegate.parsePlan(sqlText))
 
   override def parseQuery(sqlText: String): LogicalPlan =
-    applyPathCredentials(applyUcExtensions(delegate.parseQuery(sqlText)))
+    applyParserExtensions(delegate.parseQuery(sqlText))
 }
