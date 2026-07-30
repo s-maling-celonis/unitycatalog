@@ -32,7 +32,7 @@ import org.apache.spark.sql.execution.command.{
 import io.unitycatalog.client.model.TableType
 
 /**
- * On Spark 4.0/4.1, reroutes persisted view DDL for [[UCSingleCatalog]] to UC REST.
+ * On Spark 4.1, reroutes persisted view DDL for [[UCSingleCatalog]] to UC REST.
  *
  * SQL view DDL is normally rewritten earlier in [[ResolveUcViewDdlInParser]]; this rule covers
  * programmatic `CreateView` plans and v1 `CreateViewCommand` paths that still reach analysis.

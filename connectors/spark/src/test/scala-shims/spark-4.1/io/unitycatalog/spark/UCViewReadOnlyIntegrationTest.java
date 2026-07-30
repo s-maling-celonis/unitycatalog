@@ -16,7 +16,7 @@ import lombok.SneakyThrows;
 import org.junit.jupiter.api.Test;
 
 /**
- * Spark 4.0/4.1 lack the v2 {@code ViewCatalog}, so views can't be created via SQL. A view created
+ * Spark 4.1 lacks the v2 {@code ViewCatalog}, so views can't be created via SQL. A view created
  * server-side must still be readable (shared base) and surface on the table listing.
  */
 public class UCViewReadOnlyIntegrationTest extends AbstractViewReadIntegrationTest {

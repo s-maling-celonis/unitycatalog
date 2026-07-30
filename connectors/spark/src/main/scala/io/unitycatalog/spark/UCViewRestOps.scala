@@ -21,7 +21,7 @@ import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.connector.catalog.{Identifier, TableCatalog}
 import org.apache.spark.sql.types.{DataType, StructField}
 
-/** Shared REST helpers for plain-view DDL used by Spark 4.2 ViewCatalog and 4.0/4.1 extensions. */
+/** Shared REST helpers for plain-view DDL used by Spark 4.2 ViewCatalog and 4.1 extensions. */
 private[spark] object UCViewRestOps {
 
   def emptyDependencyList: UCDependencyList =

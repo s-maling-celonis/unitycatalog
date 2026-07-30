@@ -34,9 +34,9 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /**
- * Spark-4.0/4.1 view tests -- the pre-view-API counterpart to the Spark-4.2
+ * Spark 4.1 view tests -- the pre-view-API counterpart to the Spark-4.2
  * {@code UCViewProxySuite} (resolved per Spark version via the {@code scala-shims/} test dirs).
- * Spark 4.0/4.1 have no view-catalog APIs ({@code RelationCatalog}, {@code ViewCatalog},
+ * Spark 4.1 has no view-catalog APIs ({@code RelationCatalog}, {@code ViewCatalog},
  * {@code View}), so there is no native create/replace/rename/drop-through-view surface. With
  * {@link UCSparkSessionExtensions} registered, supported SQL view DDL is routed directly to UC
  * REST instead; see {@code UCViewDDLIntegrationTest}.
@@ -170,11 +170,10 @@ public class UCViewReadOnlySuite {
 
   @Test
   public void testCreateTableIgnoresViewTableTypeAndStillRequiresProvider() {
-    // A `table_type=METRIC_VIEW` property does not route to any view-create path on Spark 4.0/4.1;
+    // A `table_type=METRIC_VIEW` property does not route to any view-create path on Spark 4.1;
     // createTable treats it as a normal table and still enforces the provider requirement. No
     // metric view is ever created, and no createTable RPC is issued.
-    // Use the connector's own constant, which compiles on all versions: Spark's
-    // TableCatalog.PROP_TABLE_TYPE was only added in Spark 4.1, so it does not exist on Spark 4.0.
+    // Use the connector's own constant, which compiles on all supported Spark versions.
     Map<String, String> props = Map.of(UCTableProperties.PROP_TABLE_TYPE, "METRIC_VIEW");
     assertThatThrownBy(
             () ->
