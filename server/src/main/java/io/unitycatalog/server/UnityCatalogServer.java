@@ -2,17 +2,7 @@ package io.unitycatalog.server;
 
 import static io.unitycatalog.server.security.SecurityContext.Issuers.INTERNAL;
 
-import com.fasterxml.jackson.annotation.JsonInclude;
-import com.fasterxml.jackson.databind.DeserializationFeature;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.SerializationFeature;
-import com.fasterxml.jackson.databind.json.JsonMapper;
-import com.linecorp.armeria.common.HttpResponse;
 import com.linecorp.armeria.server.Server;
-import com.linecorp.armeria.server.ServerBuilder;
-import com.linecorp.armeria.server.annotation.JacksonRequestConverterFunction;
-import com.linecorp.armeria.server.annotation.JacksonResponseConverterFunction;
-import com.linecorp.armeria.server.docs.DocService;
 import io.unitycatalog.server.auth.AllowingAuthorizer;
 import io.unitycatalog.server.auth.JCasbinAuthorizer;
 import io.unitycatalog.server.auth.UnityCatalogAuthorizer;
@@ -21,8 +11,6 @@ import io.unitycatalog.server.auth.decorator.UnityAccessUtil;
 import io.unitycatalog.server.exception.BaseException;
 import io.unitycatalog.server.exception.BaseExceptionHandler;
 import io.unitycatalog.server.exception.ErrorCode;
-import io.unitycatalog.server.exception.ExceptionHandlingDecorator;
-import io.unitycatalog.server.exception.GlobalExceptionHandler;
 import io.unitycatalog.server.persist.Repositories;
 import io.unitycatalog.server.persist.utils.HibernateConfigurator;
 import io.unitycatalog.server.security.SecurityConfiguration;
@@ -50,10 +38,8 @@ import io.unitycatalog.server.service.TemporaryVolumeCredentialsService;
 import io.unitycatalog.server.service.VolumeService;
 import io.unitycatalog.server.service.credential.CloudCredentialVendor;
 import io.unitycatalog.server.service.credential.StorageCredentialVendor;
-import io.unitycatalog.server.service.delta.DeltaApiMappers;
 import io.unitycatalog.server.service.delta.DeltaApiService;
 import io.unitycatalog.server.service.iceberg.FileIOFactory;
-import io.unitycatalog.server.service.iceberg.IcebergObjectMapper;
 import io.unitycatalog.server.service.iceberg.MetadataService;
 import io.unitycatalog.server.service.iceberg.TableConfigService;
 import io.unitycatalog.server.utils.OptionParser;
@@ -66,15 +52,17 @@ import org.apache.logging.log4j.core.config.Configurator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-public class UnityCatalogServer {
+public class UnityCatalogServer implements AutoCloseable {
   private static final Logger LOGGER = LoggerFactory.getLogger(UnityCatalogServer.class);
   private static final String BASE_PATH = "/api/2.1/unity-catalog/";
   private static final String CONTROL_PATH = "/api/1.0/unity-control/";
   private static final int DEFAULT_PORT = 8080;
   public static final String SERVER_PROPERTIES_FILE = "etc/conf/server.properties";
   private final Server server;
-  private final ServerProperties serverProperties;
   private final SecurityContext securityContext;
+  private final HibernateConfigurator hibernateConfigurator;
+  /** True when this server built the configurator itself and must therefore close it. */
+  private final boolean ownsHibernateConfigurator;
 
   static {
     System.setProperty("log4j.configurationFile", "etc/conf/server.log4j2.properties");
@@ -88,8 +76,36 @@ public class UnityCatalogServer {
 
     this.securityContext =
         new SecurityContext(configurationFolder, securityConfiguration, "server", INTERNAL);
-    this.serverProperties = unityCatalogServerBuilder.serverProperties;
-    this.server = initializeServer(unityCatalogServerBuilder);
+    // An injected configurator stays the caller's to close; only a self-built one is ours.
+    this.ownsHibernateConfigurator = unityCatalogServerBuilder.hibernateConfigurator == null;
+    this.hibernateConfigurator =
+        ownsHibernateConfigurator
+            ? new HibernateConfigurator(unityCatalogServerBuilder.serverProperties)
+            : unityCatalogServerBuilder.hibernateConfigurator;
+    try {
+      this.server = initializeServer(unityCatalogServerBuilder);
+    } catch (Throwable t) {
+      // Construction failed after the SessionFactory was built; close it so a failed boot does
+      // not leak its connection pool. Errors matter as much as RuntimeExceptions here: a
+      // NoClassDefFoundError out of initializeServer() would leak the pool just the same.
+      closeOwnedSessionFactory(t);
+      throw t;
+    }
+  }
+
+  /**
+   * Closes the SessionFactory if this server created it, leaving an injected one to its owner. A
+   * failure to close is attached to {@code primaryFailure} so it cannot mask the original error.
+   */
+  private void closeOwnedSessionFactory(Throwable primaryFailure) {
+    if (!ownsHibernateConfigurator) {
+      return;
+    }
+    try {
+      hibernateConfigurator.getSessionFactory().close();
+    } catch (Throwable closeFailure) {
+      primaryFailure.addSuppressed(closeFailure);
+    }
   }
 
   private void setDefaults(UnityCatalogServer.Builder unityCatalogServerBuilder) {
@@ -102,19 +118,13 @@ public class UnityCatalogServer {
   }
 
   private Server initializeServer(UnityCatalogServer.Builder unityCatalogServerBuilder) {
-    ServerBuilder armeriaServerBuilder =
-        Server.builder()
-            .http(unityCatalogServerBuilder.port)
-            .serviceUnder("/docs", new DocService());
+    ArmeriaServerBuilder armeriaServerBuilder =
+        new ArmeriaServerBuilder(unityCatalogServerBuilder.port, BASE_PATH, CONTROL_PATH);
 
-    // Init hibernate
-    HibernateConfigurator hibernateConfigurator =
-        unityCatalogServerBuilder.hibernateConfigurator != null
-            ? unityCatalogServerBuilder.hibernateConfigurator
-            : new HibernateConfigurator(unityCatalogServerBuilder.serverProperties);
     // Init all repositories
     Repositories repositories =
-        new Repositories(hibernateConfigurator.getSessionFactory(), serverProperties);
+        new Repositories(
+            hibernateConfigurator.getSessionFactory(), unityCatalogServerBuilder.serverProperties);
     // Init metastore
     repositories.getMetastoreRepository().initMetastoreIfNeeded();
     // Init authorizer
@@ -125,12 +135,7 @@ public class UnityCatalogServer {
     BaseExceptionHandler.setIncludeStackTrace(
         unityCatalogServerBuilder.serverProperties.isIncludeStackTraceInError());
     // Init services
-    addApiServices(
-        armeriaServerBuilder,
-        unityCatalogServerBuilder,
-        unityCatalogServerBuilder.serverProperties,
-        authorizer,
-        repositories);
+    addApiServices(armeriaServerBuilder, unityCatalogServerBuilder, authorizer, repositories);
     // Init security decorators
     addSecurityDecorators(
         armeriaServerBuilder, unityCatalogServerBuilder.serverProperties, authorizer, repositories);
@@ -149,7 +154,7 @@ public class UnityCatalogServer {
         new UnityAccessUtil(repositories).initializeAdmin(authorizer);
         return authorizer;
       } catch (Exception e) {
-        throw new BaseException(ErrorCode.INTERNAL, "Problem initializing authorizer.");
+        throw new BaseException(ErrorCode.INTERNAL, "Problem initializing authorizer.", e);
       }
     } else {
       LOGGER.info("Authorization disabled. Using AllowingAuthorizer.");
@@ -158,12 +163,12 @@ public class UnityCatalogServer {
   }
 
   private void addApiServices(
-      ServerBuilder armeriaServerBuilder,
+      ArmeriaServerBuilder armeriaServerBuilder,
       UnityCatalogServer.Builder unityCatalogServerBuilder,
-      ServerProperties serverProperties,
       UnityCatalogAuthorizer authorizer,
       Repositories repositories) {
     LOGGER.info("Adding Unity Catalog API services...");
+    ServerProperties serverProperties = unityCatalogServerBuilder.serverProperties;
     CloudCredentialVendor cloudCredentialVendor =
         unityCatalogServerBuilder.cloudCredentialVendor != null
             ? unityCatalogServerBuilder.cloudCredentialVendor
@@ -171,136 +176,78 @@ public class UnityCatalogServer {
     StorageCredentialVendor storageCredentialVendor =
         new StorageCredentialVendor(cloudCredentialVendor, repositories.getExternalLocationUtils());
 
-    // Add support for Unity Catalog APIs
-    AuthService authService = new AuthService(securityContext, serverProperties, repositories);
-    PermissionService permissionService = new PermissionService(authorizer, repositories);
-    Scim2UserService scim2UserService = new Scim2UserService(authorizer, repositories);
-    Scim2SelfService scim2SelfService = new Scim2SelfService(authorizer, repositories);
-    CatalogService catalogService = new CatalogService(authorizer, repositories, serverProperties);
     SchemaService schemaService = new SchemaService(authorizer, repositories, serverProperties);
-    VolumeService volumeService = new VolumeService(authorizer, repositories, serverProperties);
-    TableService tableService = new TableService(authorizer, repositories, serverProperties);
-    StagingTableService stagingTableService =
-        new StagingTableService(authorizer, repositories, serverProperties);
-    FunctionService functionService =
-        new FunctionService(authorizer, repositories, serverProperties);
-    ModelService modelService = new ModelService(authorizer, repositories, serverProperties);
-    CredentialService credentialService =
-        new CredentialService(authorizer, repositories, serverProperties);
-    ExternalLocationService externalLocationService =
-        new ExternalLocationService(authorizer, repositories, serverProperties);
-    DeltaCommitsService deltaCommitsService =
-        new DeltaCommitsService(authorizer, repositories, serverProperties);
-    MetastoreService metastoreService = new MetastoreService(repositories);
-    // TODO: combine these into a single service in a follow-up PR
-    TemporaryTableCredentialsService temporaryTableCredentialsService =
-        new TemporaryTableCredentialsService(
-            storageCredentialVendor, repositories, serverProperties);
-    TemporaryVolumeCredentialsService temporaryVolumeCredentialsService =
-        new TemporaryVolumeCredentialsService(storageCredentialVendor, repositories);
-    TemporaryModelVersionCredentialsService temporaryModelVersionCredentialsService =
-        new TemporaryModelVersionCredentialsService(storageCredentialVendor, repositories);
-    TemporaryPathCredentialsService temporaryPathCredentialsService =
-        new TemporaryPathCredentialsService(storageCredentialVendor);
 
-    JacksonRequestConverterFunction requestConverterFunction =
-        new JacksonRequestConverterFunction(
-            JsonMapper.builder()
-                .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
-                .build());
-    JacksonResponseConverterFunction scimResponseConverterFunction =
-        new JacksonResponseConverterFunction(
-            JsonMapper.builder()
-                .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
-                .serializationInclusion(JsonInclude.Include.NON_NULL)
-                .build());
+    // Each annotate* call registers one service. Order is not significant (Armeria routes by path
+    // specificity); relative paths are resolved against the protocol's base path ("" mounts at the
+    // base path root).
     armeriaServerBuilder
-        .service("/", (ctx, req) -> HttpResponse.of("Hello, Unity Catalog!"))
-        .annotatedService(CONTROL_PATH + "auth", authService, requestConverterFunction)
-        .annotatedService(
-            CONTROL_PATH + "scim2/Users",
-            scim2UserService,
-            requestConverterFunction,
-            scimResponseConverterFunction)
-        .annotatedService(
-            CONTROL_PATH + "scim2/Me",
-            scim2SelfService,
-            requestConverterFunction,
-            scimResponseConverterFunction)
-        .annotatedService(BASE_PATH + "permissions", permissionService)
-        .annotatedService(BASE_PATH + "catalogs", catalogService, requestConverterFunction)
-        .annotatedService(BASE_PATH + "schemas", schemaService, requestConverterFunction)
-        .annotatedService(BASE_PATH + "volumes", volumeService, requestConverterFunction)
-        .annotatedService(BASE_PATH + "tables", tableService, requestConverterFunction)
-        .annotatedService(
-            BASE_PATH + "staging-tables", stagingTableService, requestConverterFunction)
-        .annotatedService(BASE_PATH + "functions", functionService, requestConverterFunction)
-        .annotatedService(BASE_PATH + "models", modelService, requestConverterFunction)
-        .annotatedService(BASE_PATH, metastoreService, requestConverterFunction)
-        .annotatedService(
-            BASE_PATH + "temporary-table-credentials",
-            temporaryTableCredentialsService,
-            requestConverterFunction)
-        .annotatedService(
-            BASE_PATH + "temporary-volume-credentials",
-            temporaryVolumeCredentialsService,
-            requestConverterFunction)
-        .annotatedService(
-            BASE_PATH + "temporary-model-version-credentials",
-            temporaryModelVersionCredentialsService,
-            requestConverterFunction)
-        .annotatedService(
-            BASE_PATH + "temporary-path-credentials",
-            temporaryPathCredentialsService,
-            requestConverterFunction)
-        .annotatedService(BASE_PATH + "credentials", credentialService, requestConverterFunction)
-        .annotatedService(
-            BASE_PATH + "delta/preview/commits", deltaCommitsService, requestConverterFunction)
-        .annotatedService(
-            BASE_PATH + "external-locations", externalLocationService, requestConverterFunction);
+        .annotateAuth("auth", new AuthService(securityContext, serverProperties, repositories))
+        .annotateScim("scim2/Users", new Scim2UserService(authorizer, repositories))
+        .annotateScim("scim2/Me", new Scim2SelfService(authorizer, repositories))
+        .annotateUc("permissions", new PermissionService(authorizer, repositories))
+        .annotateUc("catalogs", new CatalogService(authorizer, repositories, serverProperties))
+        .annotateUc("schemas", schemaService)
+        .annotateUc("volumes", new VolumeService(authorizer, repositories, serverProperties))
+        .annotateUc("tables", new TableService(authorizer, repositories, serverProperties))
+        .annotateUc(
+            "staging-tables", new StagingTableService(authorizer, repositories, serverProperties))
+        .annotateUc("functions", new FunctionService(authorizer, repositories, serverProperties))
+        .annotateUc("models", new ModelService(authorizer, repositories, serverProperties))
+        .annotateUc("", new MetastoreService(repositories))
+        .annotateUc(
+            "temporary-table-credentials",
+            new TemporaryTableCredentialsService(
+                storageCredentialVendor, repositories, serverProperties))
+        .annotateUc(
+            "temporary-volume-credentials",
+            new TemporaryVolumeCredentialsService(storageCredentialVendor, repositories))
+        .annotateUc(
+            "temporary-model-version-credentials",
+            new TemporaryModelVersionCredentialsService(storageCredentialVendor, repositories))
+        .annotateUc(
+            "temporary-path-credentials",
+            new TemporaryPathCredentialsService(storageCredentialVendor))
+        .annotateUc(
+            "credentials", new CredentialService(authorizer, repositories, serverProperties))
+        .annotateUc(
+            "delta/preview/commits",
+            new DeltaCommitsService(authorizer, repositories, serverProperties))
+        .annotateUc(
+            "external-locations",
+            new ExternalLocationService(authorizer, repositories, serverProperties));
     addIcebergApiServices(
         armeriaServerBuilder,
         serverProperties,
         storageCredentialVendor,
-        catalogService,
         schemaService,
-        tableService,
         repositories);
     addDeltaApiServices(
         armeriaServerBuilder, authorizer, repositories, serverProperties, storageCredentialVendor);
   }
 
   private void addIcebergApiServices(
-      ServerBuilder armeriaServerBuilder,
+      ArmeriaServerBuilder armeriaServerBuilder,
       ServerProperties serverProperties,
       StorageCredentialVendor storageCredentialVendor,
-      CatalogService catalogService,
       SchemaService schemaService,
-      TableService tableService,
       Repositories repositories) {
     LOGGER.info("Adding Iceberg services...");
 
     // Add support for Iceberg REST APIs
-    ObjectMapper icebergMapper = IcebergObjectMapper.mapper();
-    JacksonRequestConverterFunction icebergRequestConverter =
-        new JacksonRequestConverterFunction(icebergMapper);
-    JacksonResponseConverterFunction icebergResponseConverter =
-        new JacksonResponseConverterFunction(icebergMapper);
     MetadataService metadataService =
         new MetadataService(new FileIOFactory(storageCredentialVendor, serverProperties));
     TableConfigService tableConfigService =
         new TableConfigService(storageCredentialVendor, serverProperties);
 
-    armeriaServerBuilder.annotatedService(
-        BASE_PATH + "iceberg",
+    armeriaServerBuilder.annotateIceberg(
+        "iceberg",
         new IcebergRestCatalogService(
-            schemaService, tableConfigService, metadataService, repositories),
-        icebergRequestConverter,
-        icebergResponseConverter);
+            schemaService, tableConfigService, metadataService, repositories));
   }
 
   private void addDeltaApiServices(
-      ServerBuilder armeriaServerBuilder,
+      ArmeriaServerBuilder armeriaServerBuilder,
       UnityCatalogAuthorizer authorizer,
       Repositories repositories,
       ServerProperties serverProperties,
@@ -308,43 +255,20 @@ public class UnityCatalogServer {
     LOGGER.info("Adding UC Delta API services...");
     DeltaApiService deltaApiService =
         new DeltaApiService(authorizer, repositories, serverProperties, storageCredentialVendor);
-    ObjectMapper deltaMapper = DeltaApiMappers.MAPPER;
-    armeriaServerBuilder.annotatedService(
-        BASE_PATH,
-        deltaApiService,
-        new JacksonRequestConverterFunction(deltaMapper),
-        new JacksonResponseConverterFunction(deltaMapper));
+    armeriaServerBuilder.annotateDelta("", deltaApiService);
   }
 
   private void addSecurityDecorators(
-      ServerBuilder armeriaServerBuilder,
+      ArmeriaServerBuilder armeriaServerBuilder,
       ServerProperties serverProperties,
       UnityCatalogAuthorizer authorizer,
       Repositories repositories) {
     // TODO: eventually might want to make this secure-by-default.
     if (serverProperties.isAuthorizationEnabled()) {
       LOGGER.info("Enabling security decorators...");
-
-      // Note: Decorators are applied in reverse order.
-      UnityAccessDecorator accessDecorator = new UnityAccessDecorator(authorizer, repositories);
-      armeriaServerBuilder.routeDecorator().pathPrefix(BASE_PATH).build(accessDecorator);
-      armeriaServerBuilder
-          .routeDecorator()
-          .pathPrefix(CONTROL_PATH)
-          .exclude(CONTROL_PATH + "auth/tokens")
-          .build(accessDecorator);
-
-      AuthDecorator authDecorator = new AuthDecorator(securityContext, repositories);
-      armeriaServerBuilder.routeDecorator().pathPrefix(BASE_PATH).build(authDecorator);
-      armeriaServerBuilder
-          .routeDecorator()
-          .pathPrefix(CONTROL_PATH)
-          .exclude(CONTROL_PATH + "auth/tokens")
-          .build(authDecorator);
-
-      ExceptionHandlingDecorator exceptionDecorator =
-          new ExceptionHandlingDecorator(new GlobalExceptionHandler());
-      armeriaServerBuilder.decorator(exceptionDecorator);
+      armeriaServerBuilder.withSecurityDecorators(
+          new UnityAccessDecorator(authorizer, repositories),
+          new AuthDecorator(securityContext, repositories));
     }
   }
 
@@ -369,9 +293,29 @@ public class UnityCatalogServer {
     LOGGER.info("Unity Catalog server started.");
   }
 
+  /** Stops the HTTP server. The server can be restarted afterwards with {@link #start()}. */
   public void stop() {
     server.stop().join();
     LOGGER.info("Unity Catalog server stopped.");
+  }
+
+  /**
+   * Stops the server and closes the Hibernate SessionFactory it created, releasing its pooled
+   * database connections, which the Armeria shutdown does not touch and which would otherwise stay
+   * open until the JVM exits. A configurator supplied via {@link Builder#hibernateConfigurator} is
+   * left open — the caller owns its lifecycle. Unlike {@link #stop()}, a server that owns its
+   * SessionFactory must not be restarted after this call: the factory is closed, so all persistence
+   * operations would fail. Safe to call more than once and safe to call before {@link #start()}.
+   */
+  @Override
+  public void close() {
+    try {
+      stop();
+    } finally {
+      if (ownsHibernateConfigurator) {
+        hibernateConfigurator.getSessionFactory().close();
+      }
+    }
   }
 
   private void printArt() {

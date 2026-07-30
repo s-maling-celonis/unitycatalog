@@ -123,6 +123,9 @@ auth:
   # @raw
   #
   # When authorization is enabled, tokens will only be accepted from issuers in this list.
+  # Supports exact match or wildcard patterns with * (single DNS label per wildcard).
+  # Cannot be "*" alone. Wildcard issuers are evaluated before signature verification;
+  # see docs/server/auth.md.
   #
   # Example for Google: `https://accounts.google.com`
   # Example for Microsoft Entra ID: `https://login.microsoftonline.com/{tenant-id}/v2.0`
@@ -149,6 +152,14 @@ auth:
   # Example: `P5D` (5 days)
   #
   cookieTimeout: P5D
+
+  # -- (string) UC access token lifetime for token exchange
+  # @default -- PT24H
+  # @raw
+  #
+  # Example: `PT24H` (24 hours), `P7D` (7 days)
+  #
+  accessTokenTimeout: PT24H
 
 server:
   # -- (bool) Enable the server deployment

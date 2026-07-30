@@ -8,6 +8,7 @@ import io.unitycatalog.client.ApiException
 import io.unitycatalog.client.model.{
   ColumnInfo,
   ColumnTypeName,
+  CreateTable,
   Dependency => UCDependency,
   DependencyList => UCDependencyList,
   TableDependency => UCTableDependency,
@@ -18,7 +19,9 @@ import io.unitycatalog.client.api.TablesApi
 import org.apache.spark.sql.catalyst.analysis.{
   NoSuchTableException,
   NoSuchViewException,
-  SchemaCompensation
+  SchemaCompensation,
+  SchemaUnsupported,
+  ViewAlreadyExistsException
 }
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.connector.catalog.{
@@ -51,6 +54,34 @@ trait UCProxyViewSupport extends RelationCatalog { self: UCProxy =>
     listUCTableLikes(namespace)
       .filter(t => UCViewTypes.isViewLikeTableType(t.getTableType))
       .map(table => Identifier.of(namespace, table.getName))
+      .toArray
+  }
+
+  /**
+   * Metadata-only table listing for `SHOW TABLES`.
+   *
+   * Spark 4.2 routes `SHOW TABLES` through `RelationCatalog.listRelationSummaries`, whose default
+   * unions this method's result with `listViews` (so views appear alongside tables, matching v1
+   * `SHOW TABLES` semantics). The default `TableCatalog.listTableSummaries` calls `loadTable` on
+   * every table just to read its type, and `UCProxy.loadTable` -> `loadV1Table` unconditionally
+   * vends storage credentials -- so a single non-externalizable (e.g. `TABLE_STANDARD`/managed)
+   * table would fail the whole listing with a 400 `EXTERNAL_ACCESS_NOT_ALLOWED_FOR_TABLE`.
+   *
+   * Override it to build each `TableSummary` straight from the single `listTables` RPC row (the
+   * same rows `listTables` already reads for filtering), using the row's `getTableType()` and no
+   * `loadTable` -- so listing never vends credentials. View-like rows are excluded here (they are
+   * contributed by `listViews`), exactly mirroring `UCProxy.listTables`. Loading such a table for a
+   * real read (e.g. `SELECT`) still correctly fails, since that genuinely needs credentials.
+   */
+  override def listTableSummaries(namespace: Array[String]): Array[TableSummary] = {
+    UCSingleCatalog.checkUnsupportedNestedNamespace(namespace)
+    listUCTableLikes(namespace)
+      .filterNot(t => UCViewTypes.isViewLikeTableType(t.getTableType))
+      .map { table =>
+        TableSummary.of(
+          Identifier.of(namespace, table.getName),
+          UCViewTypes.ucTableTypeToSparkTableSummaryType(table.getTableType))
+      }
       .toArray
   }
 
@@ -104,21 +135,43 @@ trait UCProxyViewSupport extends RelationCatalog { self: UCProxy =>
         s"Unity Catalog does not support creating $sparkTableType via ViewCatalog.createView")
     }
 
+    val ct = new CreateTable()
+      .name(ident.name())
+      .schemaName(ident.namespace().head)
+      .catalogName(this.name)
+      .tableType(ucTableType)
+      .viewDefinition(view.queryText())
+
+    Option(properties.get(TableCatalog.PROP_COMMENT)).foreach(ct.setComment)
+    // The server requires a non-null dependency list; a plain view often has none.
     val ucDeps = Option(view.viewDependencies())
       .map(toUcDependencyList)
-      .getOrElse(UCViewRestOps.emptyDependencyList)
-    val columns = buildColumnInfos(view, convertDataTypeToTypeName)
-    UCViewRestOps.createPlainView(
-      tablesApi = tablesApi,
-      catalogName = this.name,
-      ident = ident,
-      queryText = view.queryText(),
-      columns = columns,
-      properties = properties,
-      viewDependencies = ucDeps,
-      comment = Option(properties.get(TableCatalog.PROP_COMMENT)),
-      sqlConfigs = view.sqlConfigs(),
-      tableType = ucTableType)
+      .getOrElse(new UCDependencyList().dependencies(new util.ArrayList[UCDependency]()))
+    ct.setViewDependencies(ucDeps)
+    ct.setColumns(buildColumnInfos(view, convertDataTypeToTypeName).asJava)
+
+    val propertiesToServer = new util.HashMap[String, String]()
+    properties.asScala.foreach { case (k, v) =>
+      if (!UCTableProperties.V2_TABLE_PROPERTIES.contains(k)) {
+        propertiesToServer.put(k, v)
+      }
+    }
+    view.sqlConfigs().asScala.foreach { case (k, v) =>
+      propertiesToServer.put(CatalogTable.VIEW_SQL_CONFIG_PREFIX + k, v)
+    }
+    // `UNSUPPORTED` is the metric-view sentinel, not a persistable mode; skip it and let the read
+    // path default to compensation.
+    Option(view.schemaMode())
+      .filter(_ != SchemaUnsupported.toString)
+      .foreach(m => propertiesToServer.put(CatalogTable.VIEW_SCHEMA_MODE, m))
+    ct.setProperties(propertiesToServer)
+
+    try {
+      tablesApi.createTable(ct)
+    } catch {
+      case e: ApiException if e.getCode == 409 =>
+        throw new ViewAlreadyExistsException(ident)
+    }
     loadView(ident)
   }
 
@@ -140,7 +193,10 @@ trait UCProxyViewSupport extends RelationCatalog { self: UCProxy =>
     if (!UCViewTypes.isViewCommandsSupportedTableType(t.getTableType)) {
       return false
     }
-    UCViewRestOps.dropView(tablesApi, this.name, ident)
+    // `deleteTable` returns the (empty) response body, not an HTTP status; a real failure throws
+    // ApiException. Issue the delete for its side effect and report success.
+    tablesApi.deleteTable(UCSingleCatalog.fullTableNameForApi(this.name, ident))
+    true
   }
 
   override def renameView(oldIdent: Identifier, newIdent: Identifier): Unit = {
@@ -164,10 +220,17 @@ trait UCProxyViewSupport extends RelationCatalog { self: UCProxy =>
     val props = new util.HashMap[String, String]()
     Option(t.getProperties).foreach(props.putAll)
     val sqlConfigs = UCViewTypes.extractSqlConfigs(props)
-    // The VIEW_SQL_CONFIG_PREFIX keys are surfaced (un-prefixed) via `withSqlConfigs`; drop them
-    // from `props` so they don't also leak into the user-visible `properties()` map and get
-    // re-persisted (double-counted) on a createView/replace round-trip.
+    // Metric views have no persisted mode (createView omits Spark's UNSUPPORTED sentinel), so they
+    // must reload as UNSUPPORTED; plain views use the persisted mode or default to compensation.
+    val defaultSchemaMode =
+      if (t.getTableType == TableType.METRIC_VIEW) SchemaUnsupported.toString
+      else SchemaCompensation.toString
+    val schemaMode = Option(props.get(CatalogTable.VIEW_SCHEMA_MODE)).getOrElse(defaultSchemaMode)
+    // The VIEW_SQL_CONFIG_PREFIX / VIEW_SCHEMA_MODE keys are surfaced via `withSqlConfigs` /
+    // `withSchemaMode`; drop them from `props` so they don't also leak into the user-visible
+    // `properties()` map and get re-persisted (double-counted) on a createView/replace round-trip.
     props.keySet().removeIf(_.startsWith(CatalogTable.VIEW_SQL_CONFIG_PREFIX))
+    props.remove(CatalogTable.VIEW_SCHEMA_MODE)
 
     val builder = new View.Builder()
       .withColumns(columns)
@@ -177,7 +240,7 @@ trait UCProxyViewSupport extends RelationCatalog { self: UCProxy =>
       .withCurrentCatalog(t.getCatalogName)
       .withCurrentNamespace(Array(t.getSchemaName))
       .withSqlConfigs(sqlConfigs)
-      .withSchemaMode(SchemaCompensation.toString)
+      .withSchemaMode(schemaMode)
       .withQueryColumnNames(columns.map(_.name()))
     Option(t.getComment).foreach(builder.withComment)
     Option(t.getViewDependencies).foreach { ucDeps =>

@@ -35,16 +35,12 @@ import io.unitycatalog.server.exception.ErrorCode;
 import io.unitycatalog.server.exception.GlobalExceptionHandler;
 import io.unitycatalog.server.exception.OAuthInvalidRequestException;
 import io.unitycatalog.server.persist.Repositories;
-import io.unitycatalog.server.persist.UserRepository;
 import io.unitycatalog.server.security.SecurityContext;
-import io.unitycatalog.server.utils.IssuerAllowlist;
 import io.unitycatalog.server.utils.JwksOperations;
 import io.unitycatalog.server.utils.ServerProperties;
-import io.unitycatalog.server.utils.ServerProperties.Property;
 import java.lang.reflect.ParameterizedType;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
-import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Collectors;
@@ -55,7 +51,6 @@ import org.slf4j.LoggerFactory;
 public class AuthService {
 
   private static final Logger LOGGER = LoggerFactory.getLogger(AuthService.class);
-  private final UserRepository userRepository;
   private final TokenExchangePrincipalResolver tokenExchangePrincipalResolver;
 
   private final SecurityContext securityContext;
@@ -71,9 +66,8 @@ public class AuthService {
     this.securityContext = securityContext;
     this.jwksOperations = new JwksOperations(securityContext);
     this.serverProperties = serverProperties;
-    this.userRepository = repositories.getUserRepository();
     this.tokenExchangePrincipalResolver =
-        new TokenExchangePrincipalResolver(serverProperties, userRepository);
+        new TokenExchangePrincipalResolver(serverProperties, repositories.getUserRepository());
   }
 
   /**
@@ -95,6 +89,13 @@ public class AuthService {
    *   <li>actor_token: Not supported
    *   <li>scope: Not supported
    * </ul>
+   *
+   * <p>The issuer of the incoming token must be in the configured allowlist
+   * (server.allowed-issuers) and the token must contain a valid audience claim matching the
+   * configured audiences (server.audiences). Audience entries support exact match or wildcard
+   * patterns with {@code *} (same rules as server.allowed-issuers). A single value of {@code *}
+   * disables audience validation. Both configurations are required when token exchange runs with
+   * authorization enabled.
    *
    * <p>Principal resolution tries email mode first ({@code email} claim or {@code sub} fallback),
    * then external id mode when email resolution fails. External id mode reads the OAuth client id
@@ -140,19 +141,11 @@ public class AuthService {
           ErrorCode.INVALID_ARGUMENT, "Authorization is disabled");
     }
 
-    List<String> allowedIssuers = serverProperties.getAllowedIssuers();
-    if (allowedIssuers.isEmpty()) {
-      LOGGER.error("No allowed issuers configured");
-      throw new OAuthInvalidRequestException(
-          ErrorCode.INVALID_ARGUMENT,
-          "No allowed issuers configured. Set server.allowed-issuers in server.properties");
-    }
-
     DecodedJWT decodedJWT;
     try {
       decodedJWT = JWT.decode(form.getSubjectToken());
     } catch (JWTDecodeException e) {
-      LOGGER.debug("Token rejected: malformed token", e);
+      LOGGER.error("Token rejected: malformed token", e);
       throw new OAuthInvalidRequestException(
           ErrorCode.UNAUTHENTICATED, "Invalid token: " + e.getMessage(), e);
     }
@@ -160,8 +153,8 @@ public class AuthService {
     String issuer = decodedJWT.getIssuer();
 
     // Validate issuer is in allowlist BEFORE fetching JWKS
-    if (!IssuerAllowlist.isAllowed(issuer, allowedIssuers)) {
-      LOGGER.debug("Token rejected: invalid issuer '{}'", issuer);
+    if (!serverProperties.getIssuerAllowlist().isAllowed(issuer)) {
+      LOGGER.error("Token rejected: invalid issuer '{}'", issuer);
       throw new OAuthInvalidRequestException(ErrorCode.UNAUTHENTICATED, "Invalid issuer");
     }
 
@@ -171,11 +164,10 @@ public class AuthService {
     LOGGER.debug("Validating token for issuer: {} and keyId: {}", issuer, keyId);
 
     try {
-      JWTVerifier jwtVerifier =
-          jwksOperations.verifierForIssuerAndKey(issuer, keyId, alg, List.of());
+      JWTVerifier jwtVerifier = jwksOperations.verifierForIssuerAndKey(issuer, keyId, alg);
       decodedJWT = jwtVerifier.verify(decodedJWT);
     } catch (JWTVerificationException e) {
-      LOGGER.debug("Token rejected: verification failed", e);
+      LOGGER.error("Token rejected: verification failed", e);
       throw new OAuthInvalidRequestException(
           ErrorCode.UNAUTHENTICATED, "Token verification failed: " + e.getMessage(), e);
     }
@@ -201,8 +193,7 @@ public class AuthService {
     ext.ifPresent(
         e -> {
           if (e.equals(TokenEndpointExtensionType.COOKIE)) {
-            // Set cookie timeout to 5 days by default if not present in server.properties
-            String cookieTimeout = this.serverProperties.get(Property.COOKIE_TIMEOUT);
+            Duration cookieTimeout = serverProperties.getEffectiveCookieTimeout();
             Cookie cookie =
                 createCookie(AuthDecorator.UC_TOKEN_KEY, accessToken, "/", cookieTimeout);
             responseHeaders.add(HttpHeaderNames.SET_COOKIE, cookie.toSetCookieHeader());
@@ -233,11 +224,12 @@ public class AuthService {
         .orElse(HttpResponse.of(HttpStatus.OK, MediaType.JSON, EMPTY_RESPONSE));
   }
 
+  private Cookie createCookie(String key, String value, String path, Duration maxAge) {
+    return Cookie.secureBuilder(key, value).path(path).maxAge(maxAge.getSeconds()).build();
+  }
+
   private Cookie createCookie(String key, String value, String path, String maxAge) {
-    return Cookie.secureBuilder(key, value)
-        .path(path)
-        .maxAge(Duration.parse(maxAge).getSeconds())
-        .build();
+    return createCookie(key, value, path, Duration.parse(maxAge));
   }
 
   // NOTE:

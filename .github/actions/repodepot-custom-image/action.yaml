@@ -243,7 +243,7 @@ runs:
               "${{ steps.component.outputs.sbt-project }}/test"
             ;;
           unitycatalog-spark)
-            build/sbt $SBT_HEAP -DsparkVersion=4.1.0 -DdeltaVersion=4.2.0 publishLocal \
+            build/sbt $SBT_HEAP -DsparkVersion=4.1.0 -DdeltaVersion=4.3.1 publishLocal \
               "${{ steps.component.outputs.sbt-project }}/test"
             ;;
           unity-catalog-ui)

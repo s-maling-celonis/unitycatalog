@@ -1,95 +1,47 @@
 package io.unitycatalog.hadoop.internal.auth;
 
 import io.unitycatalog.client.internal.Clock;
-import io.unitycatalog.client.model.AwsCredentials;
-import io.unitycatalog.client.model.AzureUserDelegationSAS;
-import io.unitycatalog.client.model.GcpOauthToken;
-import io.unitycatalog.client.model.TemporaryCredentials;
 import java.util.Objects;
 
 /**
- * Internal credential wrapper used by Hadoop token providers.
- *
- * <p>This class normalizes UC SDK temporary credentials into cloud-specific credential values.
+ * Internal credential model used by Hadoop token providers. Each instance contains only one set of
+ * credentials for a single cloud family.
  */
-public class GenericCredential {
-  private final TemporaryCredentials tempCred;
+public abstract class GenericCredential {
+  private final Long expirationTimeMillis;
+  private final String prefix;
 
-  public GenericCredential(TemporaryCredentials tempCred) {
-    this.tempCred = tempCred;
+  protected GenericCredential(Long expirationTimeMillis, String prefix) {
+    this.expirationTimeMillis = expirationTimeMillis;
+    this.prefix = prefix;
   }
 
-  public static GenericCredential forAws(
-      String accessKey, String secretKey, String sessionToken, long expiredTimeMillis) {
-    // Initialize the aws credentials.
-    AwsCredentials awsCredentials = new AwsCredentials();
-    awsCredentials.setAccessKeyId(accessKey);
-    awsCredentials.setSecretAccessKey(secretKey);
-    awsCredentials.setSessionToken(sessionToken);
-
-    // Initialize the unity catalog's temporary credentials.
-    TemporaryCredentials tempCred = new TemporaryCredentials();
-    tempCred.setAwsTempCredentials(awsCredentials);
-    tempCred.setExpirationTime(expiredTimeMillis);
-
-    return new GenericCredential(tempCred);
+  public final Long expirationTimeMillis() {
+    return expirationTimeMillis;
   }
 
-  public static GenericCredential forAzure(String sasToken, long expiredTimeMillis) {
-    AzureUserDelegationSAS azureSAS = new AzureUserDelegationSAS();
-    azureSAS.setSasToken(sasToken);
-
-    TemporaryCredentials tempCred = new TemporaryCredentials();
-    tempCred.setAzureUserDelegationSas(azureSAS);
-    tempCred.setExpirationTime(expiredTimeMillis);
-
-    return new GenericCredential(tempCred);
+  /** The storage prefix this credential is scoped to, or {@code null} when not provided. */
+  public final String prefix() {
+    return prefix;
   }
 
-  public static GenericCredential forGcs(String oauthToken, long expiredTimeMillis) {
-    GcpOauthToken gcpOauthToken = new GcpOauthToken();
-    gcpOauthToken.setOauthToken(oauthToken);
-
-    TemporaryCredentials tempCred = new TemporaryCredentials();
-    tempCred.setGcpOauthToken(gcpOauthToken);
-    tempCred.setExpirationTime(expiredTimeMillis);
-
-    return new GenericCredential(tempCred);
-  }
-
-  public TemporaryCredentials temporaryCredentials() {
-    return tempCred;
-  }
-
-  /**
-   * Decide whether it's time to renew the credential/token in advance.
-   *
-   * @param clock to get the latest timestamp.
-   * @param renewalLeadTimeMillis The amount of time before something expires when the renewal
-   *     process should start.
-   * @return true if it's ready to renew.
-   */
-  public boolean readyToRenew(Clock clock, long renewalLeadTimeMillis) {
-    return tempCred.getExpirationTime() != null
-        && tempCred.getExpirationTime() <= clock.now().toEpochMilli() + renewalLeadTimeMillis;
-  }
-
-  @Override
-  public int hashCode() {
-    return Objects.hashCode(tempCred);
+  public final boolean readyToRenew(Clock clock, long renewalLeadTimeMillis) {
+    return expirationTimeMillis != null
+        && expirationTimeMillis <= clock.now().toEpochMilli() + renewalLeadTimeMillis;
   }
 
   @Override
   public boolean equals(Object o) {
-    if (this == o) {
-      return true;
-    }
-
-    if (o == null || getClass() != o.getClass()) {
+    if (!(o instanceof GenericCredential)) {
       return false;
     }
-
     GenericCredential that = (GenericCredential) o;
-    return Objects.equals(tempCred, that.tempCred);
+    return Objects.equals(expirationTimeMillis, that.expirationTimeMillis)
+        && Objects.equals(prefix, that.prefix);
+  }
+
+  @Override
+  public int hashCode() {
+    return Objects.hash(expirationTimeMillis, prefix);
   }
 }

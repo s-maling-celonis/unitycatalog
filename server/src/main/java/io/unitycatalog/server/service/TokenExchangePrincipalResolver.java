@@ -8,7 +8,6 @@ import io.unitycatalog.server.exception.ErrorCode;
 import io.unitycatalog.server.exception.OAuthInvalidRequestException;
 import io.unitycatalog.server.persist.UserRepository;
 import io.unitycatalog.server.security.JwtClaim;
-import io.unitycatalog.server.utils.AudienceAllowlist;
 import io.unitycatalog.server.utils.ServerProperties;
 import java.util.List;
 import java.util.Optional;
@@ -137,7 +136,7 @@ public class TokenExchangePrincipalResolver {
       return;
     }
 
-    if (AudienceAllowlist.isAllowed(decodedJWT.getAudience(), audiences)) {
+    if (serverProperties.getAudienceAllowlist().isAnyAllowed(decodedJWT.getAudience())) {
       return;
     }
 

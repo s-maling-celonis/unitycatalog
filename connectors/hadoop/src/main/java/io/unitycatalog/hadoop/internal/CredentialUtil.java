@@ -4,36 +4,57 @@ import io.unitycatalog.client.delta.model.DeltaStorageCredential;
 import io.unitycatalog.client.delta.model.DeltaStorageCredentialConfig;
 import io.unitycatalog.client.internal.Preconditions;
 import io.unitycatalog.client.model.AwsCredentials;
-import io.unitycatalog.client.model.AzureUserDelegationSAS;
-import io.unitycatalog.client.model.GcpOauthToken;
 import io.unitycatalog.client.model.TemporaryCredentials;
+import io.unitycatalog.hadoop.internal.auth.AwsCredential;
+import io.unitycatalog.hadoop.internal.auth.AzureCredential;
+import io.unitycatalog.hadoop.internal.auth.GcsCredential;
+import io.unitycatalog.hadoop.internal.auth.GenericCredential;
 import java.util.List;
 
-/** Internal utility for UC Delta storage credentials. */
-public final class DeltaStorageCredentialUtil {
-  private DeltaStorageCredentialUtil() {}
+/** Internal utilities for building and selecting {@link GenericCredential}s. */
+public final class CredentialUtil {
+  private CredentialUtil() {}
 
-  /** Converts one UC Delta storage credential into standard UC temporary credentials. */
-  public static TemporaryCredentials toTemporaryCredentials(DeltaStorageCredential cred) {
+  /** Converts a UC SDK {@link TemporaryCredentials} into an internal {@link GenericCredential}. */
+  public static GenericCredential toGenericCredential(TemporaryCredentials tempCred) {
+    long expiry =
+        tempCred.getExpirationTime() == null ? Long.MAX_VALUE : tempCred.getExpirationTime();
+    if (tempCred.getAwsTempCredentials() != null) {
+      AwsCredentials aws = tempCred.getAwsTempCredentials();
+      return new AwsCredential(
+          aws.getAccessKeyId(),
+          aws.getSecretAccessKey(),
+          aws.getSessionToken(),
+          expiry,
+          tempCred.getUrl(),
+          tempCred.getEndpointUrl());
+    } else if (tempCred.getAzureUserDelegationSas() != null) {
+      return new AzureCredential(
+          tempCred.getAzureUserDelegationSas().getSasToken(), expiry, tempCred.getUrl());
+    } else if (tempCred.getGcpOauthToken() != null) {
+      return new GcsCredential(
+          tempCred.getGcpOauthToken().getOauthToken(), expiry, tempCred.getUrl());
+    }
+    throw new IllegalArgumentException("UC temporary credentials contained no cloud credential");
+  }
+
+  /** Converts one UC Delta storage credential into an internal {@link GenericCredential}. */
+  public static GenericCredential toGenericCredential(DeltaStorageCredential cred) {
     DeltaStorageCredentialConfig config = requireSingleCloudConfig(cred);
     long expiry = cred.getExpirationTimeMs() == null ? Long.MAX_VALUE : cred.getExpirationTimeMs();
-    TemporaryCredentials out = new TemporaryCredentials().expirationTime(expiry);
+
     if (isS3Config(config)) {
-      out.awsTempCredentials(
-          new AwsCredentials()
-              .accessKeyId(field(config.getS3AccessKeyId(), cred, "S3 access key"))
-              .secretAccessKey(field(config.getS3SecretAccessKey(), cred, "S3 secret key"))
-              .sessionToken(field(config.getS3SessionToken(), cred, "S3 session token")));
+      return new AwsCredential(
+          config.getS3AccessKeyId(),
+          config.getS3SecretAccessKey(),
+          config.getS3SessionToken(),
+          expiry,
+          cred.getPrefix());
     } else if (isAzureConfig(config)) {
-      out.azureUserDelegationSas(
-          new AzureUserDelegationSAS()
-              .sasToken(field(config.getAzureSasToken(), cred, "Azure SAS token")));
+      return new AzureCredential(config.getAzureSasToken(), expiry, cred.getPrefix());
     } else {
-      out.gcpOauthToken(
-          new GcpOauthToken()
-              .oauthToken(field(config.getGcsOauthToken(), cred, "GCS OAuth token")));
+      return new GcsCredential(config.getGcsOauthToken(), expiry, cred.getPrefix());
     }
-    return out;
   }
 
   /** Selects the credential whose prefix covers the requested location. */
@@ -105,14 +126,5 @@ public final class DeltaStorageCredentialUtil {
 
   private static boolean isAzureConfig(DeltaStorageCredentialConfig c) {
     return c.getAzureSasToken() != null;
-  }
-
-  private static String field(String value, DeltaStorageCredential cred, String label) {
-    Preconditions.checkArgument(
-        value != null && !value.isEmpty(),
-        "UC Delta credential for '%s' is missing %s.",
-        cred.getPrefix(),
-        label);
-    return value;
   }
 }

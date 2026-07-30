@@ -11,6 +11,7 @@ import io.unitycatalog.client.internal.Clock;
 import io.unitycatalog.client.model.PathOperation;
 import io.unitycatalog.client.model.TableOperation;
 import io.unitycatalog.client.model.TemporaryCredentials;
+import io.unitycatalog.hadoop.internal.CredentialUtil;
 import io.unitycatalog.hadoop.internal.UCHadoopConfConstants;
 import io.unitycatalog.hadoop.internal.id.CredId;
 import io.unitycatalog.hadoop.internal.id.PathCredId;
@@ -96,6 +97,22 @@ public abstract class BaseTokenProviderTest<T extends GenericCredentialProvider>
 
     // Use the cred2 for the 4th access.
     assertCred(provider, cred2);
+  }
+
+  @Test
+  public void initialCredentialReadsPrefixFromConf() {
+    Configuration conf = newTableBasedConf();
+    TemporaryCredentials credential = newTempCred("initial", Long.MAX_VALUE);
+    setInitialCred(conf, credential);
+    T provider = createTestProvider(conf, mock(TemporaryCredentialsApi.class));
+
+    assertThat(provider.initGenericCredential(conf).prefix()).isNull();
+
+    conf.set(UCHadoopConfConstants.UC_CREDENTIAL_PREFIX_KEY, "");
+    assertThat(provider.initGenericCredential(conf).prefix()).isEmpty();
+
+    conf.set(UCHadoopConfConstants.UC_CREDENTIAL_PREFIX_KEY, "test-prefix");
+    assertThat(provider.initGenericCredential(conf).prefix()).isEqualTo("test-prefix");
   }
 
   @Test
@@ -360,7 +377,7 @@ public abstract class BaseTokenProviderTest<T extends GenericCredentialProvider>
     assertThat(GenericCredentialProvider.globalCache.size()).isEqualTo(expectedSize);
     for (TemporaryCredentials cred : creds) {
       assertThat(GenericCredentialProvider.globalCache.credentials())
-          .contains(new GenericCredential(cred));
+          .contains(CredentialUtil.toGenericCredential(cred));
     }
   }
 
