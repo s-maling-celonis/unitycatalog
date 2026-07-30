@@ -196,6 +196,8 @@ public class ServerProperties {
     CLIENT_ID("server.client-id"),
     CLIENT_SECRET("server.client-secret"),
     REDIRECT_PORT("server.redirect-port", POSITIVE_INTEGER_VALIDATOR),
+    ALLOWED_ISSUERS("server.allowed-issuers"),
+    AUDIENCES("server.audiences"),
     COOKIE_TIMEOUT("server.cookie-timeout", "P5D", DURATION_VALIDATOR),
     ACCESS_TOKEN_TIMEOUT("server.access-token-timeout", "PT24H", DURATION_VALIDATOR),
     MANAGED_TABLE_ENABLED("server.managed-table.enabled", "true", BOOLEAN_VALIDATOR),
@@ -270,16 +272,24 @@ public class ServerProperties {
       }
       property.validator.validate(property.key, value);
     }
-    validateAudienceConfiguration();
+    validateAuthAllowlistConfiguration();
   }
 
-  private void validateAudienceConfiguration() {
+  private void validateAuthAllowlistConfiguration() {
     List<String> audiences = getAudiences();
     if (audiences.contains("*") && audiences.size() > 1) {
       throw new BaseException(
           ErrorCode.INVALID_ARGUMENT,
           "server.audiences cannot combine '*' with other values; use '*' alone to disable"
               + " audience validation");
+    }
+
+    List<String> allowedIssuers = getAllowedIssuers();
+    if (allowedIssuers.contains("*")) {
+      throw new BaseException(
+          ErrorCode.INVALID_ARGUMENT,
+          "server.allowed-issuers cannot be '*'; use explicit issuers or wildcard patterns such"
+              + " as https://*.dev.example.com");
     }
   }
 
@@ -461,9 +471,19 @@ public class ServerProperties {
     return isTrueOrEnable(get(Property.INCLUDE_STACK_TRACE_IN_ERROR));
   }
 
-  /** Lifetime of UC access tokens issued by token exchange. */
+  /** Lifetime of UC access tokens issued by token exchange. Defaults to 24 hours. */
   public Duration getAccessTokenTimeout() {
     return Duration.parse(get(Property.ACCESS_TOKEN_TIMEOUT));
+  }
+
+  /**
+   * Cookie max-age for UC access tokens, capped by {@link #getAccessTokenTimeout()} so the cookie
+   * does not outlive the JWT it contains.
+   */
+  public Duration getEffectiveCookieTimeout() {
+    Duration cookieTimeout = Duration.parse(get(Property.COOKIE_TIMEOUT));
+    Duration accessTokenTimeout = getAccessTokenTimeout();
+    return cookieTimeout.compareTo(accessTokenTimeout) > 0 ? accessTokenTimeout : cookieTimeout;
   }
 
   /**
@@ -532,6 +552,39 @@ public class ServerProperties {
     }
   }
 
+  private volatile WildcardAllowlist cachedIssuerAllowlist;
+  private volatile WildcardAllowlist cachedAudienceAllowlist;
+
+  /**
+   * Returns a compiled allowlist for {@code server.allowed-issuers}, rebuilding when the raw
+   * property value changes.
+   */
+  public WildcardAllowlist getIssuerAllowlist() {
+    String current = getProperty(Property.ALLOWED_ISSUERS.key);
+    String normalized = current == null ? "" : current;
+    WildcardAllowlist cached = cachedIssuerAllowlist;
+    if (cached == null || !cached.source().equals(normalized)) {
+      cached = WildcardAllowlist.forAllowedIssuers(normalized);
+      cachedIssuerAllowlist = cached;
+    }
+    return cached;
+  }
+
+  /**
+   * Returns a compiled allowlist for {@code server.audiences}, rebuilding when the raw property
+   * value changes.
+   */
+  public WildcardAllowlist getAudienceAllowlist() {
+    String current = getProperty(Property.AUDIENCES.key);
+    String normalized = current == null ? "" : current;
+    WildcardAllowlist cached = cachedAudienceAllowlist;
+    if (cached == null || !cached.source().equals(normalized)) {
+      cached = WildcardAllowlist.forAudiences(normalized);
+      cachedAudienceAllowlist = cached;
+    }
+    return cached;
+  }
+
   /**
    * Get the list of allowed token issuers.
    *
@@ -541,7 +594,7 @@ public class ServerProperties {
    * @return List of allowed issuer URLs (exact match or wildcard with {@code *})
    */
   public List<String> getAllowedIssuers() {
-    return getCommaSeparatedList("server.allowed-issuers");
+    return getCommaSeparatedList(Property.ALLOWED_ISSUERS.key);
   }
 
   /**
@@ -557,7 +610,7 @@ public class ServerProperties {
    * @return List of expected audience values
    */
   public List<String> getAudiences() {
-    return getCommaSeparatedList("server.audiences");
+    return getCommaSeparatedList(Property.AUDIENCES.key);
   }
 
   /**

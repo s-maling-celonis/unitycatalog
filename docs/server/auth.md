@@ -56,7 +56,7 @@ server.audiences=<Client ID provided earlier>
 When authorization is enabled, the server validates incoming identity tokens against configured issuers and audiences:
 
 - **server.allowed-issuers**: Comma-separated list of allowed token issuers (exact match or wildcard with `*`). Tokens from issuers not in this list will be rejected. This prevents attackers from using their own identity provider to forge tokens.
-- **server.audiences**: Comma-separated list of expected JWT audience values. Tokens must match the allowlist unless the signed subject token carries an OAuth client id in `azp` or a non-URL `aud` value (used for programmatic `externalId` resolution).
+- **server.audiences**: Comma-separated list of expected JWT audience values. Tokens must contain an `aud` value matching one of these entries (exact match or wildcard with `*`). A single value of `*` disables audience validation (issuer and user checks still apply); that sentinel cannot be combined with other values. Tokens whose `azp` or non-URL `aud` matches a registered UC user's `externalId` are also accepted even when the client UUID is not listed in `server.audiences`.
 
 #### Programmatic exchange (service principals)
 
@@ -102,6 +102,16 @@ server.audiences=*
 server.allowed-issuers=https://*.dev.example.com
 ```
 
+#### Wildcard issuer security
+
+With exact-match issuers, the server only fetches JWKS from a fixed set of identity providers.
+Wildcard issuer patterns such as `https://*.dev.example.com` are evaluated **before** signature
+verification: a token whose `iss` matches the pattern determines which host the server contacts
+for OIDC discovery and JWKS. An unauthenticated caller who can mint tokens with arbitrary `iss`
+values under that pattern can steer JWKS fetches (an SSRF-style surface).
+
+Use wildcard issuers only where necessary, only for domains you control, and avoid patterns that
+cover internal or sensitive hosts. Prefer exact issuer URLs and `https://` issuers when possible.
 Prefer the subject-token `externalId` flow for per-tenant service principals instead of `audiences=*`.
 
 ### Restart the UC Server

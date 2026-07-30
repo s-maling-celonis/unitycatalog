@@ -29,6 +29,7 @@ import org.apache.spark.sql.catalyst.analysis.NoSuchTableException;
 import org.apache.spark.sql.catalyst.analysis.NoSuchViewException;
 import org.apache.spark.sql.catalyst.analysis.TableAlreadyExistsException;
 import org.apache.spark.sql.catalyst.analysis.ViewAlreadyExistsException;
+import org.apache.spark.sql.catalyst.catalog.CatalogTable;
 import org.apache.spark.sql.connector.catalog.Column;
 import org.apache.spark.sql.connector.catalog.Identifier;
 import org.apache.spark.sql.connector.catalog.Relation;
@@ -215,6 +216,9 @@ public class UCViewProxySuite {
     assertThat(view.queryText()).isEqualTo("version: \"0.1\"");
     assertThat(view.properties().get(TableCatalog.PROP_TABLE_TYPE))
         .isEqualTo(TableSummary.METRIC_VIEW_TABLE_TYPE);
+    // Metric views carry no persisted schema mode; they must reload as UNSUPPORTED, not the plain
+    // view default of COMPENSATION.
+    assertThat(view.schemaMode()).isEqualTo("UNSUPPORTED");
   }
 
   // -- RelationCatalog cross-type filtering --
@@ -544,6 +548,129 @@ public class UCViewProxySuite {
         .isInstanceOf(TableAlreadyExistsException.class);
   }
 
+  // -- listTableSummaries tests (SHOW TABLES metadata-only path; LC-15627) --
+
+  @Test
+  public void testListTableSummariesReturnsTablesOnlyWithoutLoadingAnyTable() throws Exception {
+    // SHOW TABLES must stay metadata-only: build each summary from the single listTables RPC row
+    // (using its tableType), excluding view-like rows, and never call getTable/loadTable -- which
+    // is what vends per-table storage credentials and 400s on a non-externalizable managed table.
+    ListTablesResponse response =
+        new ListTablesResponse()
+            .tables(
+                List.of(
+                    new TableInfo().name("managed1").tableType(TableType.MANAGED),
+                    new TableInfo().name("external1").tableType(TableType.EXTERNAL),
+                    new TableInfo().name("mv1").tableType(TableType.METRIC_VIEW)))
+            .nextPageToken(null);
+    when(mockTablesApi.listTables(eq(CATALOG_NAME), eq(SCHEMA_NAME), eq(0), isNull()))
+        .thenReturn(response);
+
+    TableSummary[] result = proxyRelations.listTableSummaries(NAMESPACE);
+
+    // Only the two real tables, view-like rows excluded (they are contributed by listViews).
+    assertThat(result).hasSize(2);
+    assertThat(result[0].identifier()).isEqualTo(Identifier.of(NAMESPACE, "managed1"));
+    assertThat(result[0].tableType()).isEqualTo(TableSummary.MANAGED_TABLE_TYPE);
+    assertThat(result[1].identifier()).isEqualTo(Identifier.of(NAMESPACE, "external1"));
+    assertThat(result[1].tableType()).isEqualTo(TableSummary.EXTERNAL_TABLE_TYPE);
+
+    // The regression guard: no per-table load, so no credential vend can 400 the listing.
+    verify(mockTablesApi, org.mockito.Mockito.never())
+        .getTable(
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.any(),
+            org.mockito.ArgumentMatchers.any());
+  }
+
+  @Test
+  public void testListTableSummariesMapsStreamingTableToManagedAndUnknownToForeign()
+      throws Exception {
+    // STREAMING_TABLE summarizes as MANAGED: the load path fetches it with
+    // readStreamingTableAsManaged=true, so getUCTableLike -> loadV1Table classifies it as
+    // CatalogTableType.MANAGED (see #1017); the summary stays consistent with that. Any other
+    // non-view kind falls back to FOREIGN, mirroring Spark's default absent-PROP_TABLE_TYPE path.
+    ListTablesResponse response =
+        new ListTablesResponse()
+            .tables(
+                List.of(
+                    new TableInfo().name("st1").tableType(TableType.STREAMING_TABLE),
+                    new TableInfo().name("unknown1").tableType(TableType.UNKNOWN_DEFAULT_OPEN_API)))
+            .nextPageToken(null);
+    when(mockTablesApi.listTables(eq(CATALOG_NAME), eq(SCHEMA_NAME), eq(0), isNull()))
+        .thenReturn(response);
+
+    TableSummary[] result = proxyRelations.listTableSummaries(NAMESPACE);
+
+    assertThat(result).hasSize(2);
+    assertThat(result[0].identifier()).isEqualTo(Identifier.of(NAMESPACE, "st1"));
+    assertThat(result[0].tableType()).isEqualTo(TableSummary.MANAGED_TABLE_TYPE);
+    assertThat(result[1].identifier()).isEqualTo(Identifier.of(NAMESPACE, "unknown1"));
+    assertThat(result[1].tableType()).isEqualTo(TableSummary.FOREIGN_TABLE_TYPE);
+  }
+
+  @Test
+  public void testListRelationSummariesUnionsTablesAndViewsMetadataOnly() throws Exception {
+    // Full SHOW TABLES path: Spark's default listRelationSummaries unions listTableSummaries
+    // (tables) with listViews (views). Both are served from the list RPC, no getTable/loadTable.
+    ListTablesResponse response =
+        new ListTablesResponse()
+            .tables(
+                List.of(
+                    new TableInfo().name("managed1").tableType(TableType.MANAGED),
+                    new TableInfo().name("mv1").tableType(TableType.METRIC_VIEW)))
+            .nextPageToken(null);
+    when(mockTablesApi.listTables(eq(CATALOG_NAME), eq(SCHEMA_NAME), eq(0), isNull()))
+        .thenReturn(response);
+
+    TableSummary[] result = proxyRelations.listRelationSummaries(NAMESPACE);
+
+    // Tables first (from listTableSummaries), then views (from listViews) per the default's order.
+    assertThat(result).hasSize(2);
+    assertThat(result[0].identifier()).isEqualTo(Identifier.of(NAMESPACE, "managed1"));
+    assertThat(result[0].tableType()).isEqualTo(TableSummary.MANAGED_TABLE_TYPE);
+    assertThat(result[1].identifier()).isEqualTo(Identifier.of(NAMESPACE, "mv1"));
+    assertThat(result[1].tableType()).isEqualTo(TableSummary.VIEW_TABLE_TYPE);
+
+    verify(mockTablesApi, org.mockito.Mockito.never())
+        .getTable(
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.any(),
+            org.mockito.ArgumentMatchers.any());
+  }
+
+  @Test
+  public void testUCSingleCatalogListTableSummariesDelegatesToUcProxy() throws Exception {
+    // UCSingleCatalog routes summaries straight to ucProxy (bypassing the delegate/Delta chain),
+    // like the listViews delegate -- so the credential-free override is used even with Delta wired.
+    ListTablesResponse response =
+        new ListTablesResponse()
+            .tables(List.of(new TableInfo().name("managed1").tableType(TableType.MANAGED)))
+            .nextPageToken(null);
+    when(mockTablesApi.listTables(eq(CATALOG_NAME), eq(SCHEMA_NAME), eq(0), isNull()))
+        .thenReturn(response);
+
+    // A delegate that would fail if consulted for the listing -- proves ucProxy is used instead.
+    TableCatalog delegate = org.mockito.Mockito.mock(TableCatalog.class);
+    when(delegate.listTableSummaries(org.mockito.ArgumentMatchers.any()))
+        .thenThrow(new AssertionError("delegate.listTableSummaries must not be called"));
+
+    UCSingleCatalog catalog = new UCSingleCatalog();
+    setCatalogField(catalog, "delegate", delegate);
+    setCatalogField(catalog, "ucProxy", proxyRelations);
+
+    TableSummary[] result = ((RelationCatalog) catalog).listTableSummaries(NAMESPACE);
+
+    assertThat(result).hasSize(1);
+    assertThat(result[0].identifier()).isEqualTo(Identifier.of(NAMESPACE, "managed1"));
+    assertThat(result[0].tableType()).isEqualTo(TableSummary.MANAGED_TABLE_TYPE);
+    verify(mockTablesApi, org.mockito.Mockito.never())
+        .getTable(
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.any(),
+            org.mockito.ArgumentMatchers.any());
+  }
+
   // -- Plain SQL views (TableType.VIEW) --
 
   @Test
@@ -569,14 +696,7 @@ public class UCViewProxySuite {
   public void testCreatePlainViewSendsViewPayloadWithNonNullDependencies() throws Exception {
     // A plain CREATE VIEW carries no dependencies; the connector must still send a non-null
     // (empty) dependency list so the server's view validation accepts it.
-    View view =
-        new View.Builder()
-            .withColumns(new Column[] {Column.create("c", DataTypes.IntegerType, true)})
-            .withProperties(Map.of(TableCatalog.PROP_TABLE_TYPE, TableSummary.VIEW_TABLE_TYPE))
-            .withQueryText(PLAIN_VIEW_QUERY)
-            .withCurrentCatalog(CATALOG_NAME)
-            .withCurrentNamespace(NAMESPACE)
-            .build();
+    View view = plainViewBuilder().build();
 
     TableInfo ucView =
         stubPlainView().viewDependencies(new DependencyList().dependencies(List.of()));
@@ -627,7 +747,63 @@ public class UCViewProxySuite {
     verify(mockTablesApi).deleteTable(eq("test_catalog.test_schema.v1"));
   }
 
+  // -- schema mode round-trip --
+
+  @Test
+  public void testCreateViewPersistsSchemaMode() throws Exception {
+    stubPlainView();
+    proxyViews.createView(
+        Identifier.of(NAMESPACE, "v1"), plainViewBuilder().withSchemaMode("BINDING").build());
+
+    ArgumentCaptor<CreateTable> captor = ArgumentCaptor.forClass(CreateTable.class);
+    verify(mockTablesApi).createTable(captor.capture());
+    assertThat(captor.getValue().getProperties())
+        .containsEntry(CatalogTable.VIEW_SCHEMA_MODE(), "BINDING");
+  }
+
+  @Test
+  public void testCreateViewOmitsUnsupportedSchemaMode() throws Exception {
+    // UNSUPPORTED is the metric-view sentinel, not a persistable mode.
+    stubPlainView();
+    proxyViews.createView(
+        Identifier.of(NAMESPACE, "v1"), plainViewBuilder().withSchemaMode("UNSUPPORTED").build());
+
+    ArgumentCaptor<CreateTable> captor = ArgumentCaptor.forClass(CreateTable.class);
+    verify(mockTablesApi).createTable(captor.capture());
+    assertThat(captor.getValue().getProperties())
+        .doesNotContainKey(CatalogTable.VIEW_SCHEMA_MODE());
+  }
+
+  @Test
+  public void testLoadViewRestoresPersistedSchemaMode() throws Exception {
+    stubPlainView().properties(Map.of(CatalogTable.VIEW_SCHEMA_MODE(), "BINDING"));
+
+    View loaded = proxyViews.loadView(Identifier.of(NAMESPACE, "v1"));
+
+    assertThat(loaded.schemaMode()).isEqualTo("BINDING");
+    // Surfaced via schemaMode(); the raw key must not leak into properties() (double-count guard).
+    assertThat(loaded.properties()).doesNotContainKey(CatalogTable.VIEW_SCHEMA_MODE());
+  }
+
+  @Test
+  public void testLoadViewDefaultsSchemaModeToCompensationWhenAbsent() throws Exception {
+    stubPlainView();
+
+    assertThat(proxyViews.loadView(Identifier.of(NAMESPACE, "v1")).schemaMode())
+        .isEqualTo("COMPENSATION");
+  }
+
   private static final String PLAIN_VIEW_QUERY = "SELECT 1 AS c";
+
+  /** A plain-view builder matching {@link #stubPlainView()} (single int column {@code c}). */
+  private View.Builder plainViewBuilder() {
+    return new View.Builder()
+        .withColumns(new Column[] {Column.create("c", DataTypes.IntegerType, true)})
+        .withProperties(Map.of(TableCatalog.PROP_TABLE_TYPE, TableSummary.VIEW_TABLE_TYPE))
+        .withQueryText(PLAIN_VIEW_QUERY)
+        .withCurrentCatalog(CATALOG_NAME)
+        .withCurrentNamespace(NAMESPACE);
+  }
 
   /** Builds a UC {@code VIEW} row named {@code v1} and stubs {@code getTable} to return it. */
   private TableInfo stubPlainView() throws Exception {

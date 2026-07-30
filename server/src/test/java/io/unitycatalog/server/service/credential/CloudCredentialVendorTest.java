@@ -9,6 +9,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import io.unitycatalog.server.exception.BaseException;
+import io.unitycatalog.server.exception.ErrorCode;
 import io.unitycatalog.server.model.AwsCredentials;
 import io.unitycatalog.server.model.AwsIamRoleRequest;
 import io.unitycatalog.server.model.CreateCredentialRequest;
@@ -67,6 +68,45 @@ public class CloudCredentialVendorTest {
   }
 
   @Test
+  public void testRejectsCloudStorageRootBeforeVendingCredentials() {
+    reset(externalLocationUtils);
+    credentialsOperations = new CloudCredentialVendor(null, null, null);
+
+    assertThatThrownBy(
+            () -> vendCredential("s3://storageBase/", Set.of(CredentialContext.Privilege.SELECT)))
+        .isInstanceOf(BaseException.class)
+        .hasMessageContaining("must include a non-empty path prefix")
+        .hasMessageContaining("s3://storageBase")
+        .extracting(exception -> ((BaseException) exception).getErrorCode())
+        .isEqualTo(ErrorCode.INVALID_ARGUMENT);
+  }
+
+  @Test
+  public void testGenerateS3TemporaryCredentialsIncludeEndpointUrl() {
+    final String ACCESS_KEY = "accessKey";
+    final String SECRET_KEY = "secretKey";
+    final String SESSION_TOKEN = "sessionToken";
+    final String ENDPOINT_URL = "http://localhost:9000";
+    when(serverProperties.getS3Configurations())
+        .thenReturn(
+            Map.of(
+                NormalizedURL.from("s3://storageBase"),
+                S3StorageConfig.builder()
+                    .accessKey(ACCESS_KEY)
+                    .secretKey(SECRET_KEY)
+                    .sessionToken(SESSION_TOKEN)
+                    .endpointUrl(ENDPOINT_URL)
+                    .build()));
+    AwsCredentialVendor awsCredentialVendor = new AwsCredentialVendor(serverProperties);
+    credentialsOperations = new CloudCredentialVendor(awsCredentialVendor, null, null);
+
+    TemporaryCredentials s3TemporaryCredentials =
+        vendCredential("s3://storageBase/abc", Set.of(CredentialContext.Privilege.SELECT));
+
+    assertThat(s3TemporaryCredentials.getEndpointUrl()).isEqualTo(ENDPOINT_URL);
+  }
+
+  @Test
   public void testGenerateS3TemporaryCredentials() {
     final String ACCESS_KEY = "accessKey";
     final String SECRET_KEY = "secretKey";
@@ -93,6 +133,12 @@ public class CloudCredentialVendorTest {
                 .accessKeyId(ACCESS_KEY)
                 .secretAccessKey(SECRET_KEY)
                 .sessionToken(SESSION_TOKEN));
+    // The vended url is the normalized path, not the raw request: a trailing slash is stripped.
+    // This fails if the vendor ever echoes the caller-supplied string verbatim.
+    assertThat(
+            vendCredential("s3://storageBase/abc/", Set.of(CredentialContext.Privilege.SELECT))
+                .getUrl())
+        .isEqualTo("s3://storageBase/abc");
 
     // Test when sts client is called
     when(serverProperties.getS3Configurations())
@@ -114,35 +160,6 @@ public class CloudCredentialVendorTest {
   }
 
   @Test
-  public void testGenerateS3TemporaryCredentialsIncludeEndpointUrl() {
-    final String ACCESS_KEY = "accessKey";
-    final String SECRET_KEY = "secretKey";
-    final String SESSION_TOKEN = "sessionToken";
-    final String ENDPOINT_URL = "http://localhost:9000";
-    when(serverProperties.getS3Configurations())
-        .thenReturn(
-            Map.of(
-                NormalizedURL.from("s3://storageBase"),
-                S3StorageConfig.builder()
-                    .accessKey(ACCESS_KEY)
-                    .secretKey(SECRET_KEY)
-                    .sessionToken(SESSION_TOKEN)
-                    .endpointUrl(ENDPOINT_URL)
-                    .build()));
-    AwsCredentialVendor awsCredentialVendor = new AwsCredentialVendor(serverProperties);
-    credentialsOperations = new CloudCredentialVendor(awsCredentialVendor, null, null);
-    TemporaryCredentials s3TemporaryCredentials =
-        vendCredential("s3://storageBase/abc", Set.of(CredentialContext.Privilege.SELECT));
-    assertThat(s3TemporaryCredentials.getAwsTempCredentials())
-        .isEqualTo(
-            new AwsCredentials()
-                .accessKeyId(ACCESS_KEY)
-                .secretAccessKey(SECRET_KEY)
-                .sessionToken(SESSION_TOKEN));
-    assertThat(s3TemporaryCredentials.getEndpointUrl()).isEqualTo(ENDPOINT_URL);
-  }
-
-  @Test
   public void testGenerateAzureTemporaryCredentials() {
     final String CLIENT_ID = "clientId";
     final String CLIENT_SECRET = "clientSecret";
@@ -154,7 +171,8 @@ public class CloudCredentialVendorTest {
     credentialsOperations = new CloudCredentialVendor(null, azureCredentialVendor, null);
     TemporaryCredentials azureTemporaryCredentials =
         vendCredential(
-            "abfss://test@uctest.dfs.core.windows.net", Set.of(CredentialContext.Privilege.UPDATE));
+            "abfss://test@uctest.dfs.core.windows.net/abc",
+            Set.of(CredentialContext.Privilege.UPDATE));
     assertThat(azureTemporaryCredentials.getAzureUserDelegationSas().getSasToken()).isNotNull();
 
     // Use datalake service client
@@ -171,7 +189,9 @@ public class CloudCredentialVendorTest {
     azureCredentialVendor = new AzureCredentialVendor(serverProperties);
     credentialsOperations = new CloudCredentialVendor(null, azureCredentialVendor, null);
     assertThatThrownBy(
-            () -> vendCredential("abfss://test@uctest", Set.of(CredentialContext.Privilege.UPDATE)))
+            () ->
+                vendCredential(
+                    "abfss://test@uctest/abc", Set.of(CredentialContext.Privilege.UPDATE)))
         .isInstanceOf(CompletionException.class);
   }
 

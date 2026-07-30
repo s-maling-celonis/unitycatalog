@@ -38,7 +38,8 @@ import org.junit.jupiter.api.Test;
  * {@code UCViewProxySuite} (resolved per Spark version via the {@code scala-shims/} test dirs).
  * Spark 4.0/4.1 have no view-catalog APIs ({@code RelationCatalog}, {@code ViewCatalog},
  * {@code View}), so there is no native create/replace/rename/drop-through-view surface. With
- * {@link UCSparkSessionExtensions}, supported SQL view DDL is routed directly to UC REST.
+ * {@link UCSparkSessionExtensions} registered, supported SQL view DDL is routed directly to UC
+ * REST instead; see {@code UCViewDDLIntegrationTest}.
  *
  * <p>Plain SQL views ({@code TableType.VIEW}) are still readable: they appear on the table listing
  * and {@code loadTable} returns a V1 VIEW {@code CatalogTable} that Spark resolves from its SQL
@@ -72,30 +73,47 @@ public class UCViewReadOnlySuite {
 
   @Test
   public void testLoadTableResolvesPlainViewAsV1View() throws Exception {
-    TableInfo row =
-        new TableInfo()
-            .catalogName(CATALOG_NAME)
-            .schemaName(SCHEMA_NAME)
-            .name("v1")
-            .tableType(TableType.VIEW)
-            .viewDefinition("SELECT 1 AS c")
-            .columns(
-                List.of(
-                    new ColumnInfo()
-                        .name("c")
-                        .typeName(ColumnTypeName.INT)
-                        .typeText("int")
-                        .nullable(true)
-                        .position(0)));
-    when(mockTablesApi.getTable(eq("test_catalog.test_schema.v1"), eq(true), eq(true)))
-        .thenReturn(row);
-
-    Table table = proxy.loadTable(Identifier.of(NAMESPACE, "v1"));
-
-    assertThat(table).isInstanceOf(V1Table.class);
-    CatalogTable catalogTable = ((V1Table) table).v1Table();
+    CatalogTable catalogTable = loadPlainViewCatalogTable(List.of(intColumn("c")), null);
     assertThat(catalogTable.tableType().name()).isEqualTo("VIEW");
-    assertThat(catalogTable.viewText().get()).isEqualTo("SELECT 1 AS c");
+    assertThat(catalogTable.viewText().get()).isEqualTo(PLAIN_VIEW_QUERY);
+  }
+
+  @Test
+  public void testLoadTablePopulatesViewMetadataProperties() throws Exception {
+    // v1 has no View API, so Spark reads the view's captured metadata from properties. Mirror the
+    // 4.2 View surface: synthesize query-output column names, carry view.sqlConfig.*, default the
+    // schema mode to compensation.
+    CatalogTable catalogTable =
+        loadPlainViewCatalogTable(
+            List.of(intColumn("c")),
+            Map.of(CatalogTable.VIEW_SQL_CONFIG_PREFIX() + "spark.sql.ansi.enabled", "true"));
+
+    assertThat(catalogTable.properties().get(CatalogTable.VIEW_QUERY_OUTPUT_NUM_COLUMNS()).get())
+        .isEqualTo("1");
+    assertThat(
+            catalogTable
+                .properties()
+                .get(CatalogTable.VIEW_QUERY_OUTPUT_COLUMN_NAME_PREFIX() + "0")
+                .get())
+        .isEqualTo("c");
+    assertThat(
+            catalogTable
+                .properties()
+                .get(CatalogTable.VIEW_SQL_CONFIG_PREFIX() + "spark.sql.ansi.enabled")
+                .get())
+        .isEqualTo("true");
+    assertThat(catalogTable.properties().get(CatalogTable.VIEW_SCHEMA_MODE()).get())
+        .isEqualTo("COMPENSATION");
+  }
+
+  @Test
+  public void testLoadTablePlainViewWithNullColumnsDoesNotThrow() throws Exception {
+    // Columns are nullable on the wire (older / non-Spark writer); degrade to an empty schema
+    // rather than NPE-ing, and record no query-output columns.
+    CatalogTable catalogTable = loadPlainViewCatalogTable(null, null);
+    assertThat(catalogTable.schema().fields()).isEmpty();
+    assertThat(catalogTable.properties().contains(CatalogTable.VIEW_QUERY_OUTPUT_NUM_COLUMNS()))
+        .isFalse();
   }
 
   @Test
@@ -184,5 +202,36 @@ public class UCViewReadOnlySuite {
                 proxy.renameTable(
                     Identifier.of(NAMESPACE, "mv1"), Identifier.of(NAMESPACE, "mv2")))
         .isInstanceOf(UnsupportedOperationException.class);
+  }
+
+  private static final String PLAIN_VIEW_QUERY = "SELECT 1 AS c";
+
+  private static ColumnInfo intColumn(String name) {
+    return new ColumnInfo()
+        .name(name)
+        .typeName(ColumnTypeName.INT)
+        .typeText("int")
+        .nullable(true)
+        .position(0);
+  }
+
+  /** Stubs UC {@code VIEW} row {@code v1} and returns the resolved V1 VIEW {@code CatalogTable}. */
+  private CatalogTable loadPlainViewCatalogTable(
+      List<ColumnInfo> columns, Map<String, String> properties) throws Exception {
+    TableInfo row =
+        new TableInfo()
+            .catalogName(CATALOG_NAME)
+            .schemaName(SCHEMA_NAME)
+            .name("v1")
+            .tableType(TableType.VIEW)
+            .viewDefinition(PLAIN_VIEW_QUERY)
+            .columns(columns)
+            .properties(properties);
+    when(mockTablesApi.getTable(eq("test_catalog.test_schema.v1"), eq(true), eq(true)))
+        .thenReturn(row);
+
+    Table table = proxy.loadTable(Identifier.of(NAMESPACE, "v1"));
+    assertThat(table).isInstanceOf(V1Table.class);
+    return ((V1Table) table).v1Table();
   }
 }

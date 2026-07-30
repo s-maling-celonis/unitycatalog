@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import io.unitycatalog.server.exception.BaseException;
 import io.unitycatalog.server.model.TableType;
 import io.unitycatalog.server.utils.ServerProperties.Property;
+import java.time.Duration;
 import java.util.Properties;
 import org.junit.jupiter.api.Test;
 
@@ -206,6 +207,18 @@ public class ServerPropertiesTest {
   }
 
   @Test
+  public void testEffectiveCookieTimeout() {
+    ServerProperties serverProperties = new ServerProperties();
+    assertThat(serverProperties.getEffectiveCookieTimeout()).isEqualTo(Duration.parse("PT24H"));
+
+    serverProperties.set(Property.COOKIE_TIMEOUT, "PT1H");
+    assertThat(serverProperties.getEffectiveCookieTimeout()).isEqualTo(Duration.parse("PT1H"));
+
+    serverProperties.set(Property.ACCESS_TOKEN_TIMEOUT, "PT48H");
+    assertThat(serverProperties.getEffectiveCookieTimeout()).isEqualTo(Duration.parse("PT1H"));
+  }
+
+  @Test
   public void testDefaultPropertyValues() {
     // Test that all default values are valid and correctly set. If any of them are invalid, the
     // constructor would throw exception.
@@ -263,5 +276,44 @@ public class ServerPropertiesTest {
     assertThatThrownBy(() -> new ServerProperties(mixed))
         .isInstanceOf(BaseException.class)
         .hasMessageContaining("cannot combine '*' with other values");
+  }
+
+  @Test
+  public void testRejectsLoneWildcardAllowedIssuers() {
+    Properties props = new Properties();
+    props.setProperty("server.allowed-issuers", "*");
+    assertThatThrownBy(() -> new ServerProperties(props))
+        .isInstanceOf(BaseException.class)
+        .hasMessageContaining("server.allowed-issuers cannot be '*'");
+  }
+
+  @Test
+  public void testAllowlistCaching() {
+    Properties props = new Properties();
+    props.setProperty("server.allowed-issuers", "https://a.example.com");
+    ServerProperties serverProperties = new ServerProperties(props);
+
+    WildcardAllowlist first = serverProperties.getIssuerAllowlist();
+    WildcardAllowlist second = serverProperties.getIssuerAllowlist();
+    assertThat(first).isSameAs(second);
+    assertThat(first.isAllowed("https://a.example.com")).isTrue();
+  }
+
+  @Test
+  public void testAllowlistRebuildsWhenPropertyChanges() {
+    Properties props = new Properties();
+    props.setProperty("server.allowed-issuers", "https://a.example.com");
+    ServerProperties serverProperties = new ServerProperties(props);
+    WildcardAllowlist original = serverProperties.getIssuerAllowlist();
+
+    System.setProperty("server.allowed-issuers", "https://b.example.com");
+    try {
+      WildcardAllowlist rebuilt = serverProperties.getIssuerAllowlist();
+      assertThat(rebuilt).isNotSameAs(original);
+      assertThat(rebuilt.isAllowed("https://b.example.com")).isTrue();
+      assertThat(rebuilt.isAllowed("https://a.example.com")).isFalse();
+    } finally {
+      System.clearProperty("server.allowed-issuers");
+    }
   }
 }

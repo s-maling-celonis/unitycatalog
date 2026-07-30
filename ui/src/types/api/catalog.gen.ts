@@ -1308,6 +1308,8 @@ export interface components {
       aws_temp_credentials?: components['schemas']['AwsCredentials'];
       azure_user_delegation_sas?: components['schemas']['AzureUserDelegationSAS'];
       gcp_oauth_token?: components['schemas']['GcpOauthToken'];
+      /** @description Optional S3 compatible endpoint URL */
+      endpoint_url?: string;
       /**
        * Format: int64
        * @description Server time when the credential will expire, in epoch milliseconds.
@@ -1315,6 +1317,8 @@ export interface components {
        *
        */
       expiration_time?: number;
+      /** @description The normalized URL of the storage path the temporary credential was generated for. */
+      url?: string;
     };
     /** @enum {string} */
     PathOperation: PathOperation;

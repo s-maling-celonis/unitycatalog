@@ -4,10 +4,6 @@ import io.unitycatalog.client.ApiClient;
 import io.unitycatalog.client.ApiException;
 import io.unitycatalog.client.auth.TokenProvider;
 import io.unitycatalog.client.internal.ApiClientUtils;
-import io.unitycatalog.client.model.AwsCredentials;
-import io.unitycatalog.client.model.AzureUserDelegationSAS;
-import io.unitycatalog.client.model.GcpOauthToken;
-import io.unitycatalog.client.model.TemporaryCredentials;
 import io.unitycatalog.hadoop.UCCredentialHadoopConfs;
 import io.unitycatalog.hadoop.internal.auth.CredentialCache;
 import io.unitycatalog.hadoop.internal.auth.CredentialCache.RenewableCredential;
@@ -18,6 +14,7 @@ import io.unitycatalog.hadoop.internal.id.DeltaStagingTableCredId;
 import io.unitycatalog.hadoop.internal.id.DeltaTableCredId;
 import io.unitycatalog.hadoop.internal.id.PathCredId;
 import io.unitycatalog.hadoop.internal.id.TableCredId;
+import io.unitycatalog.hadoop.internal.props.CredPropsBuilder;
 import io.unitycatalog.hadoop.internal.util.ClockUtil;
 import io.unitycatalog.hadoop.internal.util.MapIdGenerator;
 import java.net.URI;
@@ -25,6 +22,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import org.apache.hadoop.conf.Configuration;
 
 /**
@@ -52,323 +50,9 @@ public class CredPropsUtil {
 
   static final CredentialCache initialCredCache = CredentialCache.createInitialCredentialCache();
 
-  private static final String CRED_SCOPED_FS_CLASS =
-      "io.unitycatalog.hadoop.internal.fs.CredScopedFileSystem";
-  private static final String CRED_SCOPED_AFS_CLASS =
-      "io.unitycatalog.hadoop.internal.fs.CredScopedFs";
-  private static final String AWS_VENDED_TOKEN_PROVIDER_CLASS =
-      "io.unitycatalog.hadoop.internal.auth.AwsVendedTokenProvider";
-  private static final String GCS_VENDED_TOKEN_PROVIDER_CLASS =
-      "io.unitycatalog.hadoop.internal.auth.GcsVendedTokenProvider";
-  private static final String ABFS_VENDED_TOKEN_PROVIDER_CLASS =
-      "io.unitycatalog.hadoop.internal.auth.AbfsVendedTokenProvider";
-  private static final String GCS_ACCESS_TOKEN_KEY = "fs.gs.auth.access.token.credential";
-  private static final String GCS_ACCESS_TOKEN_EXPIRATION_KEY =
-      "fs.gs.auth.access.token.expiration";
-  private static final String GCS_CONFLICT_CHECK_KEY = "fs.gs.create.items.conflict.check.enable";
-  private static final String ABFS_FIXED_SAS_TOKEN_KEY = "fs.azure.sas.fixed.token";
-
   // Keys used to build the credential-context id (see #credContextId).
   private static final String CRED_CONTEXT_CATALOG_URI_KEY = "catalogUri";
   private static final String CRED_CONTEXT_SCHEME_KEY = "scheme";
-
-  private abstract static class PropsBuilder<T extends PropsBuilder<T>> {
-    private final HashMap<String, String> builder = new HashMap<>();
-
-    public T set(String key, String value) {
-      builder.put(key, value);
-      return self();
-    }
-
-    public T uri(String uri) {
-      builder.put(UCHadoopConfConstants.UC_URI_KEY, uri);
-      return self();
-    }
-
-    public T tokenProvider(TokenProvider tokenProvider) {
-      // As we can only propagate the properties with prefix 'fs.*' to the FileSystem
-      // implementation. So let's add the prefix here.
-      tokenProvider
-          .configs()
-          .forEach((key, value) -> builder.put(UCHadoopConfConstants.UC_AUTH_PREFIX + key, value));
-      return self();
-    }
-
-    /** Applies the credential-scope identity properties carried by {@code credId}. */
-    public T credId(CredId credId) {
-      credId.props().forEach(this::set);
-      return self();
-    }
-
-    public T appVersions(Map<String, String> appVersions) {
-      appVersions.forEach(
-          (k, v) -> builder.put(UCHadoopConfConstants.UC_ENGINE_VERSION_PREFIX + k, v));
-      return self();
-    }
-
-    /**
-     * Saves the current value of {@code key} from {@code hadoopProps} (falling back to {@code
-     * defaultOriginal}) under {@code key + ".original"}, then overrides {@code key} with {@code
-     * newValue}. This lets CredScopedFileSystem#newFileSystem restore the real delegate
-     * implementation after the wrapper has been installed.
-     */
-    public T saveAndOverride(
-        Configuration hadoopConf, String key, String defaultOriginal, String newValue) {
-      builder.put(key + ".original", hadoopConf.get(key, defaultOriginal));
-      builder.put(key, newValue);
-      return self();
-    }
-
-    protected abstract T self();
-
-    public Map<String, String> build() {
-      return Collections.unmodifiableMap(new HashMap<>(builder));
-    }
-  }
-
-  static class S3PropsBuilder extends PropsBuilder<S3PropsBuilder> {
-
-    S3PropsBuilder(boolean credScopedFsEnabled, Configuration hadoopConf) {
-      // Common properties for S3.
-      set("fs.s3a.path.style.access", "true");
-      set("fs.s3.impl.disable.cache", "true");
-      set("fs.s3a.impl.disable.cache", "true");
-
-      if (credScopedFsEnabled) {
-        saveAndOverride(
-            hadoopConf,
-            "fs.s3.impl",
-            "org.apache.hadoop.fs.s3a.S3AFileSystem",
-            CRED_SCOPED_FS_CLASS);
-        saveAndOverride(
-            hadoopConf,
-            "fs.s3a.impl",
-            "org.apache.hadoop.fs.s3a.S3AFileSystem",
-            CRED_SCOPED_FS_CLASS);
-        saveAndOverride(
-            hadoopConf,
-            "fs.AbstractFileSystem.s3.impl",
-            "org.apache.hadoop.fs.s3a.S3A",
-            CRED_SCOPED_AFS_CLASS);
-        saveAndOverride(
-            hadoopConf,
-            "fs.AbstractFileSystem.s3a.impl",
-            "org.apache.hadoop.fs.s3a.S3A",
-            CRED_SCOPED_AFS_CLASS);
-      }
-    }
-
-    @Override
-    protected S3PropsBuilder self() {
-      return this;
-    }
-  }
-
-  private static class GcsPropsBuilder extends PropsBuilder<GcsPropsBuilder> {
-
-    GcsPropsBuilder(boolean credScopedFsEnabled, Configuration hadoopConf) {
-      // The upstream GCS connector defaults this to true which causes the connector to
-      // stat every ancestor directory on file creation. With UC-vended downscoped tokens
-      // (scoped to a table's path prefix) these ancestor stats return 403. Default to
-      // false; users with broader credentials can opt back in via Hadoop/Spark config.
-      set(GCS_CONFLICT_CHECK_KEY, hadoopConf.get(GCS_CONFLICT_CHECK_KEY, "false"));
-      set("fs.gs.impl.disable.cache", "true");
-
-      if (credScopedFsEnabled) {
-        saveAndOverride(
-            hadoopConf,
-            "fs.gs.impl",
-            "com.google.cloud.hadoop.fs.gcs.GoogleHadoopFileSystem",
-            CRED_SCOPED_FS_CLASS);
-        saveAndOverride(
-            hadoopConf,
-            "fs.AbstractFileSystem.gs.impl",
-            "com.google.cloud.hadoop.fs.gcs.GoogleHadoopFS",
-            CRED_SCOPED_AFS_CLASS);
-      }
-    }
-
-    @Override
-    protected GcsPropsBuilder self() {
-      return this;
-    }
-  }
-
-  private static class AbfsPropsBuilder extends PropsBuilder<AbfsPropsBuilder> {
-
-    AbfsPropsBuilder(boolean credScopedFsEnabled, Configuration hadoopConf) {
-      set(UCHadoopConfConstants.FS_AZURE_ACCOUNT_AUTH_TYPE_PROPERTY_NAME, "SAS");
-      set(UCHadoopConfConstants.FS_AZURE_ACCOUNT_IS_HNS_ENABLED, "true");
-      set("fs.abfs.impl.disable.cache", "true");
-      set("fs.abfss.impl.disable.cache", "true");
-
-      if (credScopedFsEnabled) {
-        saveAndOverride(
-            hadoopConf,
-            "fs.abfs.impl",
-            "org.apache.hadoop.fs.azurebfs.AzureBlobFileSystem",
-            CRED_SCOPED_FS_CLASS);
-        saveAndOverride(
-            hadoopConf,
-            "fs.abfss.impl",
-            "org.apache.hadoop.fs.azurebfs.SecureAzureBlobFileSystem",
-            CRED_SCOPED_FS_CLASS);
-        saveAndOverride(
-            hadoopConf,
-            "fs.AbstractFileSystem.abfs.impl",
-            "org.apache.hadoop.fs.azurebfs.Abfs",
-            CRED_SCOPED_AFS_CLASS);
-        saveAndOverride(
-            hadoopConf,
-            "fs.AbstractFileSystem.abfss.impl",
-            "org.apache.hadoop.fs.azurebfs.Abfss",
-            CRED_SCOPED_AFS_CLASS);
-      }
-    }
-
-    @Override
-    protected AbfsPropsBuilder self() {
-      return this;
-    }
-  }
-
-  private static Map<String, String> s3FixedCredProps(
-      boolean credScopedFsEnabled, Configuration hadoopConf, GenericCredential cred) {
-    TemporaryCredentials tempCreds = cred.temporaryCredentials();
-    AwsCredentials awsCred = tempCreds.getAwsTempCredentials();
-    S3PropsBuilder builder =
-        new S3PropsBuilder(credScopedFsEnabled, hadoopConf)
-            .set("fs.s3a.access.key", awsCred.getAccessKeyId())
-            .set("fs.s3a.secret.key", awsCred.getSecretAccessKey())
-            .set("fs.s3a.session.token", awsCred.getSessionToken());
-    String endpoint = resolveS3Endpoint(hadoopConf, tempCreds.getEndpointUrl());
-    if (endpoint != null && !endpoint.isEmpty()) {
-      builder
-          .set("fs.s3a.endpoint", endpoint)
-          .set(UCHadoopConfConstants.S3A_INIT_ENDPOINT_URL, endpoint);
-    }
-    return builder.build();
-  }
-
-  private static S3PropsBuilder s3TempCredPropsBuilder(
-      boolean credScopedFsEnabled,
-      Configuration hadoopConf,
-      String uri,
-      TokenProvider tokenProvider,
-      GenericCredential cred) {
-    TemporaryCredentials tempCreds = cred.temporaryCredentials();
-    AwsCredentials awsCred = tempCreds.getAwsTempCredentials();
-    S3PropsBuilder builder =
-        new S3PropsBuilder(credScopedFsEnabled, hadoopConf)
-            .set(UCHadoopConfConstants.S3A_CREDENTIALS_PROVIDER, AWS_VENDED_TOKEN_PROVIDER_CLASS)
-            .uri(uri)
-            .tokenProvider(tokenProvider)
-            .set(UCHadoopConfConstants.S3A_INIT_ACCESS_KEY, awsCred.getAccessKeyId())
-            .set(UCHadoopConfConstants.S3A_INIT_SECRET_KEY, awsCred.getSecretAccessKey())
-            .set(UCHadoopConfConstants.S3A_INIT_SESSION_TOKEN, awsCred.getSessionToken());
-
-    // For the static credential case, nullable expiration time is possible.
-    if (tempCreds.getExpirationTime() != null) {
-      builder.set(
-          UCHadoopConfConstants.S3A_INIT_CRED_EXPIRED_TIME,
-          String.valueOf(tempCreds.getExpirationTime()));
-    }
-
-    String endpoint = resolveS3Endpoint(hadoopConf, tempCreds.getEndpointUrl());
-    if (endpoint != null && !endpoint.isEmpty()) {
-      builder
-          .set("fs.s3a.endpoint", endpoint)
-          .set(UCHadoopConfConstants.S3A_INIT_ENDPOINT_URL, endpoint);
-    }
-
-    return builder;
-  }
-
-  /**
-   * Prefer an existing client {@code fs.s3a.endpoint} over a vended URL so containerized clients
-   * (e.g. Spark with {@code http://minio:9000}) are not overwritten by a host-side loopback URL.
-   */
-  private static String resolveS3Endpoint(Configuration hadoopConf, String vendedEndpointUrl) {
-    String clientEndpoint = hadoopConf.get("fs.s3a.endpoint");
-    if (clientEndpoint != null && !clientEndpoint.isEmpty()) {
-      return clientEndpoint;
-    }
-    return vendedEndpointUrl;
-  }
-
-  private static Map<String, String> gsFixedCredProps(
-      boolean credScopedFsEnabled, Configuration hadoopConf, GenericCredential cred) {
-    TemporaryCredentials tempCreds = cred.temporaryCredentials();
-    GcpOauthToken gcpOauthToken = tempCreds.getGcpOauthToken();
-    Long expirationTime =
-        tempCreds.getExpirationTime() == null ? Long.MAX_VALUE : tempCreds.getExpirationTime();
-    return new GcsPropsBuilder(credScopedFsEnabled, hadoopConf)
-        .set(GCS_ACCESS_TOKEN_KEY, gcpOauthToken.getOauthToken())
-        .set(GCS_ACCESS_TOKEN_EXPIRATION_KEY, String.valueOf(expirationTime))
-        .build();
-  }
-
-  private static GcsPropsBuilder gcsTempCredPropsBuilder(
-      boolean credScopedFsEnabled,
-      Configuration hadoopConf,
-      String uri,
-      TokenProvider tokenProvider,
-      GenericCredential cred) {
-    TemporaryCredentials tempCreds = cred.temporaryCredentials();
-    GcpOauthToken gcpToken = tempCreds.getGcpOauthToken();
-    GcsPropsBuilder builder =
-        new GcsPropsBuilder(credScopedFsEnabled, hadoopConf)
-            .set("fs.gs.auth.type", "ACCESS_TOKEN_PROVIDER")
-            .set("fs.gs.auth.access.token.provider", GCS_VENDED_TOKEN_PROVIDER_CLASS)
-            .uri(uri)
-            .tokenProvider(tokenProvider)
-            .set(UCHadoopConfConstants.GCS_INIT_OAUTH_TOKEN, gcpToken.getOauthToken());
-
-    // For the static credential case, nullable expiration time is possible.
-    if (tempCreds.getExpirationTime() != null) {
-      builder.set(
-          UCHadoopConfConstants.GCS_INIT_OAUTH_TOKEN_EXPIRATION_TIME,
-          String.valueOf(tempCreds.getExpirationTime()));
-    }
-
-    return builder;
-  }
-
-  private static Map<String, String> abfsFixedCredProps(
-      boolean credScopedFsEnabled, Configuration hadoopConf, GenericCredential cred) {
-    TemporaryCredentials tempCreds = cred.temporaryCredentials();
-    AzureUserDelegationSAS azureSas = tempCreds.getAzureUserDelegationSas();
-    return new AbfsPropsBuilder(credScopedFsEnabled, hadoopConf)
-        .set(ABFS_FIXED_SAS_TOKEN_KEY, azureSas.getSasToken())
-        .build();
-  }
-
-  private static AbfsPropsBuilder abfsTempCredPropsBuilder(
-      boolean credScopedFsEnabled,
-      Configuration hadoopConf,
-      String uri,
-      TokenProvider tokenProvider,
-      GenericCredential cred) {
-    TemporaryCredentials tempCreds = cred.temporaryCredentials();
-    AzureUserDelegationSAS azureSas = tempCreds.getAzureUserDelegationSas();
-    AbfsPropsBuilder builder =
-        new AbfsPropsBuilder(credScopedFsEnabled, hadoopConf)
-            .set(
-                UCHadoopConfConstants.FS_AZURE_SAS_TOKEN_PROVIDER_TYPE,
-                ABFS_VENDED_TOKEN_PROVIDER_CLASS)
-            .uri(uri)
-            .tokenProvider(tokenProvider)
-            .set(UCHadoopConfConstants.AZURE_INIT_SAS_TOKEN, azureSas.getSasToken());
-
-    // For the static credential case, nullable expiration time is possible.
-    if (tempCreds.getExpirationTime() != null) {
-      builder.set(
-          UCHadoopConfConstants.AZURE_INIT_SAS_TOKEN_EXPIRED_TIME,
-          String.valueOf(tempCreds.getExpirationTime()));
-    }
-
-    return builder;
-  }
 
   /** Fetches table credentials from the UC REST API and builds Hadoop configuration properties. */
   public static Map<String, String> createTableCredProps(
@@ -499,44 +183,22 @@ public class CredPropsUtil {
       Map<String, String> appVersions,
       CredId credId)
       throws ApiException {
+    Optional<CloudType> cloudType = CloudType.fromScheme(scheme);
+    if (cloudType.isEmpty()) {
+      // Unsupported scheme: skip the credential fetch entirely and return no props.
+      return Collections.emptyMap();
+    }
     GenericCredential cred =
         fetchGenericCredential(
             hadoopConf, apiClient, catalogUri, tokenProvider, appVersions, credId);
-    switch (scheme) {
-      case "s3":
-        if (renewCredEnabled) {
-          return s3TempCredPropsBuilder(
-                  credScopedFsEnabled, hadoopConf, catalogUri, tokenProvider, cred)
-              .credId(credId)
-              .appVersions(appVersions)
-              .build();
-        } else {
-          return s3FixedCredProps(credScopedFsEnabled, hadoopConf, cred);
-        }
-      case "gs":
-        if (renewCredEnabled) {
-          return gcsTempCredPropsBuilder(
-                  credScopedFsEnabled, hadoopConf, catalogUri, tokenProvider, cred)
-              .credId(credId)
-              .appVersions(appVersions)
-              .build();
-        } else {
-          return gsFixedCredProps(credScopedFsEnabled, hadoopConf, cred);
-        }
-      case "abfss":
-      case "abfs":
-        if (renewCredEnabled) {
-          return abfsTempCredPropsBuilder(
-                  credScopedFsEnabled, hadoopConf, catalogUri, tokenProvider, cred)
-              .credId(credId)
-              .appVersions(appVersions)
-              .build();
-        } else {
-          return abfsFixedCredProps(credScopedFsEnabled, hadoopConf, cred);
-        }
-      default:
-        return Collections.emptyMap();
+    CredPropsBuilder builder =
+        CredPropsBuilder.forCloud(cloudType.get(), hadoopConf)
+            .credScopedFsEnabled(credScopedFsEnabled)
+            .initialCredential(cred);
+    if (renewCredEnabled) {
+      builder.enableRenewCred(catalogUri, tokenProvider, credId, appVersions);
     }
+    return builder.build();
   }
 
   /**

@@ -28,7 +28,7 @@ import org.apache.spark.internal.Logging
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{NamespaceAlreadyExistsException, NoSuchNamespaceException, NoSuchTableException, TableAlreadyExistsException, ViewAlreadyExistsException}
-import org.apache.spark.sql.catalyst.catalog.{CatalogStorageFormat, CatalogTable, CatalogTableType, CatalogUtils}
+import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType, CatalogUtils}
 import org.apache.spark.sql.connector.catalog._
 import org.apache.spark.sql.connector.expressions.Transform
 import org.apache.spark.sql.internal.SQLConf
@@ -119,6 +119,16 @@ class UCSingleCatalog
     }
   }
 
+  /**
+   * The catalog to route `SupportsNamespaces` operations to.
+   *
+   * Both possible values of `delegate` are a `SupportsNamespaces`: when DeltaCatalog is on the
+   * classpath `delegate` is a `DelegatingCatalogExtension` (a `SupportsNamespaces` via
+   * `CatalogExtension`), and when it is absent `delegate` is `ucProxy` itself (a plain
+   * `TableCatalog with SupportsNamespaces`). So we can cast unconditionally.
+   */
+  private def namespaceCatalog: SupportsNamespaces = delegate.asInstanceOf[SupportsNamespaces]
+
   /** See [[DeltaVersionUtils.isDeltaRestApiReady]] for the predicate. */
   private def shouldUseDeltaAPI: Boolean =
     DeltaVersionUtils.isDeltaRestApiReady(deltaCatalogLoaded, deltaRestApiEnabled)
@@ -183,6 +193,7 @@ class UCSingleCatalog
       columns: Array[Column],
       partitions: Array[Transform],
       properties: util.Map[String, String]): Table = {
+    val schema = CatalogV2UtilWithColumnMetadata.v2ColumnsToStructType(columns)
     UCSingleCatalog.checkUnsupportedNestedNamespace(ident.namespace())
     val hasExternalClause = properties.containsKey(TableCatalog.PROP_EXTERNAL)
     val hasLocationClause = properties.containsKey(TableCatalog.PROP_LOCATION)
@@ -194,7 +205,7 @@ class UCSingleCatalog
       if (UCSingleCatalog.hasDeltaProvider(properties)) {
         // Managed Delta table
         val newProps = managedDeltaCreatePropsForDelegate(ident, properties)
-        delegate.createTable(ident, columns, partitions, newProps)
+        delegate.createTable(ident, schema, partitions, newProps)
       } else {
         // Managed (no LOCATION, no EXTERNAL) but not Delta: UC doesn't support non-Delta managed
         // tables. Surface the same friendly error the legacy staging path used to produce.
@@ -202,12 +213,12 @@ class UCSingleCatalog
       }
     } else if (hasLocationClause) {
       val newProps = prepareExternalTableProperties(properties)
-      delegate.createTable(ident, columns, partitions, newProps)
+      delegate.createTable(ident, schema, partitions, newProps)
     } else {
       // Path-based identifiers (e.g. `delta`.`/tmp/foo`) fall through to the delegate.
       // TODO: for path-based tables, Spark should generate a location property using the qualified
       //       path string.
-      delegate.createTable(ident, columns, partitions, properties)
+      delegate.createTable(ident, schema, partitions, properties)
     }
   }
 
@@ -407,30 +418,42 @@ class UCSingleCatalog
   }
 
   override def listNamespaces(): Array[Array[String]] = {
-    delegate.asInstanceOf[DelegatingCatalogExtension].listNamespaces()
+    namespaceCatalog.listNamespaces()
   }
 
   override def listNamespaces(namespace: Array[String]): Array[Array[String]] = {
-    delegate.asInstanceOf[DelegatingCatalogExtension].listNamespaces(namespace)
+    namespaceCatalog.listNamespaces(namespace)
   }
 
   override def loadNamespaceMetadata(namespace: Array[String]): util.Map[String, String] = {
-    delegate.asInstanceOf[DelegatingCatalogExtension].loadNamespaceMetadata(namespace)
+    namespaceCatalog.loadNamespaceMetadata(namespace)
   }
 
   override def createNamespace(namespace: Array[String], metadata: util.Map[String, String]): Unit = {
-    delegate.asInstanceOf[DelegatingCatalogExtension].createNamespace(namespace, metadata)
+    namespaceCatalog.createNamespace(namespace, metadata)
   }
 
   override def alterNamespace(namespace: Array[String], changes: NamespaceChange*): Unit = {
-    delegate.asInstanceOf[DelegatingCatalogExtension].alterNamespace(namespace, changes: _*)
+    namespaceCatalog.alterNamespace(namespace, changes: _*)
   }
 
   override def dropNamespace(namespace: Array[String], cascade: Boolean): Boolean = {
-    delegate.asInstanceOf[DelegatingCatalogExtension].dropNamespace(namespace, cascade)
+    namespaceCatalog.dropNamespace(namespace, cascade)
   }
 
   /** Only called for REPLACE TABLE and RTAS */
+  override def stageReplace(
+      ident: Identifier,
+      columns: Array[Column],
+      partitions: Array[Transform],
+      properties: util.Map[String, String]): StagedTable = {
+    stageReplace(
+      ident,
+      CatalogV2UtilWithColumnMetadata.v2ColumnsToStructType(columns),
+      partitions,
+      properties)
+  }
+
   override def stageReplace(
       ident: Identifier,
       schema: StructType,
@@ -455,6 +478,18 @@ class UCSingleCatalog
   }
 
   /** Only called for CREATE OR REPLACE TABLE ... [AS SELECT] */
+  override def stageCreateOrReplace(
+      ident: Identifier,
+      columns: Array[Column],
+      partitions: Array[Transform],
+      properties: util.Map[String, String]): StagedTable = {
+    stageCreateOrReplace(
+      ident,
+      CatalogV2UtilWithColumnMetadata.v2ColumnsToStructType(columns),
+      partitions,
+      properties)
+  }
+
   override def stageCreateOrReplace(
       ident: Identifier,
       schema: StructType,
@@ -510,6 +545,18 @@ class UCSingleCatalog
   }
 
   /** Only called for CTAS */
+  override def stageCreate(
+      ident: Identifier,
+      columns: Array[Column],
+      partitions: Array[Transform],
+      properties: util.Map[String, String]): StagedTable = {
+    stageCreate(
+      ident,
+      CatalogV2UtilWithColumnMetadata.v2ColumnsToStructType(columns),
+      partitions,
+      properties)
+  }
+
   override def stageCreate(
       ident: Identifier,
       schema: StructType,
@@ -795,38 +842,11 @@ private[spark] class UCProxy(
     asV1Table(sparkTable)
   }
 
-  // A UC view has no storage or data source format; Spark resolves it from its SQL text. Returning
-  // a VIEW `CatalogTable` routes resolution through Spark's relation resolver, which parses
-  // `viewText` against the view's default catalog/namespace. Used only where no v2 view catalog is
-  // available (Spark 4.0/4.1); on Spark 4.2 views are served through the `RelationCatalog` surface.
-  private[spark] def buildV1ViewTable(t: UCTableInfo): Table = {
-    val identifier = TableIdentifier(t.getName, Some(t.getSchemaName), Some(t.getCatalogName))
-    val fields = t.getColumns.asScala.map(toStructField).toArray
-    val viewNamespaceProps =
-      CatalogTable.catalogAndNamespaceToProps(this.name, Seq(t.getSchemaName))
-    val persistedProperties =
-      Option(t.getProperties).map(_.asScala.toMap).getOrElse(Map.empty)
-    val viewTable = CatalogTable(
-      identifier = identifier,
-      tableType = CatalogTableType.VIEW,
-      storage = CatalogStorageFormat.empty,
-      schema = StructType(fields),
-      viewText = Option(t.getViewDefinition),
-      comment = Option(t.getComment),
-      // Older/non-Spark-created views may not carry creation context; use the view's own
-      // catalog/namespace as a fallback, while preserving persisted creation context when present.
-      properties = viewNamespaceProps ++ persistedProperties,
-      createTime = t.getCreatedAt,
-      tracksPartitionsInCatalog = false
-    )
-    asV1Table(viewTable)
-  }
-
-  private def toStructField(col: ColumnInfo): StructField =
+  private[spark] def toStructField(col: ColumnInfo): StructField =
     StructField(col.getName, DataType.fromDDL(col.getTypeText), col.getNullable)
       .withComment(col.getComment)
 
-  private def asV1Table(catalogTable: CatalogTable): Table = {
+  private[spark] def asV1Table(catalogTable: CatalogTable): Table = {
     Class.forName("org.apache.spark.sql.connector.catalog.V1Table")
       .getDeclaredConstructor(classOf[CatalogTable])
       .newInstance(catalogTable)
