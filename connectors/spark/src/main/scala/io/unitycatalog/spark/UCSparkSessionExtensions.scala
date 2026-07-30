@@ -22,13 +22,15 @@ package io.unitycatalog.spark
 import org.apache.spark.sql.SparkSessionExtensions
 import org.apache.spark.sql.catalyst.parser.extensions.UCSparkSqlExtensionsParser
 
-/** Spark session extensions that route Unity Catalog view DDL through the UC REST API. */
+/** Spark session extensions for UC view DDL routing and bare cloud-path credential vending. */
 class UCSparkSessionExtensions
     extends (SparkSessionExtensions => Unit)
     with UCSparkSessionExtensionsViewSupport {
 
   override def apply(extensions: SparkSessionExtensions): Unit = {
-    extensions.injectParser { case (_, parser) => new UCSparkSqlExtensionsParser(parser) }
+    extensions.injectParser { case (spark, parser) =>
+      new UCSparkSqlExtensionsParser(spark, parser)
+    }
     injectViewRules(extensions)
   }
 }
