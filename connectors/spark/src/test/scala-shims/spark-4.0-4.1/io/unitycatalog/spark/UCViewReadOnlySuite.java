@@ -37,8 +37,9 @@ import org.junit.jupiter.api.Test;
  * Spark-4.0/4.1 view tests -- the pre-view-API counterpart to the Spark-4.2
  * {@code UCViewProxySuite} (resolved per Spark version via the {@code scala-shims/} test dirs).
  * Spark 4.0/4.1 have no view-catalog APIs ({@code RelationCatalog}, {@code ViewCatalog},
- * {@code View}), so there is no create/replace/rename/drop-through-view surface; view DDL cannot
- * be routed to the connector.
+ * {@code View}), so there is no native create/replace/rename/drop-through-view surface. With
+ * {@link UCSparkSessionExtensions} registered, supported SQL view DDL is routed directly to UC
+ * REST instead; see {@code UCViewDDLIntegrationTest}.
  *
  * <p>Plain SQL views ({@code TableType.VIEW}) are still readable: they appear on the table listing
  * and {@code loadTable} returns a V1 VIEW {@code CatalogTable} that Spark resolves from its SQL
