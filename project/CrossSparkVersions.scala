@@ -6,7 +6,7 @@ import scala.util.parsing.json.JSON
  * Cross-Spark build and publish infrastructure for the UC Spark connector.
  *
  * Enables publishing per-Spark-version artifacts:
- *   unitycatalog-spark_4.1_2.13, unitycatalog-spark_4.2_2.13
+ *   unitycatalog-spark_4.0_2.13, unitycatalog-spark_4.1_2.13, unitycatalog-spark_4.2_2.13
  *
  * Mirrors the pattern from Delta Lake's CrossSparkVersions.scala, trimmed to UC's needs.
  *
