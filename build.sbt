@@ -31,9 +31,19 @@ lazy val sparkMajorMinorVersion = CrossSparkVersions.getSparkVersionSpec().short
 // delta-spark is only needed for tests. When UC is published to local Maven before
 // Delta is built (e.g. CI pre-Delta publishM2 step), the matching Delta artifact may
 // not exist yet. Pass -DskipDeltaSpark=true to exclude it and avoid resolution failures.
-def deltaSparkTestDeps: Seq[ModuleID] =
+def deltaSparkTestDeps: Seq[ModuleID] = {
   if (sys.props.getOrElse("skipDeltaSpark", "false").toBoolean) Seq.empty
-  else Seq("io.delta" %% s"delta-spark_$sparkMajorMinorVersion" % deltaVersion % Test)
+  else {
+    val spec = CrossSparkVersions.getSparkVersionSpec()
+    // Delta publishes delta-spark_4.0_2.13 / delta-spark_4.1_2.13 only. Spark 4.2+ uses the
+    // backward-compatible artifact until a version-suffixed release exists.
+    val artifactBase = spec.shortVersion match {
+      case "4.0" | "4.1" => s"delta-spark_${spec.shortVersion}"
+      case _ => "delta-spark"
+    }
+    Seq("io.delta" %% artifactBase % deltaVersion % Test)
+  }
+}
 
 // Apache Snapshots resolver is in build/sbt-config/repositories (global).
 // No per-module sparkResolvers needed.
