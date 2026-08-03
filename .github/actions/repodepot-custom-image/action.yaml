@@ -274,12 +274,15 @@ runs:
         # .dockerignore excludes server/target/ and examples/cli/target/; stage under build/.
         rm -rf build/ci-staging/prebuilt/server/target \
           build/ci-staging/prebuilt/examples/cli/target \
+          build/ci-staging/prebuilt/target/control/java/target \
           build/ci-staging/prebuilt/home
         mkdir -p build/ci-staging/prebuilt/server \
           build/ci-staging/prebuilt/examples/cli \
+          build/ci-staging/prebuilt/target/control/java \
           build/ci-staging/prebuilt/home
         cp -a server/target build/ci-staging/prebuilt/server/
         cp -a examples/cli/target build/ci-staging/prebuilt/examples/cli/
+        cp -a target/control/java/target build/ci-staging/prebuilt/target/control/java/
 
         if [ -d "${HOME}/.cache/coursier" ]; then
           cp -a "${HOME}/.cache" build/ci-staging/prebuilt/home/
@@ -301,7 +304,7 @@ runs:
         done
 
         # Staged copies are under build/ci-staging/prebuilt; drop workspace duplicates.
-        rm -rf server/target examples/cli/target
+        rm -rf server/target examples/cli/target target/control/java/target
         rm -rf "${HOME}/.cache" /home/runner/.cache/coursier 2>/dev/null || true
         docker builder prune -af || true
         docker system prune -af --volumes || true
