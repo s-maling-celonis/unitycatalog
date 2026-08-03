@@ -35,6 +35,15 @@ RUN if [ "$PREBUILT" = "true" ]; then \
       && chown -R "$USER:$USER" "$HOME/server/target"; \
     fi
 RUN if [ "$PREBUILT" = "true" ]; then \
+      if [ ! -d "$HOME/build/ci-staging/prebuilt/examples/cli/target" ]; then \
+        echo "PREBUILT build requires $HOME/build/ci-staging/prebuilt/examples/cli/target from host sbt" >&2; \
+        exit 1; \
+      fi; \
+      mkdir -p "$HOME/examples/cli/target" \
+      && cp -a "$HOME/build/ci-staging/prebuilt/examples/cli/target/." "$HOME/examples/cli/target/" \
+      && chown -R "$USER:$USER" "$HOME/examples/cli/target"; \
+    fi
+RUN if [ "$PREBUILT" = "true" ]; then \
       if [ -d "$HOME/build/ci-staging/prebuilt/home/.cache" ]; then \
         CACHE_SRC="$HOME/build/ci-staging/prebuilt/home/.cache"; \
       elif [ -d "$HOME/build/ci-staging/home/.cache" ]; then \
@@ -56,6 +65,13 @@ RUN if [ "$PREBUILT" = "true" ] && [ -f "$HOME/server/target/classpath" ]; then 
       && chown "$USER:$USER" "$HOME/server/target/classpath"; \
     elif [ "$PREBUILT" = "true" ]; then \
       echo "PREBUILT build requires $HOME/server/target/classpath" >&2; \
+      exit 1; \
+    fi
+RUN if [ "$PREBUILT" = "true" ] && [ -f "$HOME/examples/cli/target/classpath" ]; then \
+      sed -i "s|${BUILD_HOME}|${HOME}|g; s|${BUILD_ROOT}|${HOME}|g" "$HOME/examples/cli/target/classpath" \
+      && chown "$USER:$USER" "$HOME/examples/cli/target/classpath"; \
+    elif [ "$PREBUILT" = "true" ]; then \
+      echo "PREBUILT build requires $HOME/examples/cli/target/classpath" >&2; \
       exit 1; \
     fi
 USER $USER

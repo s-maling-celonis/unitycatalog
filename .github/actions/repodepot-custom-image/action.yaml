@@ -233,7 +233,7 @@ runs:
         case "${{ inputs.component-name }}" in
           unity-catalog-server)
             build/sbt "set ThisBuild / version := \"${REPO_DEPOT_VERSION}\"" \
-              $SBT_HEAP server/test server/package
+              $SBT_HEAP server/test server/package cli/package
             ;;
           unitycatalog-client|unitycatalog-controlapi)
             build/sbt $SBT_HEAP "${{ steps.component.outputs.sbt-project }}/test"
@@ -270,10 +270,15 @@ runs:
       working-directory: ${{ inputs.working-directory }}
       run: |
         set -euo pipefail
-        # .dockerignore excludes server/target/; stage under build/ so COPY build/ includes it.
-        rm -rf build/ci-staging/prebuilt/server/target build/ci-staging/prebuilt/home
-        mkdir -p build/ci-staging/prebuilt/server build/ci-staging/prebuilt/home
+        # .dockerignore excludes server/target/ and examples/cli/target/; stage under build/.
+        rm -rf build/ci-staging/prebuilt/server/target \
+          build/ci-staging/prebuilt/examples/cli/target \
+          build/ci-staging/prebuilt/home
+        mkdir -p build/ci-staging/prebuilt/server \
+          build/ci-staging/prebuilt/examples/cli \
+          build/ci-staging/prebuilt/home
         cp -a server/target build/ci-staging/prebuilt/server/
+        cp -a examples/cli/target build/ci-staging/prebuilt/examples/cli/
 
         if [ -d "${HOME}/.cache/coursier" ]; then
           cp -a "${HOME}/.cache" build/ci-staging/prebuilt/home/
@@ -286,9 +291,13 @@ runs:
         fi
 
         # Normalize runner-local cache paths before Docker rewrites BUILD_HOME/BUILD_ROOT.
-        if [ -f build/ci-staging/prebuilt/server/target/classpath ]; then
-          sed -i "s|/home/runner/.cache|${HOME}/.cache|g" build/ci-staging/prebuilt/server/target/classpath
-        fi
+        for classpath in \
+          build/ci-staging/prebuilt/server/target/classpath \
+          build/ci-staging/prebuilt/examples/cli/target/classpath; do
+          if [ -f "$classpath" ]; then
+            sed -i "s|/home/runner/.cache|${HOME}/.cache|g" "$classpath"
+          fi
+        done
 
     # Re-login immediately before buildx push. Parent RepoDepot ECR login happens before
     # CUSTOM (and before long sbt test/package); buildx's docker-container driver may not
@@ -341,14 +350,23 @@ runs:
         set -euo pipefail
         docker run --rm --platform linux/amd64 --user root --entrypoint sh "$IMAGE" -c '
           CLASSPATH=/home/unitycatalog/server/target/classpath
+          CLI_CLASSPATH=/home/unitycatalog/examples/cli/target/classpath
           if [ ! -f "$CLASSPATH" ]; then
             echo "Missing $CLASSPATH; listing /home/unitycatalog/server/target:" >&2
             ls -la /home/unitycatalog/server/target 2>&1 || ls -la /home/unitycatalog/server 2>&1 || true
             exit 1
           fi
+          if [ ! -f "$CLI_CLASSPATH" ]; then
+            echo "Missing $CLI_CLASSPATH; listing /home/unitycatalog/examples/cli/target:" >&2
+            ls -la /home/unitycatalog/examples/cli/target 2>&1 || ls -la /home/unitycatalog/examples/cli 2>&1 || true
+            exit 1
+          fi
           grep -q "/home/unitycatalog/.cache" "$CLASSPATH"
+          grep -q "/home/unitycatalog/.cache" "$CLI_CLASSPATH"
           test -d /home/unitycatalog/.cache/coursier
+          test -x /home/unitycatalog/bin/uc
         '
+        docker run --rm --platform linux/amd64 "$IMAGE" ./bin/uc --help
 
     - name: Set empty image metadata
       if: steps.component.outputs.needs-image != 'true'
