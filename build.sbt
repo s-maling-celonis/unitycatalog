@@ -156,6 +156,7 @@ lazy val controlApi = (project in file("target/control/java"))
     // skipReleaseSettings sets publishArtifact := false, so makePom emits packaging=pom.
     // package still produces a JAR; declare it publishable for POM generation only.
     Compile / packageBin / publishArtifact := true,
+    Compile / compile / javacOptions ++= javacRelease17,
     libraryDependencies ++= Seq(
       "jakarta.annotation" % "jakarta.annotation-api" % "3.0.0" % Provided,
       "com.fasterxml.jackson.core" % "jackson-annotations" % jacksonVersion,
