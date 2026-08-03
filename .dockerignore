@@ -1,3 +1,4 @@
 # Host CI (sbt test/package) must not pollute the Docker build context.
 # Dockerfile runs `sbt clean package` with HOME=/home/unitycatalog.
 server/target/
+examples/cli/target/
