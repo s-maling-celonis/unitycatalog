@@ -229,6 +229,7 @@ runs:
         SBT_HEAP: -J-Xmx6g
       run: |
         set -euo pipefail
+        df -h
 
         case "${{ inputs.component-name }}" in
           unity-catalog-server)
@@ -299,6 +300,13 @@ runs:
           fi
         done
 
+        # Staged copies are under build/ci-staging/prebuilt; drop workspace duplicates.
+        rm -rf server/target examples/cli/target
+        rm -rf "${HOME}/.cache" /home/runner/.cache/coursier 2>/dev/null || true
+        docker builder prune -af || true
+        docker system prune -af --volumes || true
+        df -h
+
     # Re-login immediately before buildx push. Parent RepoDepot ECR login happens before
     # CUSTOM (and before long sbt test/package); buildx's docker-container driver may not
     # inherit those credentials when pushing after a new builder is created.
@@ -315,12 +323,17 @@ runs:
         password: ${{ inputs.github-token }}
 
     - name: Set up QEMU
-      if: steps.component.outputs.needs-image == 'true'
+      if: steps.component.outputs.needs-image == 'true' && inputs.is-dev-build != 'true'
       uses: docker/setup-qemu-action@v3
 
     - name: Set up Docker Buildx
       if: steps.component.outputs.needs-image == 'true'
       uses: docker/setup-buildx-action@v3
+
+    - name: Report disk usage before Docker build
+      if: steps.component.outputs.needs-image == 'true' && inputs.component-name == 'unity-catalog-server'
+      shell: bash
+      run: df -h
 
     - name: Create Docker Image
       if: steps.component.outputs.needs-image == 'true'
@@ -329,7 +342,7 @@ runs:
       with:
         context: ${{ format('{0}/{1}', inputs.working-directory, steps.component.outputs.docker-context) }}
         push: true
-        platforms: linux/amd64,linux/arm64
+        platforms: ${{ inputs.is-dev-build == 'true' && 'linux/amd64' || 'linux/amd64,linux/arm64' }}
         tags: |
           ${{ inputs.image-registry }}/${{ inputs.image-name }}:${{ inputs.image-tag }}
           ghcr.io/celonis/${{ inputs.image-name }}:${{ inputs.image-tag }}
@@ -339,7 +352,7 @@ runs:
           BUILD_ROOT=${{ github.workspace }}/${{ inputs.working-directory }}
           BUILD_HOME=${{ github.workspace }}/${{ inputs.working-directory }}/build/ci-staging/home
         cache-from: type=gha
-        cache-to: type=gha,mode=max,ignore-error=true
+        cache-to: type=gha,mode=${{ inputs.is-dev-build == 'true' && 'min' || 'max' }},ignore-error=true
 
     - name: Verify unity-catalog-server image classpath
       if: steps.component.outputs.needs-image == 'true' && inputs.component-name == 'unity-catalog-server'
@@ -365,8 +378,8 @@ runs:
           grep -q "/home/unitycatalog/.cache" "$CLI_CLASSPATH"
           test -d /home/unitycatalog/.cache/coursier
           test -x /home/unitycatalog/bin/uc
+          /home/unitycatalog/bin/uc --help >/dev/null
         '
-        docker run --rm --platform linux/amd64 "$IMAGE" ./bin/uc --help
 
     - name: Set empty image metadata
       if: steps.component.outputs.needs-image != 'true'
