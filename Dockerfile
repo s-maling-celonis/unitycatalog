@@ -44,6 +44,15 @@ RUN if [ "$PREBUILT" = "true" ]; then \
       && chown -R "$USER:$USER" "$HOME/examples/cli/target"; \
     fi
 RUN if [ "$PREBUILT" = "true" ]; then \
+      if [ ! -d "$HOME/build/ci-staging/prebuilt/target/control/java/target" ]; then \
+        echo "PREBUILT build requires $HOME/build/ci-staging/prebuilt/target/control/java/target from host sbt" >&2; \
+        exit 1; \
+      fi; \
+      mkdir -p "$HOME/target/control/java/target" \
+      && cp -a "$HOME/build/ci-staging/prebuilt/target/control/java/target/." "$HOME/target/control/java/target/" \
+      && chown -R "$USER:$USER" "$HOME/target/control/java/target"; \
+    fi
+RUN if [ "$PREBUILT" = "true" ]; then \
       if [ -d "$HOME/build/ci-staging/prebuilt/home/.cache" ]; then \
         CACHE_SRC="$HOME/build/ci-staging/prebuilt/home/.cache"; \
       elif [ -d "$HOME/build/ci-staging/home/.cache" ]; then \
