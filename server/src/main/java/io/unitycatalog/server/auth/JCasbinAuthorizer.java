@@ -2,6 +2,7 @@ package io.unitycatalog.server.auth;
 
 import io.unitycatalog.server.persist.model.Privileges;
 import io.unitycatalog.server.persist.utils.HibernateConfigurator;
+import io.unitycatalog.server.utils.ServerProperties;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
@@ -9,12 +10,15 @@ import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
 import org.apache.commons.io.IOUtils;
 import org.casbin.adapter.JDBCAdapter;
 import org.casbin.jcasbin.main.Enforcer;
 import org.casbin.jcasbin.main.SyncedEnforcer;
 import org.casbin.jcasbin.model.Model;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * An authorizer that uses the JCasbin library to enforce access control policies.
@@ -26,9 +30,21 @@ import org.casbin.jcasbin.model.Model;
  * SyncedEnforcer} is used because the UC server shares one authorizer across concurrent REST
  * requests; jCasbin's plain {@link Enforcer} is not thread-safe for concurrent {@code enforce()}
  * and policy mutations.
+ *
+ * <p>{@link CasbinPolicyRefresher} polls the shared {@code casbin_rule} table so grants and
+ * revocations made through other instances are picked up.
  */
-public class JCasbinAuthorizer implements UnityCatalogAuthorizer {
+public class JCasbinAuthorizer implements UnityCatalogAuthorizer, AutoCloseable {
+
+  private static final Logger LOGGER = LoggerFactory.getLogger(JCasbinAuthorizer.class);
+
   private final SyncedEnforcer enforcer;
+  private final CasbinPolicyRefresher refresher;
+  private final long refreshDebounceNanos;
+
+  private final boolean refreshEnabled;
+
+  private final AtomicLong lastRefreshNanos = new AtomicLong(Long.MIN_VALUE / 2);
 
   private static final int PRINCIPAL_INDEX = 0;
   private static final int RESOURCE_INDEX = 1;
@@ -38,7 +54,9 @@ public class JCasbinAuthorizer implements UnityCatalogAuthorizer {
   private static final int HIERARCHY_PARENT_INDEX = 0;
   private static final int HIERARCHY_CHILD_INDEX = 1;
 
-  public JCasbinAuthorizer(HibernateConfigurator hibernateConfigurator) throws Exception {
+  public JCasbinAuthorizer(
+      HibernateConfigurator hibernateConfigurator, ServerProperties serverProperties)
+      throws Exception {
     Properties properties = hibernateConfigurator.getHibernateProperties();
     String driver = properties.getProperty("hibernate.connection.driver_class");
     String url = properties.getProperty("hibernate.connection.url");
@@ -53,6 +71,18 @@ public class JCasbinAuthorizer implements UnityCatalogAuthorizer {
 
     enforcer = new SyncedEnforcer(model, adapter);
     enforcer.enableAutoSave(true);
+
+    this.refreshDebounceNanos = serverProperties.getPolicyRefreshDebounce().toNanos();
+    this.refreshEnabled = serverProperties.isPolicyRefreshEnabled();
+    this.refresher = new CasbinPolicyRefresher(enforcer, hibernateConfigurator.getSessionFactory());
+    if (refreshEnabled) {
+      refresher.start(serverProperties.getPolicyRefreshInterval());
+    } else {
+      LOGGER.warn(
+          "Casbin policy refresh is disabled. Authorization changes made through another server"
+              + " instance will not be seen by this one, so running more than one instance against"
+              + " this database is unsafe.");
+    }
   }
 
   /**
@@ -160,5 +190,32 @@ public class JCasbinAuthorizer implements UnityCatalogAuthorizer {
                 l -> UUID.fromString(l.get(PRINCIPAL_INDEX)),
                 Collectors.mapping(
                     l -> Privileges.fromValue(l.get(PRIVILEGE_INDEX)), Collectors.toList())));
+  }
+
+  /** Rate-limited reload before returning 403, for cross-instance create-then-read. */
+  @Override
+  public boolean refreshAuthorizations() {
+    if (!refreshEnabled) {
+      return false;
+    }
+    long now = System.nanoTime();
+    long last = lastRefreshNanos.get();
+    if (now - last < refreshDebounceNanos) {
+      return false;
+    }
+    if (!lastRefreshNanos.compareAndSet(last, now)) {
+      return false;
+    }
+    refresher.forceReload();
+    return true;
+  }
+
+  @Override
+  public void close() {
+    refresher.close();
+  }
+
+  CasbinPolicyRefresher getRefresher() {
+    return refresher;
   }
 }
