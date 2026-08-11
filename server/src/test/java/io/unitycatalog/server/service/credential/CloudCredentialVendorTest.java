@@ -12,6 +12,7 @@ import io.unitycatalog.server.exception.BaseException;
 import io.unitycatalog.server.exception.ErrorCode;
 import io.unitycatalog.server.model.AwsCredentials;
 import io.unitycatalog.server.model.AwsIamRoleRequest;
+import io.unitycatalog.server.model.AwsS3AccessKeyRequest;
 import io.unitycatalog.server.model.CreateCredentialRequest;
 import io.unitycatalog.server.model.CredentialPurpose;
 import io.unitycatalog.server.model.TemporaryCredentials;
@@ -344,5 +345,133 @@ public class CloudCredentialVendorTest {
       assertThat(capturedRequest.roleArn()).isEqualTo(CREDENTIAL_ROLE_ARN);
       assertThat(capturedRequest.externalId()).isEqualTo(expectedExternalId);
     }
+  }
+
+  @Test
+  public void testVendStaticCredentialsForSentinelRoleArn() {
+    final String S3_PATH = "s3://ontap-bucket/path/to/data";
+    final String STATIC_ACCESS_KEY = "staticAccessKey";
+    final String STATIC_SECRET_KEY = "staticSecretKey";
+
+    CredentialDAO credentialDAO =
+        CredentialDAO.from(
+            new CreateCredentialRequest()
+                .name("static-credential")
+                .purpose(CredentialPurpose.STORAGE)
+                .awsIamRole(new AwsIamRoleRequest().roleArn("STATIC")),
+            "test-user");
+
+    reset(externalLocationUtils);
+    doReturn(Optional.of(credentialDAO))
+        .when(externalLocationUtils)
+        .getExternalLocationCredentialDaoForPath(any());
+
+    when(serverProperties.getS3Configurations()).thenReturn(Map.of());
+    doReturn(S3StorageConfig.builder().build())
+        .when(serverProperties)
+        .getS3MasterRoleConfiguration();
+    when(serverProperties.isStaticRoleArn("STATIC")).thenReturn(true);
+    when(serverProperties.resolveS3StaticAccessKeyConfiguration(null))
+        .thenReturn(
+            Optional.of(
+                S3StorageConfig.builder()
+                    .accessKey(STATIC_ACCESS_KEY)
+                    .secretKey(STATIC_SECRET_KEY)
+                    .build()));
+    when(serverProperties.getS3StaticCredentialTtl()).thenReturn(java.time.Duration.ofHours(1));
+
+    StsClient mockStsClient = Mockito.mock(StsClient.class);
+    StsClientBuilder mockBuilder = Mockito.mock(StsClientBuilder.class);
+
+    try (MockedStatic<StsClient> mockedStsClient = Mockito.mockStatic(StsClient.class)) {
+      mockedStsClient.when(StsClient::builder).thenReturn(mockBuilder);
+
+      AwsCredentialVendor awsCredentialVendor = new AwsCredentialVendor(serverProperties);
+      credentialsOperations = new CloudCredentialVendor(awsCredentialVendor, null, null);
+
+      TemporaryCredentials credentials =
+          vendCredential(S3_PATH, Set.of(CredentialContext.Privilege.SELECT));
+
+      assertThat(credentials.getAwsTempCredentials().getAccessKeyId()).isEqualTo(STATIC_ACCESS_KEY);
+      assertThat(credentials.getAwsTempCredentials().getSecretAccessKey())
+          .isEqualTo(STATIC_SECRET_KEY);
+      assertThat(credentials.getAwsTempCredentials().getSessionToken()).isNull();
+      assertThat(credentials.getExpirationTime()).isGreaterThan(System.currentTimeMillis());
+      verify(mockStsClient, Mockito.never()).assumeRole(any(AssumeRoleRequest.class));
+    }
+  }
+
+  @Test
+  public void testVendStaticCredentialsByAccessKeyId() {
+    final String S3_PATH = "s3://ontap-bucket/path/to/data";
+    final String ACCESS_KEY_ID = "AKIA_MATCH";
+    final String SECRET_KEY = "matchedSecret";
+
+    CredentialDAO credentialDAO =
+        CredentialDAO.from(
+            new CreateCredentialRequest()
+                .name("s3-access-key-credential")
+                .purpose(CredentialPurpose.STORAGE)
+                .awsS3AccessKey(new AwsS3AccessKeyRequest().accessKeyId(ACCESS_KEY_ID)),
+            "test-user");
+
+    reset(externalLocationUtils);
+    doReturn(Optional.of(credentialDAO))
+        .when(externalLocationUtils)
+        .getExternalLocationCredentialDaoForPath(any());
+
+    when(serverProperties.getS3Configurations()).thenReturn(Map.of());
+    doReturn(S3StorageConfig.builder().build())
+        .when(serverProperties)
+        .getS3MasterRoleConfiguration();
+    when(serverProperties.resolveS3StaticAccessKeyConfiguration(ACCESS_KEY_ID))
+        .thenReturn(
+            Optional.of(
+                S3StorageConfig.builder().accessKey(ACCESS_KEY_ID).secretKey(SECRET_KEY).build()));
+    when(serverProperties.getS3StaticCredentialTtl()).thenReturn(java.time.Duration.ofHours(1));
+
+    AwsCredentialVendor awsCredentialVendor = new AwsCredentialVendor(serverProperties);
+    credentialsOperations = new CloudCredentialVendor(awsCredentialVendor, null, null);
+
+    TemporaryCredentials credentials =
+        vendCredential(S3_PATH, Set.of(CredentialContext.Privilege.SELECT));
+
+    assertThat(credentials.getAwsTempCredentials().getAccessKeyId()).isEqualTo(ACCESS_KEY_ID);
+    assertThat(credentials.getAwsTempCredentials().getSecretAccessKey()).isEqualTo(SECRET_KEY);
+    assertThat(credentials.getExpirationTime()).isGreaterThan(System.currentTimeMillis());
+  }
+
+  @Test
+  public void testVendStaticCredentialsFailsWhenNotConfigured() {
+    final String S3_PATH = "s3://ontap-bucket/path/to/data";
+
+    CredentialDAO credentialDAO =
+        CredentialDAO.from(
+            new CreateCredentialRequest()
+                .name("static-credential")
+                .purpose(CredentialPurpose.STORAGE)
+                .awsIamRole(new AwsIamRoleRequest().roleArn("STATIC")),
+            "test-user");
+
+    reset(externalLocationUtils);
+    doReturn(Optional.of(credentialDAO))
+        .when(externalLocationUtils)
+        .getExternalLocationCredentialDaoForPath(any());
+
+    when(serverProperties.getS3Configurations()).thenReturn(Map.of());
+    doReturn(S3StorageConfig.builder().build())
+        .when(serverProperties)
+        .getS3MasterRoleConfiguration();
+    when(serverProperties.isStaticRoleArn("STATIC")).thenReturn(true);
+    when(serverProperties.resolveS3StaticAccessKeyConfiguration(null)).thenReturn(Optional.empty());
+
+    AwsCredentialVendor awsCredentialVendor = new AwsCredentialVendor(serverProperties);
+    credentialsOperations = new CloudCredentialVendor(awsCredentialVendor, null, null);
+
+    assertThatThrownBy(() -> vendCredential(S3_PATH, Set.of(CredentialContext.Privilege.SELECT)))
+        .isInstanceOf(BaseException.class)
+        .hasMessageContaining("Static S3 credentials are not configured")
+        .extracting(exception -> ((BaseException) exception).getErrorCode())
+        .isEqualTo(ErrorCode.FAILED_PRECONDITION);
   }
 }

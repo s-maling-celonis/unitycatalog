@@ -16,11 +16,13 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.Duration;
 import java.time.format.DateTimeParseException;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Properties;
 import java.util.Set;
 import java.util.function.IntPredicate;
@@ -219,6 +221,26 @@ public class ServerProperties {
     AWS_SESSION_TOKEN("aws.sessionToken"),
     AWS_REGION("aws.region"),
     AWS_ENDPOINT_URL("aws.endpointUrl"),
+    /**
+     * Unindexed static access key (alias for {@code s3.static.accessKey.0}). Used when resolving
+     * static credentials by access key id, and as the default entry when no indexed keys are set.
+     */
+    S3_STATIC_ACCESS_KEY("s3.static.accessKey"),
+    S3_STATIC_SECRET_KEY("s3.static.secretKey"),
+    /** Optional. Leave unset for S3-compatible stores that do not issue session tokens. */
+    S3_STATIC_SESSION_TOKEN("s3.static.sessionToken"),
+    /**
+     * Lifetime stamped on credentials vended via the static path so clients refresh. Does not
+     * expire the underlying access key.
+     */
+    S3_STATIC_CREDENTIAL_TTL_SECONDS(
+        "s3.static.credentialTtlSeconds", "3600", POSITIVE_INTEGER_VALIDATOR),
+    /**
+     * Compatibility shim: when a storage credential's {@code aws_iam_role.role_arn} equals this
+     * value, UC vends the first configured static key (index 0) instead of calling STS. Prefer
+     * {@code aws_s3_access_key} credentials.
+     */
+    S3_STATIC_ROLE_ARN_SENTINEL("s3.static.roleArnSentinel", "STATIC", NOOP_VALIDATOR),
     INCLUDE_STACK_TRACE_IN_ERROR("server.include-stacktrace-in-error", "false", BOOLEAN_VALIDATOR);
     // The is not an exhaustive list. Some property keys like s3.bucketPath.0 with a numbering
     // suffix is not included. They are only accessed internally from functions like
@@ -335,6 +357,82 @@ public class ServerProperties {
         .endpointUrl(get(Property.AWS_ENDPOINT_URL))
         // Does not take AWS_SESSION_TOKEN as it's only part of a temporary credential.
         .build();
+  }
+
+  /**
+   * Static S3 access-key pairs from server configuration.
+   *
+   * <p>Reads contiguous {@code s3.static.accessKey.N} / {@code s3.static.secretKey.N} (and optional
+   * {@code s3.static.sessionToken.N}). If none are set, falls back to the unindexed {@code
+   * s3.static.accessKey} / {@code s3.static.secretKey} properties as a single entry (index 0).
+   */
+  public List<S3StorageConfig> getS3StaticAccessKeyConfigurations() {
+    List<S3StorageConfig> configs = new ArrayList<>();
+    int i = 0;
+    while (true) {
+      String accessKey = getProperty("s3.static.accessKey." + i);
+      String secretKey = getProperty("s3.static.secretKey." + i);
+      String sessionToken = getProperty("s3.static.sessionToken." + i);
+      if (accessKey == null && secretKey == null) {
+        break;
+      }
+      configs.add(
+          S3StorageConfig.builder()
+              .accessKey(accessKey)
+              .secretKey(secretKey)
+              .sessionToken(sessionToken)
+              .build());
+      i++;
+    }
+    if (configs.isEmpty()) {
+      String accessKey = get(Property.S3_STATIC_ACCESS_KEY);
+      String secretKey = get(Property.S3_STATIC_SECRET_KEY);
+      if (accessKey != null || secretKey != null) {
+        configs.add(
+            S3StorageConfig.builder()
+                .accessKey(accessKey)
+                .secretKey(secretKey)
+                .sessionToken(get(Property.S3_STATIC_SESSION_TOKEN))
+                .build());
+      }
+    }
+    return configs;
+  }
+
+  /**
+   * Resolves a static S3 key pair for vending.
+   *
+   * @param accessKeyId when non-blank, match {@code s3.static.accessKey.N} by value; when null or
+   *     blank, use the first configured entry (index 0 / unindexed fallback)
+   * @return matching config, or empty if none configured / no match
+   */
+  public Optional<S3StorageConfig> resolveS3StaticAccessKeyConfiguration(String accessKeyId) {
+    List<S3StorageConfig> configs = getS3StaticAccessKeyConfigurations();
+    if (configs.isEmpty()) {
+      return Optional.empty();
+    }
+    if (accessKeyId == null || accessKeyId.isBlank()) {
+      return Optional.of(configs.get(0));
+    }
+    return configs.stream().filter(config -> accessKeyId.equals(config.getAccessKey())).findFirst();
+  }
+
+  /** Unindexed static pair only. Prefer {@link #resolveS3StaticAccessKeyConfiguration(String)}. */
+  public S3StorageConfig getS3StaticAccessKeyConfiguration() {
+    return resolveS3StaticAccessKeyConfiguration(null).orElse(S3StorageConfig.builder().build());
+  }
+
+  /** Soft expiry stamped on statically vended credentials so clients refresh. */
+  public Duration getS3StaticCredentialTtl() {
+    return Duration.ofSeconds(Integer.parseInt(get(Property.S3_STATIC_CREDENTIAL_TTL_SECONDS)));
+  }
+
+  /**
+   * Returns true when {@code roleArn} is the configured sentinel that selects static key vending
+   * (index 0) instead of STS AssumeRole. Prefer {@code S3_ACCESS_KEY} credentials.
+   */
+  public boolean isStaticRoleArn(String roleArn) {
+    return roleArn != null && roleArn.equals(get(Property.S3_STATIC_ROLE_ARN_SENTINEL));
   }
 
   public Map<NormalizedURL, S3StorageConfig> getS3Configurations() {

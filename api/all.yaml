@@ -2806,6 +2806,8 @@ components:
           type: string
         aws_iam_role:
           $ref: '#/components/schemas/AwsIamRoleResponse'
+        aws_s3_access_key:
+          $ref: '#/components/schemas/AwsS3AccessKeyResponse'
         comment:
           description: Comment associated with the credential.
           type: string
@@ -2847,6 +2849,8 @@ components:
           type: string
         aws_iam_role:
           $ref: '#/components/schemas/AwsIamRoleRequest'
+        aws_s3_access_key:
+          $ref: '#/components/schemas/AwsS3AccessKeyRequest'
         purpose:
           $ref: "#/components/schemas/CredentialPurpose"
     UpdateCredentialRequest:
@@ -2860,6 +2864,8 @@ components:
           type: string
         aws_iam_role:
           $ref: '#/components/schemas/AwsIamRoleRequest'
+        aws_s3_access_key:
+          $ref: '#/components/schemas/AwsS3AccessKeyRequest'
         new_name:
           description: New name for the credential.
           type: string
@@ -2886,6 +2892,28 @@ components:
         external_id:
           description: The external ID used in role assumption to prevent confused deputy problem.
           type: string
+    AwsS3AccessKeyRequest:
+      type: object
+      required:
+        - access_key_id
+      properties:
+        access_key_id:
+          type: string
+          description: |
+            Access key ID for static S3 (or S3-compatible) credential vending. The matching secret
+            must be configured on the Unity Catalog server as s3.static.accessKey.N /
+            s3.static.secretKey.N (matched by this id). The secret is never accepted or stored via
+            this API.
+    AwsS3AccessKeyResponse:
+      type: object
+      required:
+        - access_key_id
+      properties:
+        access_key_id:
+          type: string
+          description: |
+            Access key ID for this credential. The secret is never returned; it is resolved from
+            server configuration at credential-vending time.
     ListCredentialsResponse:
       type: object
       properties:

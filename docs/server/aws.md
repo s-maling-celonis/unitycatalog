@@ -151,6 +151,36 @@ Similarly, schemas can be created with managed storage just like catalogs:
 bin/uc schema create --catalog my_cat2 --name my_schema --storage_root s3://my-bucket/path
 ```
 
+# Static access keys for S3-compatible storage (no STS)
+
+Some S3-compatible platforms (for example NetApp ONTAP Object Storage) implement the S3 data API
+but not STS AssumeRole. Configure access key secrets on the Unity Catalog server and register a
+storage credential that references the access key **id** only (the secret is never stored in the
+catalog database):
+
+```ini
+# server.properties — secrets stay on the server; match by access key id
+s3.static.accessKey.0=AKIAEXAMPLE0
+s3.static.secretKey.0=...
+s3.static.accessKey.1=AKIAEXAMPLE1
+s3.static.secretKey.1=...
+# Soft TTL stamped on vended credentials so clients refresh (default 3600):
+# s3.static.credentialTtlSeconds=3600
+```
+
+```sh
+bin/uc credential create --name my_static_cred --aws_s3_access_key_id AKIAEXAMPLE1
+bin/uc external_location create --name my_loc --url s3://my-bucket/path --credential_name my_static_cred
+```
+
+Temporary credential APIs then return the matching access key and secret (with a stamped
+expiration). The underlying key does not expire; rotate it in server configuration and rely on
+clients refreshing after the stamped TTL. The key is as broad as the storage account behind it —
+prefer one account (or key) per trust boundary.
+
+This path coexists with normal IAM-role credentials on the same server. A legacy compatibility
+shim still treats `aws_iam_role.role_arn=STATIC` as “use index 0”; prefer `aws_s3_access_key`.
+
 # Migration of existing per-bucket credential configuration
 
 For a server with old credentials configured in the `server.properties` file that are used for accessing S3 buckets directly, without creating a storage credential according to this doc, they are recommended to be migrated. These old configurations may look like this:
