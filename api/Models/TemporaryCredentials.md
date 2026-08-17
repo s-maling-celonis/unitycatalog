@@ -6,6 +6,7 @@
 | **aws\_temp\_credentials** | [**AwsCredentials**](AwsCredentials.md) |  | [optional] [default to null] |
 | **azure\_user\_delegation\_sas** | [**AzureUserDelegationSAS**](AzureUserDelegationSAS.md) |  | [optional] [default to null] |
 | **gcp\_oauth\_token** | [**GcpOauthToken**](GcpOauthToken.md) |  | [optional] [default to null] |
+| **endpoint\_url** | **String** | Optional S3 compatible endpoint URL | [optional] [default to null] |
 | **expiration\_time** | **Long** | Server time when the credential will expire, in epoch milliseconds. The API client is advised to cache the credential given this expiration time.  | [optional] [default to null] |
 | **url** | **String** | The normalized URL of the storage path the temporary credential was generated for. | [optional] [default to null] |
 
