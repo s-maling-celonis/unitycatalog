@@ -2,6 +2,9 @@ etc/db/h2db.mv.db
 etc/db/h2db.trace.db
 mlflow.db
 target/
+!/target/control/
+!/target/control/java/
+!/target/control/java/catalog-info.yaml
 
 # Intellij IDEA files
 .idea/

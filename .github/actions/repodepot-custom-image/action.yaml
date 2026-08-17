@@ -1,0 +1,391 @@
+name: Create Image
+description: Custom build, test, publish, and image creation for Unity Catalog Repo Depot components.
+
+inputs:
+  working-directory:
+    description: Relative path under $GITHUB_WORKSPACE to use when running commands.
+    required: true
+  image-registry:
+    description: The name of the container registry to use when creating an image.
+    required: true
+  image-name:
+    description: The name of the image to use when creating a image.
+    required: true
+  image-tag:
+    description: The name of the image tag to use when creating a image.
+    required: true
+  github-token:
+    description: The token to use when accessing Celonis resources.
+    required: true
+  sca-tag-ref:
+    required: true
+    default: ''
+    description: 'string: Tag to reference for SCA scans'
+  srcclr-api-token:
+    required: true
+    description: 'string: The API token for Sourceclear, typically set in a repository secret called SRCCLR_API_TOKEN'
+  secrets:
+    description: JSON encoded repository secrets
+    required: true
+  vars:
+    description: JSON encoded repository variables
+    required: true
+  is-dev-build:
+    description: Boolean indicating if the build is a development build
+    required: true
+  release-branch:
+    description: The name of the release branch to build from
+    required: false
+  relative-source-location:
+    description: The relative source location of a component in the GitHub repository.
+    required: false
+  component-name:
+    description: The name of the component
+    required: true
+  sonar-project-key:
+    description: SonarQube project key (from sonarqube.org/project-key annotation)
+    required: true
+  sonar-scan-blocking:
+    description: When true, a SonarQube quality gate failure fails the job
+    required: true
+  sonar-token:
+    description: SonarQube authentication token
+    required: true
+
+outputs:
+  build-status:
+    description: 'Indicates whether the build was successful (type: boolean, values: true/false).'
+    value: ${{ steps.build.outputs.status }}
+  test-status:
+    description: 'Indicates whether the testing was successful (type: boolean, values: true/false).'
+    value: ${{ steps.test.outputs.status }}
+  image-metadata:
+    description: 'JSON metadata output from the docker image creation'
+    value: ${{ steps.create-image.outputs.metadata || steps.empty-image-metadata.outputs.metadata }}
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve component
+      id: component
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        case "${{ inputs.component-name }}" in
+          unity-catalog-server)
+            echo "sbt-project=server"
+            echo "project-path=server"
+            echo "needs-image=true"
+            echo "docker-context=."
+            ;;
+          unity-catalog-ui)
+            echo "needs-image=true"
+            echo "docker-context=ui"
+            ;;
+          unitycatalog-client)
+            echo "sbt-project=client"
+            echo "project-path=clients/java"
+            echo "publishes-maven=true"
+            ;;
+          unitycatalog-controlapi)
+            echo "sbt-project=controlApi"
+            echo "project-path=target/control/java"
+            echo "publishes-maven=true"
+            ;;
+          unitycatalog-hadoop)
+            echo "sbt-project=hadoop"
+            echo "project-path=connectors/hadoop"
+            echo "publishes-maven=true"
+            ;;
+          unitycatalog-spark)
+            echo "sbt-project=spark"
+            echo "project-path=connectors/spark"
+            echo "publishes-maven=true"
+            ;;
+          *)
+            echo "Unknown component: ${{ inputs.component-name }}" >&2
+            exit 1
+            ;;
+        esac >> "$GITHUB_OUTPUT"
+
+    - name: Prepare PREBUILT staging home
+      if: inputs.component-name == 'unity-catalog-server'
+      shell: bash
+      run: |
+        UC_HOME="${GITHUB_WORKSPACE}/${{ inputs.working-directory }}/build/ci-staging/home"
+        echo "UC_HOME=$UC_HOME" >> "$GITHUB_ENV"
+        echo "HOME=$UC_HOME" >> "$GITHUB_ENV"
+        echo "COURSIER_CACHE=$UC_HOME/.cache/coursier" >> "$GITHUB_ENV"
+        mkdir -p "$UC_HOME/.cache/coursier"
+
+    - name: Setup Java
+      if: inputs.component-name != 'unity-catalog-ui'
+      uses: celonis/core-setup-java-action@v4.0.2
+      with:
+        use-cache: 'false'
+        maven-version: '3.9.16'
+
+    - name: Setup Node
+      if: inputs.component-name == 'unity-catalog-ui'
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: yarn
+        cache-dependency-path: ${{ inputs.working-directory }}/ui/yarn.lock
+
+    - name: Build
+      id: build
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        MAVEN_OPTS: -XX:+TieredCompilation -XX:TieredStopAtLevel=1 -XX:+UseG1GC -Xmx16g -XX:-UseGCOverheadLimit
+        REPO_DEPOT_VERSION: ${{ inputs.image-tag }}
+      run: |
+        set -euo pipefail
+
+        build_sbt_module() {
+          local sbt_project="$1"
+          local project_path="$2"
+          build/sbt "set ThisBuild / version := \"${REPO_DEPOT_VERSION}\"" \
+            "$sbt_project/package" "$sbt_project/makePom"
+          sed -i 's#git@github.com:unitycatalog/unitycatalog.git#git@github.com:celonis/unitycatalog.git#g' \
+            "$(find "$project_path" -name '*.pom')"
+          sed -i 's#<groupId>io.unitycatalog</groupId>#<groupId>cloud.celonis</groupId>#g' \
+            "$(find "$project_path" -name '*.pom')"
+        }
+
+        case "${{ inputs.component-name }}" in
+          unity-catalog-server)
+            # PREBUILT staging home is configured before Setup Java.
+            mkdir -p "${HOME}/.cache/coursier"
+            ;;
+          unitycatalog-client|unitycatalog-controlapi|unitycatalog-hadoop|unitycatalog-spark)
+            build_sbt_module "${{ steps.component.outputs.sbt-project }}" "${{ steps.component.outputs.project-path }}"
+            ;;
+          unity-catalog-ui)
+            cd ui
+            yarn install --network-timeout 1000000
+            ;;
+          *)
+            echo "Unsupported component: ${{ inputs.component-name }}" >&2
+            exit 1
+            ;;
+        esac
+
+        echo "status=true" >> "$GITHUB_OUTPUT"
+
+    - name: Setup Maven publish credentials
+      if: steps.component.outputs.publishes-maven == 'true'
+      uses: actions/setup-java@v4
+      with:
+        distribution: zulu
+        java-version: '21'
+        server-id: github
+        server-username: REPO_DEPOT_MAVEN_USERNAME
+        server-password: REPO_DEPOT_MAVEN_PASSWORD
+
+    - name: Publish Maven artifact
+      if: steps.component.outputs.publishes-maven == 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        REPO_DEPOT_MAVEN_USERNAME: celobot
+        REPO_DEPOT_MAVEN_PASSWORD: ${{ inputs.github-token }}
+        REPO_DEPOT_VERSION: ${{ inputs.image-tag }}
+        PROJECT_PATH: ${{ steps.component.outputs.project-path }}
+      run: |
+        set -euo pipefail
+
+        pom_file=""
+        while IFS= read -r pom; do
+          jar="${pom%.pom}.jar"
+          if [ -f "$jar" ]; then
+            pom_file="$pom"
+            break
+          fi
+        done < <(find "$PROJECT_PATH/target" -name '*.pom' ! -path '*/streams/*' | sort)
+        jar_file="${pom_file%.pom}.jar"
+        if [ -z "$pom_file" ] || [ ! -f "$jar_file" ]; then
+          echo "Artifact not found. POM: $pom_file JAR: $jar_file" >&2
+          find "$PROJECT_PATH/target" \( -name '*.pom' -o -name '*.jar' \) | head -30 >&2 || true
+          exit 1
+        fi
+        sed -i "0,/<version>/{s|<version>[^<]*</version>|<version>${REPO_DEPOT_VERSION}</version>|}" "$pom_file"
+        echo "Publishing ${pom_file} at version ${REPO_DEPOT_VERSION}"
+        mvn deploy:deploy-file -e \
+          -Dfile="$jar_file" \
+          -DrepositoryId=github \
+          -Durl=https://maven.pkg.github.com/celonis/maven-internal/ \
+          -DpomFile="$pom_file"
+
+    - name: Test
+      id: test
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        CI: true
+        REPO_DEPOT_VERSION: ${{ inputs.image-tag }}
+        # sbt JVM heap for RepoDepot test/assembly (tuned for ~8GB runners; bump if OOM on larger runners).
+        SBT_HEAP: -J-Xmx6g
+      run: |
+        set -euo pipefail
+        df -h
+
+        case "${{ inputs.component-name }}" in
+          unity-catalog-server)
+            build/sbt "set ThisBuild / version := \"${REPO_DEPOT_VERSION}\"" \
+              $SBT_HEAP server/test server/package cli/package
+            ;;
+          unitycatalog-client|unitycatalog-controlapi)
+            build/sbt $SBT_HEAP "${{ steps.component.outputs.sbt-project }}/test"
+            ;;
+          unitycatalog-hadoop)
+            build/sbt $SBT_HEAP serverShaded/assembly \
+              "${{ steps.component.outputs.sbt-project }}/test"
+            ;;
+          unitycatalog-spark)
+            build/sbt $SBT_HEAP -DsparkVersion=4.1.0 -DdeltaVersion=4.3.1 publishLocal \
+              "${{ steps.component.outputs.sbt-project }}/test"
+            ;;
+          unity-catalog-ui)
+            cd ui
+            yarn test --watchAll=false --passWithNoTests
+            ;;
+          *)
+            echo "Unsupported component: ${{ inputs.component-name }}" >&2
+            exit 1
+            ;;
+        esac
+
+        echo "status=true" >> "$GITHUB_OUTPUT"
+
+    - name: Restore Node for repo-depot tooling
+      if: inputs.component-name == 'unity-catalog-ui'
+      uses: actions/setup-node@v5
+      with:
+        node-version-file: tooling/package.json
+
+    - name: Stage PREBUILT server artifacts for Docker
+      if: steps.component.outputs.needs-image == 'true' && inputs.component-name == 'unity-catalog-server'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        set -euo pipefail
+        # .dockerignore excludes server/target/ and examples/cli/target/; stage under build/.
+        rm -rf build/ci-staging/prebuilt/server/target \
+          build/ci-staging/prebuilt/examples/cli/target \
+          build/ci-staging/prebuilt/target/control/java/target \
+          build/ci-staging/prebuilt/home
+        mkdir -p build/ci-staging/prebuilt/server \
+          build/ci-staging/prebuilt/examples/cli \
+          build/ci-staging/prebuilt/target/control/java \
+          build/ci-staging/prebuilt/home
+        cp -a server/target build/ci-staging/prebuilt/server/
+        cp -a examples/cli/target build/ci-staging/prebuilt/examples/cli/
+        cp -a target/control/java/target build/ci-staging/prebuilt/target/control/java/
+
+        if [ -d "${HOME}/.cache/coursier" ]; then
+          cp -a "${HOME}/.cache" build/ci-staging/prebuilt/home/
+        elif [ -d /home/runner/.cache/coursier ]; then
+          mkdir -p build/ci-staging/prebuilt/home/.cache
+          cp -a /home/runner/.cache/coursier build/ci-staging/prebuilt/home/.cache/
+        else
+          echo "No coursier cache found under HOME or /home/runner/.cache" >&2
+          exit 1
+        fi
+
+        # Normalize runner-local cache paths before Docker rewrites BUILD_HOME/BUILD_ROOT.
+        for classpath in \
+          build/ci-staging/prebuilt/server/target/classpath \
+          build/ci-staging/prebuilt/examples/cli/target/classpath; do
+          if [ -f "$classpath" ]; then
+            sed -i "s|/home/runner/.cache|${HOME}/.cache|g" "$classpath"
+          fi
+        done
+
+        # Staged copies are under build/ci-staging/prebuilt; drop workspace duplicates.
+        rm -rf server/target examples/cli/target target/control/java/target
+        rm -rf "${HOME}/.cache" /home/runner/.cache/coursier 2>/dev/null || true
+        docker builder prune -af || true
+        docker system prune -af --volumes || true
+        df -h
+
+    # Re-login immediately before buildx push. Parent RepoDepot ECR login happens before
+    # CUSTOM (and before long sbt test/package); buildx's docker-container driver may not
+    # inherit those credentials when pushing after a new builder is created.
+    - name: Login to AWS ECR
+      if: steps.component.outputs.needs-image == 'true'
+      uses: aws-actions/amazon-ecr-login@v2
+
+    - name: Login to GHCR
+      if: steps.component.outputs.needs-image == 'true'
+      uses: docker/login-action@v3
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ inputs.github-token }}
+
+    - name: Set up QEMU
+      if: steps.component.outputs.needs-image == 'true' && inputs.is-dev-build != 'true'
+      uses: docker/setup-qemu-action@v3
+
+    - name: Set up Docker Buildx
+      if: steps.component.outputs.needs-image == 'true'
+      uses: docker/setup-buildx-action@v3
+
+    - name: Report disk usage before Docker build
+      if: steps.component.outputs.needs-image == 'true' && inputs.component-name == 'unity-catalog-server'
+      shell: bash
+      run: df -h
+
+    - name: Create Docker Image
+      if: steps.component.outputs.needs-image == 'true'
+      id: create-image
+      uses: docker/build-push-action@v6
+      with:
+        context: ${{ format('{0}/{1}', inputs.working-directory, steps.component.outputs.docker-context) }}
+        push: true
+        platforms: ${{ inputs.is-dev-build == 'true' && 'linux/amd64' || 'linux/amd64,linux/arm64' }}
+        tags: |
+          ${{ inputs.image-registry }}/${{ inputs.image-name }}:${{ inputs.image-tag }}
+          ghcr.io/celonis/${{ inputs.image-name }}:${{ inputs.image-tag }}
+        build-args: |
+          HOME=/home/unitycatalog
+          PREBUILT=${{ inputs.component-name == 'unity-catalog-server' && 'true' || 'false' }}
+          BUILD_ROOT=${{ github.workspace }}/${{ inputs.working-directory }}
+          BUILD_HOME=${{ github.workspace }}/${{ inputs.working-directory }}/build/ci-staging/home
+        cache-from: type=gha
+        cache-to: type=gha,mode=${{ inputs.is-dev-build == 'true' && 'min' || 'max' }},ignore-error=true
+
+    - name: Verify unity-catalog-server image classpath
+      if: steps.component.outputs.needs-image == 'true' && inputs.component-name == 'unity-catalog-server'
+      shell: bash
+      env:
+        IMAGE: ${{ inputs.image-registry }}/${{ inputs.image-name }}:${{ inputs.image-tag }}
+      run: |
+        set -euo pipefail
+        docker run --rm --platform linux/amd64 --user root --entrypoint sh "$IMAGE" -c '
+          CLASSPATH=/home/unitycatalog/server/target/classpath
+          CLI_CLASSPATH=/home/unitycatalog/examples/cli/target/classpath
+          if [ ! -f "$CLASSPATH" ]; then
+            echo "Missing $CLASSPATH; listing /home/unitycatalog/server/target:" >&2
+            ls -la /home/unitycatalog/server/target 2>&1 || ls -la /home/unitycatalog/server 2>&1 || true
+            exit 1
+          fi
+          if [ ! -f "$CLI_CLASSPATH" ]; then
+            echo "Missing $CLI_CLASSPATH; listing /home/unitycatalog/examples/cli/target:" >&2
+            ls -la /home/unitycatalog/examples/cli/target 2>&1 || ls -la /home/unitycatalog/examples/cli 2>&1 || true
+            exit 1
+          fi
+          grep -q "/home/unitycatalog/.cache" "$CLASSPATH"
+          grep -q "/home/unitycatalog/.cache" "$CLI_CLASSPATH"
+          test -d /home/unitycatalog/.cache/coursier
+          test -x /home/unitycatalog/bin/uc
+          /home/unitycatalog/bin/uc --help >/dev/null
+        '
+
+    - name: Set empty image metadata
+      if: steps.component.outputs.needs-image != 'true'
+      id: empty-image-metadata
+      shell: bash
+      run: echo 'metadata={}' >> "$GITHUB_OUTPUT"

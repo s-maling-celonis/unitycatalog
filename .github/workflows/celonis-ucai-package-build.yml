@@ -1,16 +1,14 @@
-name: Test package build
+name: (Celonis) Test package build
 
 on:
   push:
     branches:
       - main
-    paths:
-      - ai/**
-      - .github/workflows/ucai-*.yml
+      - develop
   pull_request:
-    paths:
-      - ai/**
-      - .github/workflows/ucai-*.yml
+    branches:
+      - main
+      - develop
 
 env:
   UV_EXCLUDE_NEWER: "2026-03-10T00:00:00Z"
@@ -27,8 +25,11 @@ jobs:
       run:
         working-directory: ai/core
     steps:
-      - name: Checkout code
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - name: Checkout Branch
+        uses: actions/checkout@v4.1.2
+        with:
+          ref: ${{ github.ref }}
+          token: ${{ secrets.CELOBOT_GITHUB_TOKEN }}
       - name: Set up Python
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:

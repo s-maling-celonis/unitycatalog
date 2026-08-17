@@ -1,0 +1,23 @@
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: unity-catalog-server
+  title: Unity Catalog Server
+  description: Unity Catalog Server — REST API for catalog metadata, deployed as a container and published as a Maven artifact.
+  tags:
+    - java
+    - celospark
+    - unitycatalog
+  annotations:
+    github.com/project-slug: celonis/unitycatalog
+    sonarqube.org/project-key: celonis_unitycatalog_server
+    repo-depot.celonis.dev/project-type: CUSTOM
+    repo-depot.celonis.dev/image-name: celospark/unitycatalog-server
+    repo-depot.celonis.dev/dply-release-approval-team: Storium
+    repo-depot.celonis.dev/workflow-runner-release: runner=4cpu-linux-x64
+    repo-depot.celonis.dev/deploy-strategy: kargo
+spec:
+  type: service
+  lifecycle: experimental
+  owner: storium
+  tier: "2"

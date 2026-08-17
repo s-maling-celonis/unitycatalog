@@ -1,0 +1,53 @@
+name: Run Spark connector JaCoCo tests
+description: >-
+  Prepare Spark, restore the shared UC build cache, and run spark/jacoco for a
+  Spark/Delta matrix row. The calling job must run actions/checkout first.
+
+inputs:
+  spark-version:
+    description: Spark version for this matrix row.
+    required: true
+  delta-version:
+    description: Delta version for this matrix row.
+    required: true
+  use-spark-source-cache:
+    description: >-
+      When 'true', prepare a source-built Spark (restore/build/cache) before running tests.
+      Leave 'false' for published Spark.
+    required: false
+    default: 'false'
+
+runs:
+  using: composite
+  steps:
+    - name: Prepare Spark environment
+      uses: ./.github/actions/prepare-spark-env
+      with:
+        spark-version: ${{ inputs.spark-version }}
+        use-spark-source-cache: ${{ inputs.use-spark-source-cache }}
+
+    - name: Restore UC build cache
+      uses: ./.github/actions/restore-uc-build-cache
+
+    - name: Build Delta SNAPSHOT from source
+      if: inputs.delta-version == 'master-SNAPSHOT'
+      id: delta-build
+      shell: bash
+      run: |
+        export SPARK_MAJOR_MINOR=$(echo "${{ inputs.spark-version }}" | cut -d. -f1,2)
+        bash project/scripts/build_delta.sh
+
+    - name: Set effective Delta version
+      shell: bash
+      run: |
+        if [[ "${{ inputs.delta-version }}" == "master-SNAPSHOT" ]]; then
+          echo "DELTA_VERSION=${{ steps.delta-build.outputs.DELTA_VERSION }}" >> $GITHUB_ENV
+        else
+          echo "DELTA_VERSION=${{ inputs.delta-version }}" >> $GITHUB_ENV
+        fi
+
+    - name: Run Spark connector tests with coverage
+      shell: bash
+      run: |
+        build/sbt -DsparkVersion=${{ inputs.spark-version }} -DdeltaVersion=$DELTA_VERSION \
+          -J-Xmx2G spark/jacoco
