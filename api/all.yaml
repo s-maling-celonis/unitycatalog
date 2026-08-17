@@ -2837,6 +2837,11 @@ components:
         purpose:
           $ref: "#/components/schemas/CredentialPurpose"
     CreateCredentialRequest:
+      description: |
+        Request to create a storage credential. Exactly one of aws_iam_role or aws_s3_access_key
+        must be set: aws_iam_role for credentials vended through STS AssumeRole, or
+        aws_s3_access_key for S3-compatible stores without STS. Requests setting both or neither
+        are rejected with INVALID_ARGUMENT.
       type: object
       required:
         - name
@@ -2854,6 +2859,10 @@ components:
         purpose:
           $ref: "#/components/schemas/CredentialPurpose"
     UpdateCredentialRequest:
+      description: |
+        Request to update a storage credential. At most one of aws_iam_role or aws_s3_access_key
+        may be set; setting one replaces the credential type of the existing credential. Requests
+        setting both are rejected with INVALID_ARGUMENT.
       type: object
       properties:
         comment:

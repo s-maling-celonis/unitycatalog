@@ -106,16 +106,16 @@ public class CredentialDAO extends IdentifiableDAO {
             .build();
     boolean hasIamRole = createRequest.getAwsIamRole() != null;
     boolean hasS3AccessKey = createRequest.getAwsS3AccessKey() != null;
-    if (hasIamRole && hasS3AccessKey) {
-      throw new IllegalArgumentException(
-          "Specify exactly one of aws_iam_role or aws_s3_access_key");
+    if (hasIamRole == hasS3AccessKey) {
+      // Requests are already rejected by CredentialRepository, so this only guards direct callers
+      // from building a DAO with no credential payload or with two of them.
+      throw new BaseException(
+          ErrorCode.INVALID_ARGUMENT, "Specify exactly one of aws_iam_role or aws_s3_access_key");
     }
     if (hasIamRole) {
       dao.setAwsIamRole(createRequest.getAwsIamRole());
-    } else if (hasS3AccessKey) {
-      dao.setAwsS3AccessKey(createRequest.getAwsS3AccessKey());
     } else {
-      throw new IllegalArgumentException("Unknown credential type");
+      dao.setAwsS3AccessKey(createRequest.getAwsS3AccessKey());
     }
     return dao;
   }
@@ -144,7 +144,9 @@ public class CredentialDAO extends IdentifiableDAO {
         break;
         // TODO: support Azure and GCP.
       default:
-        throw new IllegalArgumentException("Unknown credential type: " + credentialType);
+        // Reachable only if a CredentialType is added without extending this switch.
+        throw new BaseException(
+            ErrorCode.FAILED_PRECONDITION, "Unsupported credential type: " + credentialType);
     }
     return credentialInfo;
   }
@@ -163,8 +165,10 @@ public class CredentialDAO extends IdentifiableDAO {
     try {
       return objectMapper.readValue(credential, clazz);
     } catch (JsonProcessingException e) {
-      throw new IllegalArgumentException(
-          "Failed to parse credential of " + clazz.getSimpleName(), e);
+      // The stored payload does not match its credential_type discriminator: a server-side data
+      // problem, not something the caller can fix.
+      throw new BaseException(
+          ErrorCode.INTERNAL, "Failed to parse credential of " + clazz.getSimpleName(), e);
     }
   }
 
