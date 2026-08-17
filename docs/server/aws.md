@@ -188,6 +188,24 @@ account behind it — prefer one account (or key) per trust boundary.
 This path coexists with normal IAM-role credentials on the same server: a credential carries either
 `aws_iam_role` (vended through STS) or `aws_s3_access_key` (vended from server configuration).
 
+## Endpoint URL
+
+A static credential carries no endpoint of its own, so the `endpoint_url` returned alongside vended
+credentials comes from the general S3 configuration: first the per-bucket entry matching the storage
+base (`s3.bucketPath.N` / `s3.endpointUrl.N`), otherwise `aws.endpointUrl`.
+
+Both have caveats here. A per-bucket entry is only registered when it supplies `s3.bucketPath.N`
+plus either `s3.region.N` and `s3.awsRoleArn.N`, or `s3.accessKey.N`, `s3.secretKey.N` and
+`s3.sessionToken.N` — so it cannot be used to declare an endpoint on its own without also putting a
+key back into `server.properties`. And `aws.endpointUrl` is server-wide: it is returned with *every*
+vended credential, and it also overrides the endpoint of the master role's STS client.
+
+So set `aws.endpointUrl` when the server talks to a single S3-compatible store. When static access
+keys and IAM-role credentials coexist on one server, leave it unset and configure the endpoint on
+the client instead (`fs.s3a.endpoint` for the Hadoop connector) — otherwise the S3-compatible
+endpoint is handed out for the AWS locations too, and the master role's AssumeRole calls are pointed
+at a store that does not implement STS.
+
 ## Security considerations
 
 ### Cross-user access
