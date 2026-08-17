@@ -181,6 +181,30 @@ prefer one account (or key) per trust boundary.
 This path coexists with normal IAM-role credentials on the same server. A legacy compatibility
 shim still treats `aws_iam_role.role_arn=STATIC` as “use index 0”; prefer `aws_s3_access_key`.
 
+## Security considerations
+
+### Cross-user access
+
+Clients (for example the Unity Catalog Hadoop connector) may cache vended cloud credentials in the
+JVM, keyed by storage path/operation and a *credential context* derived from the Unity Catalog
+server URI, storage scheme, and UC authentication configuration (`TokenProvider` configs).
+
+A natural concern: user A is granted access to an external location and receives vended
+credentials; user B, who is not granted that location, later accesses the same path on the same
+client JVM and might reuse user A’s cached credentials without calling Unity Catalog again.
+
+### Why it is not a problem
+
+When each caller authenticates to Unity Catalog as a **different user** (distinct static tokens
+or otherwise distinct `TokenProvider` configs), those callers produce different credential
+context ids. The cache therefore does not hit across users: user B’s request misses the cache,
+credential vending runs again, and Unity Catalog authorization denies access.
+
+This isolation does **not** rely on Unity Catalog catalog names. It relies on distinct UC auth
+identities. If multiple application users share one UC service principal (same token or OAuth
+client), they share a credential context and can share the client cache — avoid that pattern when
+per-user isolation is required.
+
 # Migration of existing per-bucket credential configuration
 
 For a server with old credentials configured in the `server.properties` file that are used for accessing S3 buckets directly, without creating a storage credential according to this doc, they are recommended to be migrated. These old configurations may look like this:
