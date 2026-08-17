@@ -208,6 +208,23 @@ at a store that does not implement STS.
 
 ## Security considerations
 
+### What a vended static credential is
+
+The STS path downscopes each vended credential to the requested location and privileges (see
+`AwsPolicyGenerator`) and returns a session credential that AWS itself invalidates after an hour.
+Static vending has neither property: it returns the configured key pair unchanged.
+
+- **Not scoped to the external location.** The vended key carries whatever the store grants it —
+  typically the whole bucket or account, not the path prefix the client asked for. Unity Catalog
+  checks privileges when vending, and that is the only enforcement point.
+- **Not actually expiring.** `s3.static.credentialTtlSeconds` is stamped as `expiration_time` so
+  well-behaved clients come back for a fresh credential; the key itself keeps working. Revoking a
+  grant, deleting the credential, or dropping the external location does not invalidate a key a
+  client already holds — only rotating the key does (see above).
+
+So treat a vended static credential as the store credential itself, use one key per trust boundary,
+and prefer IAM roles wherever STS is available.
+
 ### Cross-user access
 
 Clients (for example the Unity Catalog Hadoop connector) may cache vended cloud credentials in the
@@ -218,17 +235,18 @@ A natural concern: user A is granted access to an external location and receives
 credentials; user B, who is not granted that location, later accesses the same path on the same
 client JVM and might reuse user A’s cached credentials without calling Unity Catalog again.
 
-### Why it is not a problem
-
-When each caller authenticates to Unity Catalog as a **different user** (distinct static tokens
-or otherwise distinct `TokenProvider` configs), those callers produce different credential
-context ids. The cache therefore does not hit across users: user B’s request misses the cache,
+With that cache key, when each caller authenticates to Unity Catalog as a **different user**
+(distinct static tokens or otherwise distinct `TokenProvider` configs), the callers produce
+different credential context ids. The cache does not hit across users: user B’s request misses,
 credential vending runs again, and Unity Catalog authorization denies access.
 
-This isolation does **not** rely on Unity Catalog catalog names. It relies on distinct UC auth
-identities. If multiple application users share one UC service principal (same token or OAuth
-client), they share a credential context and can share the client cache — avoid that pattern when
-per-user isolation is required.
+Two limits on that argument. It is a property of the cache key in the client, not something the
+server enforces — a different or older client may key its cache more coarsely, and the server cannot
+tell. And it depends on distinct UC auth identities, not on Unity Catalog catalog names: if several
+application users share one UC service principal (same token or OAuth client), they share a
+credential context and therefore share the cache. Avoid that pattern when per-user isolation is
+required, and given the scope of a static key, do not rely on client-side caching behaviour as the
+only thing standing between an unauthorized user and the key.
 
 # Migration of existing per-bucket credential configuration
 
