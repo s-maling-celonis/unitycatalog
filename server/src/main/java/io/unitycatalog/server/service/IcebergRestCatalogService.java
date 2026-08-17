@@ -17,11 +17,14 @@ import io.unitycatalog.server.exception.IcebergRestExceptionHandler;
 import io.unitycatalog.server.model.ListSchemasResponse;
 import io.unitycatalog.server.model.ListTablesResponse;
 import io.unitycatalog.server.model.SchemaInfo;
+import io.unitycatalog.server.model.TableInfo;
 import io.unitycatalog.server.persist.Repositories;
 import io.unitycatalog.server.persist.TableRepository;
 import io.unitycatalog.server.service.iceberg.MetadataService;
 import io.unitycatalog.server.service.iceberg.TableConfigService;
 import io.unitycatalog.server.utils.JsonUtils;
+import io.unitycatalog.server.utils.NormalizedURL;
+import io.unitycatalog.server.utils.ValidationUtils;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -35,6 +38,7 @@ import org.apache.iceberg.exceptions.BadRequestException;
 import org.apache.iceberg.exceptions.NoSuchTableException;
 import org.apache.iceberg.exceptions.NoSuchViewException;
 import org.apache.iceberg.rest.Endpoint;
+import org.apache.iceberg.rest.requests.ReportMetricsRequest;
 import org.apache.iceberg.rest.responses.ConfigResponse;
 import org.apache.iceberg.rest.responses.GetNamespaceResponse;
 import org.apache.iceberg.rest.responses.ListNamespacesResponse;
@@ -42,9 +46,13 @@ import org.apache.iceberg.rest.responses.LoadTableResponse;
 import org.apache.iceberg.rest.responses.LoadViewResponse;
 import org.hibernate.Session;
 import org.hibernate.SessionFactory;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 @ExceptionHandler(IcebergRestExceptionHandler.class)
 public class IcebergRestCatalogService {
+
+  private static final Logger LOGGER = LoggerFactory.getLogger(IcebergRestCatalogService.class);
 
   private static final String PREFIX_BASE = "catalogs/";
 
@@ -173,8 +181,10 @@ public class IcebergRestCatalogService {
       @Param("namespace") String namespace,
       @Param("table") String table) {
     String metadataLocation;
+    NormalizedURL tableLocation;
     try (Session session = sessionFactory.openSession()) {
-      tableRepository.getTable(catalog + "." + namespace + "." + table);
+      TableInfo tableInfo = tableRepository.getTable(catalog + "." + namespace + "." + table);
+      tableLocation = NormalizedURL.from(tableInfo.getStorageLocation());
       metadataLocation =
           tableRepository.getTableUniformMetadataLocation(session, catalog, namespace, table);
     }
@@ -183,8 +193,12 @@ public class IcebergRestCatalogService {
       throw new NoSuchTableException("Table does not exist: %s", namespace + "." + table);
     }
 
-    TableMetadata tableMetadata = metadataService.readTableMetadata(metadataLocation);
-    Map<String, String> config = tableConfigService.getTableConfig(tableMetadata);
+    TableMetadata tableMetadata =
+        metadataService.readTableMetadata(NormalizedURL.from(metadataLocation));
+    ValidationUtils.checkArgument(
+        tableLocation.equals(NormalizedURL.from(tableMetadata.location())),
+        "Iceberg table location must match the registered table location.");
+    Map<String, String> config = tableConfigService.getTableConfig(tableLocation);
 
     return LoadTableResponse.builder()
         .withTableMetadata(tableMetadata)
@@ -205,12 +219,32 @@ public class IcebergRestCatalogService {
     throw new NoSuchViewException("View does not exist: %s", namespace + "." + view);
   }
 
+  /**
+   * Accept a scan or commit report from an Iceberg client. Clients report after every scan and
+   * commit as long as the server advertises {@code V1_REPORT_METRICS}, which this service does. The
+   * report is acknowledged and discarded -- UC does not persist client telemetry today -- but the
+   * table is still resolved so that a report naming a table UC doesn't serve is answered with a
+   * 404, as the REST spec requires.
+   */
   @Post("/v1/catalogs/{catalog}/namespaces/{namespace}/tables/{table}/metrics")
   @AuthorizeExpression("#authorize(#principal, #metastore, OWNER)")
   @AuthorizeResourceKey(METASTORE)
   public HttpResponse reportMetrics(
-      @Param("namespace") String namespace, @Param("table") String table) {
-    return HttpResponse.of(HttpStatus.OK);
+      @Param("catalog") String catalog,
+      @Param("namespace") String namespace,
+      @Param("table") String table,
+      ReportMetricsRequest request) {
+    try (Session session = sessionFactory.openSession()) {
+      tableRepository.getTable(catalog + "." + namespace + "." + table);
+      String metadataLocation =
+          tableRepository.getTableUniformMetadataLocation(session, catalog, namespace, table);
+      if (metadataLocation == null) {
+        throw new NoSuchTableException("Table does not exist: %s", namespace + "." + table);
+      }
+    }
+
+    LOGGER.debug("Received {} for table {}.{}.{}", request.reportType(), catalog, namespace, table);
+    return HttpResponse.of(HttpStatus.NO_CONTENT);
   }
 
   @Get("/v1/catalogs/{catalog}/namespaces/{namespace}/tables")

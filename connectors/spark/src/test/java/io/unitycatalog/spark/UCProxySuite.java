@@ -10,7 +10,6 @@ import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import io.unitycatalog.client.ApiException;
 import io.unitycatalog.client.api.SchemasApi;
 import io.unitycatalog.client.api.TablesApi;
 import io.unitycatalog.client.model.ColumnInfo;
@@ -34,8 +33,8 @@ import org.junit.jupiter.api.Test;
  * supported Spark version). Lives under {@code src/test/java/}, so it compiles and runs against
  * Spark 4.0, 4.1, and 4.2. It composes {@link UCProxyTestFixture} (rather than inheriting it) and
  * references no Spark-4.2-only type. The view-side tests live in {@code UCViewProxySuite} under
- * {@code src/test/scala-shims/spark-4.2/}; the pre-view-API (4.1) unsupported-path tests live in
- * {@code UCViewUnsupportedSuite} under {@code src/test/scala-shims/spark-4.1/}.
+ * {@code src/test/scala-shims/spark-4.2/}; the pre-view-API (4.0/4.1) unsupported-path tests live
+ * in {@code UCViewUnsupportedSuite} under {@code src/test/scala-shims/spark-4.0-4.1/}.
  *
  * <p>End-to-end integration tests that exercise pagination through UCSingleCatalog and a real UC
  * server are in {@link BaseTableReadWriteTest#testListTablesPagination} and {@link
@@ -203,19 +202,15 @@ public class UCProxySuite {
   @Test
   public void testLoadTableReportsNotFoundForNameUcCannotAddress() throws Exception {
     String path = "s3://bucket/tenants/t1/tmp-ingest-4825.parquet";
-    when(mockTablesApi.getTable(eq(CATALOG_NAME + ".parquet." + path), eq(true), eq(true)))
-        .thenThrow(
-            new ApiException(
-                400,
-                "getTable call failed with: 400 - {\"error_code\":\"INVALID_ARGUMENT\","
-                    + "\"message\":\"Invalid table name: "
-                    + CATALOG_NAME
-                    + ".parquet."
-                    + path
-                    + "\"}"));
 
     assertThatThrownBy(() -> proxy.loadTable(Identifier.of(new String[] {"parquet"}, path)))
         .isInstanceOf(NoSuchTableException.class);
+
+    verify(mockTablesApi, org.mockito.Mockito.never())
+        .getTable(
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.any(),
+            org.mockito.ArgumentMatchers.any());
   }
 
   /**
@@ -226,6 +221,21 @@ public class UCProxySuite {
   @Test
   public void testLoadTableSkipsRpcForNameUcCannotAddress() throws Exception {
     String path = "s3://bucket/tenants/t1/tmp-ingest-4825.parquet";
+
+    assertThatThrownBy(() -> proxy.loadTable(Identifier.of(new String[] {"parquet"}, path)))
+        .isInstanceOf(NoSuchTableException.class);
+
+    verify(mockTablesApi, org.mockito.Mockito.never())
+        .getTable(
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.any(),
+            org.mockito.ArgumentMatchers.any());
+  }
+
+  /** Extensionless cloud paths also carry `/` and must skip the UC RPC. */
+  @Test
+  public void testLoadTableSkipsRpcForExtensionlessBarePath() throws Exception {
+    String path = "s3://bucket/dir/part";
 
     assertThatThrownBy(() -> proxy.loadTable(Identifier.of(new String[] {"parquet"}, path)))
         .isInstanceOf(NoSuchTableException.class);

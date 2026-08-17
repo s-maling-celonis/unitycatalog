@@ -15,6 +15,11 @@ ARG BUILD_ROOT
 ARG BUILD_HOME
 ENV HOME=$HOME
 
+# Corporate Maven mirror for the sbt launcher / Ivy (see build/sbt).
+# Pass at build time: --build-arg MAVEN_PROXY_URL=$MAVEN_PROXY_URL
+ARG MAVEN_PROXY_URL
+ENV MAVEN_PROXY_URL=${MAVEN_PROXY_URL}
+
 WORKDIR $HOME
 
 COPY --parents dev/ build/ project/ examples/ server/ api/ clients/ version.sbt build.sbt ./

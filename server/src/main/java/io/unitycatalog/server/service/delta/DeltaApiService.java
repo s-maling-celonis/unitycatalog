@@ -26,6 +26,8 @@ import io.unitycatalog.server.delta.model.DeltaCreateTableRequest;
 import io.unitycatalog.server.delta.model.DeltaCredentialOperation;
 import io.unitycatalog.server.delta.model.DeltaCredentialsResponse;
 import io.unitycatalog.server.delta.model.DeltaLoadTableResponse;
+import io.unitycatalog.server.delta.model.DeltaRenameTableRequest;
+import io.unitycatalog.server.delta.model.DeltaReportMetricsRequest;
 import io.unitycatalog.server.delta.model.DeltaStagingTableResponse;
 import io.unitycatalog.server.delta.model.DeltaTableType;
 import io.unitycatalog.server.delta.model.DeltaUpdateTableRequest;
@@ -263,6 +265,57 @@ public class DeltaApiService extends AuthorizedService {
       @Param("table") @AuthorizeResourceKey(TABLE) String table,
       DeltaUpdateTableRequest request) {
     return tableRepository.updateTableForDelta(catalog, schema, table, request);
+  }
+
+  // ==================== Rename Table API ====================
+
+  /**
+   * Rename a table by three-part name, within the same catalog and schema. Cross-catalog and
+   * cross-schema moves are not supported per {@code delta.yaml}.
+   *
+   */
+  @Post("/delta/v1/catalogs/{catalog}/schemas/{schema}/tables/{table}/rename")
+  @AuthorizeExpression(AuthorizeExpressions.RENAME_TABLE)
+  public HttpResponse renameTable(
+      @Param("catalog") @AuthorizeResourceKey(CATALOG) String catalog,
+      @Param("schema") @AuthorizeResourceKey(SCHEMA) String schema,
+      @Param("table") @AuthorizeResourceKey(TABLE) String table,
+      DeltaRenameTableRequest request) {
+    if (request == null || request.getNewName() == null || request.getNewName().isBlank()) {
+      throw new BaseException(ErrorCode.INVALID_ARGUMENT, "New table name is required.");
+    }
+    tableRepository.renameTable(catalog, schema, table, request.getNewName());
+    return HttpResponse.of(HttpStatus.NO_CONTENT);
+  }
+
+  // ==================== Report Metrics API ====================
+
+  /**
+   * Accept commit metrics reported by Delta clients after a commit (e.g. Delta Spark's {@code
+   * UpdateMetricsHook}). Per {@code delta.yaml} the body's {@code table-id} must identify the same
+   * table as the path; mismatches are rejected. The metrics are acknowledged and discarded -- UC
+   * does not persist client telemetry today. Authorization mirrors {@link #updateTable}, so a
+   * caller who can commit to the table can report metrics for it.
+   */
+  @Post("/delta/v1/catalogs/{catalog}/schemas/{schema}/tables/{table}/metrics")
+  @AuthorizeExpression(AuthorizeExpressions.UPDATE_TABLE)
+  public HttpResponse reportMetrics(
+      @Param("catalog") @AuthorizeResourceKey(CATALOG) String catalog,
+      @Param("schema") @AuthorizeResourceKey(SCHEMA) String schema,
+      @Param("table") @AuthorizeResourceKey(TABLE) String table,
+      DeltaReportMetricsRequest request) {
+    if (request == null || request.getTableId() == null) {
+      throw new BaseException(ErrorCode.INVALID_ARGUMENT, "table-id is required.");
+    }
+    TableInfoDAO tableInfo = tableRepository.findTableOrThrow(catalog, schema, table);
+    if (!tableInfo.getId().equals(request.getTableId())) {
+      throw new BaseException(
+          ErrorCode.INVALID_ARGUMENT,
+          String.format(
+              "table-id %s does not match table %s.%s.%s.",
+              request.getTableId(), catalog, schema, table));
+    }
+    return HttpResponse.of(HttpStatus.NO_CONTENT);
   }
 
   // ==================== Table Credentials API ====================
