@@ -12,7 +12,7 @@ import scala.util.parsing.json.JSON
  *
  * Key concepts:
  *   - SparkVersionSpec: version metadata (full version, shim source dirs, source-build defaults);
- *     a version can list several shim dirs, incl. ones shared across versions (e.g. spark-4.0-4.1)
+ *     a version can list several shim dirs, incl. ones shared across versions (e.g. spark-4.1-4.2)
  *   - DEFAULT: latest stable Spark version (used when -DsparkVersion is not set)
  *   - sparkVersionedModuleName: appends _X.Y suffix to artifact names
  *   - sparkSourceDirSettings: wires per-version shim source dirs
@@ -23,7 +23,7 @@ import scala.util.parsing.json.JSON
 
 case class SparkVersionSpec(
   fullVersion: String,
-  // Shim source-dir suffixes compiled for this Spark version (e.g. "scala-shims/spark-4.0-4.1").
+  // Shim source-dir suffixes compiled for this Spark version (e.g. "scala-shims/spark-4.1").
   // A file in a dir shared by several versions is compiled for every version that lists it, so
   // identical shims are written once instead of copied per version. sbt ignores non-existent
   // dirs, so listing a dir a module doesn't use is harmless.
