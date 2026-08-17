@@ -159,11 +159,11 @@ storage credential that references the access key **id** only (the secret is nev
 catalog database):
 
 ```ini
-# server.properties — secrets stay on the server; match by access key id
-s3.static.accessKey.0=AKIAEXAMPLE0
-s3.static.secretKey.0=...
-s3.static.accessKey.1=AKIAEXAMPLE1
-s3.static.secretKey.1=...
+# server.properties — secrets stay on the server, keyed by access key id
+s3.static.secretKey.AKIAEXAMPLE0=...
+s3.static.secretKey.AKIAEXAMPLE1=...
+# Optional, only for stores that issue a session token:
+# s3.static.sessionToken.AKIAEXAMPLE0=...
 # Soft TTL stamped on vended credentials so clients refresh (default 3600):
 # s3.static.credentialTtlSeconds=3600
 ```
@@ -174,9 +174,16 @@ bin/uc external_location create --name my_loc --url s3://my-bucket/path --creden
 ```
 
 Temporary credential APIs then return the matching access key and secret (with a stamped
-expiration). The underlying key does not expire; rotate it in server configuration and rely on
-clients refreshing after the stamped TTL. The key is as broad as the storage account behind it —
-prefer one account (or key) per trust boundary.
+expiration). The underlying key does not expire, and clients pick up a rotation after the stamped
+TTL. To rotate, add the new pair alongside the old one and point the credential at it:
+
+```sh
+# server.properties: s3.static.secretKey.AKIAEXAMPLE2=...
+bin/uc credential update --name my_static_cred --aws_s3_access_key_id AKIAEXAMPLE2
+```
+
+Then remove the retired `s3.static.secretKey.<old-id>` entry. The key is as broad as the storage
+account behind it — prefer one account (or key) per trust boundary.
 
 This path coexists with normal IAM-role credentials on the same server: a credential carries either
 `aws_iam_role` (vended through STS) or `aws_s3_access_key` (vended from server configuration).

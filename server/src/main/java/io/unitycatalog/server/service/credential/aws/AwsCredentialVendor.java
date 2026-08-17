@@ -28,10 +28,10 @@ import software.amazon.awssdk.services.sts.model.Credentials;
  *       CredentialDAO.CredentialType#AWS_IAM_ROLE} with a real IAM role ARN, the master role STS
  *       client assumes that role (see {@link AwsIamRoleRequest} / {@link AwsIamRoleResponse}).
  *   <li><b>External Location + static access key:</b> When the credential is {@link
- *       CredentialDAO.CredentialType#S3_ACCESS_KEY}, UC resolves {@code s3.static.accessKey.N} /
- *       {@code s3.static.secretKey.N} by matching {@link AwsS3AccessKeyResponse#getAccessKeyId()}.
- *       Soft expiry comes from {@code s3.static.credentialTtlSeconds}. Secrets are never stored in
- *       the catalog database.
+ *       CredentialDAO.CredentialType#S3_ACCESS_KEY}, UC reads the secret configured under {@code
+ *       s3.static.secretKey.<accessKeyId>} for that credential's {@link
+ *       AwsS3AccessKeyResponse#getAccessKeyId()}. Soft expiry comes from {@code
+ *       s3.static.credentialTtlSeconds}. Secrets are never stored in the catalog database.
  *   <li><b>Per-Bucket Configuration:</b> Legacy mode using per-bucket S3 configurations in
  *       server.properties when no external location covers the path.
  * </ol>
@@ -153,7 +153,7 @@ public class AwsCredentialVendor {
 
   /**
    * @param accessKeyId access key id stored on the storage credential; the matching secret comes
-   *     from the {@code s3.static.*} entry with the same access key id
+   *     from {@code s3.static.secretKey.<accessKeyId>} in server configuration
    */
   private AwsCredentialGenerator createStaticAccessKeyGenerator(String accessKeyId) {
     if (accessKeyId == null || accessKeyId.isBlank()) {
@@ -170,16 +170,9 @@ public class AwsCredentialVendor {
                         ErrorCode.FAILED_PRECONDITION,
                         "No static S3 secret configured for access key id '"
                             + accessKeyId
-                            + "'. Add a matching s3.static.accessKey.N /"
-                            + " s3.static.secretKey.N pair in server.properties."));
-    // The entry was matched on its access key id, so only its secret can still be missing.
-    if (config.getSecretKey() == null || config.getSecretKey().isEmpty()) {
-      throw new BaseException(
-          ErrorCode.FAILED_PRECONDITION,
-          "No secret key configured for static S3 access key id '"
-              + accessKeyId
-              + "'. Set the matching s3.static.secretKey.N in server.properties.");
-    }
+                            + "'. Set s3.static.secretKey."
+                            + accessKeyId
+                            + " in server.properties."));
     return new AwsCredentialGenerator.StaticAwsCredentialGenerator(
         config, serverProperties.getS3StaticCredentialTtl());
   }

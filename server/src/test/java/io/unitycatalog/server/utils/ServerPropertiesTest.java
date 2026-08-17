@@ -316,4 +316,47 @@ public class ServerPropertiesTest {
       System.clearProperty("server.allowed-issuers");
     }
   }
+
+  @Test
+  public void testResolveS3StaticAccessKeyConfiguration() {
+    Properties props = new Properties();
+    props.setProperty("s3.static.secretKey.AKIA_A", "secretA");
+    props.setProperty("s3.static.secretKey.AKIA_B", "secretB");
+    props.setProperty("s3.static.sessionToken.AKIA_B", "tokenB");
+    ServerProperties serverProperties = new ServerProperties(props);
+
+    assertThat(serverProperties.resolveS3StaticAccessKeyConfiguration("AKIA_A"))
+        .get()
+        .satisfies(
+            config -> {
+              assertThat(config.getAccessKey()).isEqualTo("AKIA_A");
+              assertThat(config.getSecretKey()).isEqualTo("secretA");
+              assertThat(config.getSessionToken()).isNull();
+            });
+
+    // Each key is independent, and the optional session token belongs to a single key.
+    assertThat(serverProperties.resolveS3StaticAccessKeyConfiguration("AKIA_B"))
+        .get()
+        .satisfies(
+            config -> {
+              assertThat(config.getSecretKey()).isEqualTo("secretB");
+              assertThat(config.getSessionToken()).isEqualTo("tokenB");
+            });
+  }
+
+  @Test
+  public void testResolveS3StaticAccessKeyConfigurationWhenUnconfigured() {
+    Properties props = new Properties();
+    props.setProperty("s3.static.secretKey.AKIA_A", "secretA");
+    // Only a session token, no secret: not usable on its own.
+    props.setProperty("s3.static.sessionToken.AKIA_TOKEN_ONLY", "tokenOnly");
+    props.setProperty("s3.static.secretKey.AKIA_BLANK", "");
+    ServerProperties serverProperties = new ServerProperties(props);
+
+    assertThat(serverProperties.resolveS3StaticAccessKeyConfiguration("AKIA_UNKNOWN")).isEmpty();
+    assertThat(serverProperties.resolveS3StaticAccessKeyConfiguration(null)).isEmpty();
+    assertThat(serverProperties.resolveS3StaticAccessKeyConfiguration(" ")).isEmpty();
+    assertThat(serverProperties.resolveS3StaticAccessKeyConfiguration("AKIA_TOKEN_ONLY")).isEmpty();
+    assertThat(serverProperties.resolveS3StaticAccessKeyConfiguration("AKIA_BLANK")).isEmpty();
+  }
 }

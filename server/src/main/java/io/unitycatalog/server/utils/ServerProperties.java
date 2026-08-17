@@ -16,7 +16,6 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.Duration;
 import java.time.format.DateTimeParseException;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -222,14 +221,6 @@ public class ServerProperties {
     AWS_REGION("aws.region"),
     AWS_ENDPOINT_URL("aws.endpointUrl"),
     /**
-     * Unindexed static access key, used as a single entry when no {@code s3.static.accessKey.N} are
-     * set. Like an indexed entry, it is matched against a storage credential's access key id.
-     */
-    S3_STATIC_ACCESS_KEY("s3.static.accessKey"),
-    S3_STATIC_SECRET_KEY("s3.static.secretKey"),
-    /** Optional. Leave unset for S3-compatible stores that do not issue session tokens. */
-    S3_STATIC_SESSION_TOKEN("s3.static.sessionToken"),
-    /**
      * Lifetime stamped on credentials vended via the static path so clients refresh. Does not
      * expire the underlying access key.
      */
@@ -354,58 +345,29 @@ public class ServerProperties {
   }
 
   /**
-   * Static S3 access-key pairs from server configuration.
+   * Resolves the static S3 key pair for {@code accessKeyId}.
    *
-   * <p>Reads contiguous {@code s3.static.accessKey.N} / {@code s3.static.secretKey.N} (and optional
-   * {@code s3.static.sessionToken.N}). If none are set, falls back to the unindexed {@code
-   * s3.static.accessKey} / {@code s3.static.secretKey} properties as a single entry.
-   */
-  public List<S3StorageConfig> getS3StaticAccessKeyConfigurations() {
-    List<S3StorageConfig> configs = new ArrayList<>();
-    int i = 0;
-    while (true) {
-      String accessKey = getProperty("s3.static.accessKey." + i);
-      String secretKey = getProperty("s3.static.secretKey." + i);
-      String sessionToken = getProperty("s3.static.sessionToken." + i);
-      if (accessKey == null && secretKey == null) {
-        break;
-      }
-      configs.add(
-          S3StorageConfig.builder()
-              .accessKey(accessKey)
-              .secretKey(secretKey)
-              .sessionToken(sessionToken)
-              .build());
-      i++;
-    }
-    if (configs.isEmpty()) {
-      String accessKey = get(Property.S3_STATIC_ACCESS_KEY);
-      String secretKey = get(Property.S3_STATIC_SECRET_KEY);
-      if (accessKey != null || secretKey != null) {
-        configs.add(
-            S3StorageConfig.builder()
-                .accessKey(accessKey)
-                .secretKey(secretKey)
-                .sessionToken(get(Property.S3_STATIC_SESSION_TOKEN))
-                .build());
-      }
-    }
-    return configs;
-  }
-
-  /**
-   * Resolves the static S3 key pair whose access key id matches {@code accessKeyId}.
+   * <p>Secrets are keyed by access key id: {@code s3.static.secretKey.<accessKeyId>}, with an
+   * optional {@code s3.static.sessionToken.<accessKeyId>} for stores that issue one. There is no
+   * index, so a key can be added or removed without disturbing the others.
    *
    * @param accessKeyId access key id stored on a storage credential
-   * @return the matching config, or empty when none is configured with that access key id
+   * @return the matching config, or empty when no secret is configured for that access key id
    */
   public Optional<S3StorageConfig> resolveS3StaticAccessKeyConfiguration(String accessKeyId) {
     if (accessKeyId == null || accessKeyId.isBlank()) {
       return Optional.empty();
     }
-    return getS3StaticAccessKeyConfigurations().stream()
-        .filter(config -> accessKeyId.equals(config.getAccessKey()))
-        .findFirst();
+    String secretKey = getProperty("s3.static.secretKey." + accessKeyId);
+    if (secretKey == null || secretKey.isBlank()) {
+      return Optional.empty();
+    }
+    return Optional.of(
+        S3StorageConfig.builder()
+            .accessKey(accessKeyId)
+            .secretKey(secretKey)
+            .sessionToken(getProperty("s3.static.sessionToken." + accessKeyId))
+            .build());
   }
 
   /** Soft expiry stamped on statically vended credentials so clients refresh. */
