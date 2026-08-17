@@ -222,8 +222,8 @@ public class ServerProperties {
     AWS_REGION("aws.region"),
     AWS_ENDPOINT_URL("aws.endpointUrl"),
     /**
-     * Unindexed static access key (alias for {@code s3.static.accessKey.0}). Used when resolving
-     * static credentials by access key id, and as the default entry when no indexed keys are set.
+     * Unindexed static access key, used as a single entry when no {@code s3.static.accessKey.N} are
+     * set. Like an indexed entry, it is matched against a storage credential's access key id.
      */
     S3_STATIC_ACCESS_KEY("s3.static.accessKey"),
     S3_STATIC_SECRET_KEY("s3.static.secretKey"),
@@ -235,12 +235,6 @@ public class ServerProperties {
      */
     S3_STATIC_CREDENTIAL_TTL_SECONDS(
         "s3.static.credentialTtlSeconds", "3600", POSITIVE_INTEGER_VALIDATOR),
-    /**
-     * Compatibility shim: when a storage credential's {@code aws_iam_role.role_arn} equals this
-     * value, UC vends the first configured static key (index 0) instead of calling STS. Prefer
-     * {@code aws_s3_access_key} credentials.
-     */
-    S3_STATIC_ROLE_ARN_SENTINEL("s3.static.roleArnSentinel", "STATIC", NOOP_VALIDATOR),
     INCLUDE_STACK_TRACE_IN_ERROR("server.include-stacktrace-in-error", "false", BOOLEAN_VALIDATOR);
     // The is not an exhaustive list. Some property keys like s3.bucketPath.0 with a numbering
     // suffix is not included. They are only accessed internally from functions like
@@ -364,7 +358,7 @@ public class ServerProperties {
    *
    * <p>Reads contiguous {@code s3.static.accessKey.N} / {@code s3.static.secretKey.N} (and optional
    * {@code s3.static.sessionToken.N}). If none are set, falls back to the unindexed {@code
-   * s3.static.accessKey} / {@code s3.static.secretKey} properties as a single entry (index 0).
+   * s3.static.accessKey} / {@code s3.static.secretKey} properties as a single entry.
    */
   public List<S3StorageConfig> getS3StaticAccessKeyConfigurations() {
     List<S3StorageConfig> configs = new ArrayList<>();
@@ -400,39 +394,23 @@ public class ServerProperties {
   }
 
   /**
-   * Resolves a static S3 key pair for vending.
+   * Resolves the static S3 key pair whose access key id matches {@code accessKeyId}.
    *
-   * @param accessKeyId when non-blank, match {@code s3.static.accessKey.N} by value; when null or
-   *     blank, use the first configured entry (index 0 / unindexed fallback)
-   * @return matching config, or empty if none configured / no match
+   * @param accessKeyId access key id stored on a storage credential
+   * @return the matching config, or empty when none is configured with that access key id
    */
   public Optional<S3StorageConfig> resolveS3StaticAccessKeyConfiguration(String accessKeyId) {
-    List<S3StorageConfig> configs = getS3StaticAccessKeyConfigurations();
-    if (configs.isEmpty()) {
+    if (accessKeyId == null || accessKeyId.isBlank()) {
       return Optional.empty();
     }
-    if (accessKeyId == null || accessKeyId.isBlank()) {
-      return Optional.of(configs.get(0));
-    }
-    return configs.stream().filter(config -> accessKeyId.equals(config.getAccessKey())).findFirst();
-  }
-
-  /** Unindexed static pair only. Prefer {@link #resolveS3StaticAccessKeyConfiguration(String)}. */
-  public S3StorageConfig getS3StaticAccessKeyConfiguration() {
-    return resolveS3StaticAccessKeyConfiguration(null).orElse(S3StorageConfig.builder().build());
+    return getS3StaticAccessKeyConfigurations().stream()
+        .filter(config -> accessKeyId.equals(config.getAccessKey()))
+        .findFirst();
   }
 
   /** Soft expiry stamped on statically vended credentials so clients refresh. */
   public Duration getS3StaticCredentialTtl() {
     return Duration.ofSeconds(Integer.parseInt(get(Property.S3_STATIC_CREDENTIAL_TTL_SECONDS)));
-  }
-
-  /**
-   * Returns true when {@code roleArn} is the configured sentinel that selects static key vending
-   * (index 0) instead of STS AssumeRole. Prefer {@code S3_ACCESS_KEY} credentials.
-   */
-  public boolean isStaticRoleArn(String roleArn) {
-    return roleArn != null && roleArn.equals(get(Property.S3_STATIC_ROLE_ARN_SENTINEL));
   }
 
   public Map<NormalizedURL, S3StorageConfig> getS3Configurations() {

@@ -348,60 +348,6 @@ public class CloudCredentialVendorTest {
   }
 
   @Test
-  public void testVendStaticCredentialsForSentinelRoleArn() {
-    final String S3_PATH = "s3://ontap-bucket/path/to/data";
-    final String STATIC_ACCESS_KEY = "staticAccessKey";
-    final String STATIC_SECRET_KEY = "staticSecretKey";
-
-    CredentialDAO credentialDAO =
-        CredentialDAO.from(
-            new CreateCredentialRequest()
-                .name("static-credential")
-                .purpose(CredentialPurpose.STORAGE)
-                .awsIamRole(new AwsIamRoleRequest().roleArn("STATIC")),
-            "test-user");
-
-    reset(externalLocationUtils);
-    doReturn(Optional.of(credentialDAO))
-        .when(externalLocationUtils)
-        .getExternalLocationCredentialDaoForPath(any());
-
-    when(serverProperties.getS3Configurations()).thenReturn(Map.of());
-    doReturn(S3StorageConfig.builder().build())
-        .when(serverProperties)
-        .getS3MasterRoleConfiguration();
-    when(serverProperties.isStaticRoleArn("STATIC")).thenReturn(true);
-    when(serverProperties.resolveS3StaticAccessKeyConfiguration(null))
-        .thenReturn(
-            Optional.of(
-                S3StorageConfig.builder()
-                    .accessKey(STATIC_ACCESS_KEY)
-                    .secretKey(STATIC_SECRET_KEY)
-                    .build()));
-    when(serverProperties.getS3StaticCredentialTtl()).thenReturn(java.time.Duration.ofHours(1));
-
-    StsClient mockStsClient = Mockito.mock(StsClient.class);
-    StsClientBuilder mockBuilder = Mockito.mock(StsClientBuilder.class);
-
-    try (MockedStatic<StsClient> mockedStsClient = Mockito.mockStatic(StsClient.class)) {
-      mockedStsClient.when(StsClient::builder).thenReturn(mockBuilder);
-
-      AwsCredentialVendor awsCredentialVendor = new AwsCredentialVendor(serverProperties);
-      credentialsOperations = new CloudCredentialVendor(awsCredentialVendor, null, null);
-
-      TemporaryCredentials credentials =
-          vendCredential(S3_PATH, Set.of(CredentialContext.Privilege.SELECT));
-
-      assertThat(credentials.getAwsTempCredentials().getAccessKeyId()).isEqualTo(STATIC_ACCESS_KEY);
-      assertThat(credentials.getAwsTempCredentials().getSecretAccessKey())
-          .isEqualTo(STATIC_SECRET_KEY);
-      assertThat(credentials.getAwsTempCredentials().getSessionToken()).isNull();
-      assertThat(credentials.getExpirationTime()).isGreaterThan(System.currentTimeMillis());
-      verify(mockStsClient, Mockito.never()).assumeRole(any(AssumeRoleRequest.class));
-    }
-  }
-
-  @Test
   public void testVendStaticCredentialsByAccessKeyId() {
     final String S3_PATH = "s3://ontap-bucket/path/to/data";
     final String ACCESS_KEY_ID = "AKIA_MATCH";
@@ -444,13 +390,14 @@ public class CloudCredentialVendorTest {
   @Test
   public void testVendStaticCredentialsFailsWhenNotConfigured() {
     final String S3_PATH = "s3://ontap-bucket/path/to/data";
+    final String ACCESS_KEY_ID = "AKIA_UNKNOWN";
 
     CredentialDAO credentialDAO =
         CredentialDAO.from(
             new CreateCredentialRequest()
-                .name("static-credential")
+                .name("s3-access-key-credential")
                 .purpose(CredentialPurpose.STORAGE)
-                .awsIamRole(new AwsIamRoleRequest().roleArn("STATIC")),
+                .awsS3AccessKey(new AwsS3AccessKeyRequest().accessKeyId(ACCESS_KEY_ID)),
             "test-user");
 
     reset(externalLocationUtils);
@@ -462,15 +409,15 @@ public class CloudCredentialVendorTest {
     doReturn(S3StorageConfig.builder().build())
         .when(serverProperties)
         .getS3MasterRoleConfiguration();
-    when(serverProperties.isStaticRoleArn("STATIC")).thenReturn(true);
-    when(serverProperties.resolveS3StaticAccessKeyConfiguration(null)).thenReturn(Optional.empty());
+    when(serverProperties.resolveS3StaticAccessKeyConfiguration(ACCESS_KEY_ID))
+        .thenReturn(Optional.empty());
 
     AwsCredentialVendor awsCredentialVendor = new AwsCredentialVendor(serverProperties);
     credentialsOperations = new CloudCredentialVendor(awsCredentialVendor, null, null);
 
     assertThatThrownBy(() -> vendCredential(S3_PATH, Set.of(CredentialContext.Privilege.SELECT)))
         .isInstanceOf(BaseException.class)
-        .hasMessageContaining("Static S3 credentials are not configured")
+        .hasMessageContaining("No static S3 secret configured for access key id")
         .extracting(exception -> ((BaseException) exception).getErrorCode())
         .isEqualTo(ErrorCode.FAILED_PRECONDITION);
   }

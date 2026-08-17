@@ -178,8 +178,8 @@ expiration). The underlying key does not expire; rotate it in server configurati
 clients refreshing after the stamped TTL. The key is as broad as the storage account behind it —
 prefer one account (or key) per trust boundary.
 
-This path coexists with normal IAM-role credentials on the same server. A legacy compatibility
-shim still treats `aws_iam_role.role_arn=STATIC` as “use index 0”; prefer `aws_s3_access_key`.
+This path coexists with normal IAM-role credentials on the same server: a credential carries either
+`aws_iam_role` (vended through STS) or `aws_s3_access_key` (vended from server configuration).
 
 ## Security considerations
 
