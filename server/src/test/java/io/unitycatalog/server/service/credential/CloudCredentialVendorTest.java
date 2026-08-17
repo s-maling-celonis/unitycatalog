@@ -28,6 +28,7 @@ import io.unitycatalog.server.service.credential.gcp.StaticTestingCredentialGene
 import io.unitycatalog.server.service.credential.gcp.TestingCredentialGenerator;
 import io.unitycatalog.server.utils.NormalizedURL;
 import io.unitycatalog.server.utils.ServerProperties;
+import java.time.Duration;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -49,6 +50,8 @@ import software.amazon.awssdk.services.sts.model.StsException;
 
 @ExtendWith(MockitoExtension.class)
 public class CloudCredentialVendorTest {
+  private static final String STATIC_S3_PATH = "s3://ontap-bucket/path/to/data";
+
   @Mock ServerProperties serverProperties;
   @Mock ExternalLocationUtils externalLocationUtils;
   CloudCredentialVendor credentialsOperations;
@@ -347,18 +350,19 @@ public class CloudCredentialVendorTest {
     }
   }
 
-  @Test
-  public void testVendStaticCredentialsByAccessKeyId() {
-    final String S3_PATH = "s3://ontap-bucket/path/to/data";
-    final String ACCESS_KEY_ID = "AKIA_MATCH";
-    final String SECRET_KEY = "matchedSecret";
-
+  /**
+   * Points every path at an external location backed by a static S3 access-key credential, and
+   * stubs the two properties the {@link AwsCredentialVendor} constructor reads. Callers still stub
+   * {@code resolveS3StaticAccessKeyConfiguration} / {@code getS3StaticCredentialTtl} themselves,
+   * since not every scenario reaches them.
+   */
+  private void mockS3AccessKeyCredential(String accessKeyId) {
     CredentialDAO credentialDAO =
         CredentialDAO.from(
             new CreateCredentialRequest()
                 .name("s3-access-key-credential")
                 .purpose(CredentialPurpose.STORAGE)
-                .awsS3AccessKey(new AwsS3AccessKeyRequest().accessKeyId(ACCESS_KEY_ID)),
+                .awsS3AccessKey(new AwsS3AccessKeyRequest().accessKeyId(accessKeyId)),
             "test-user");
 
     reset(externalLocationUtils);
@@ -370,54 +374,113 @@ public class CloudCredentialVendorTest {
     doReturn(S3StorageConfig.builder().build())
         .when(serverProperties)
         .getS3MasterRoleConfiguration();
+  }
+
+  private void useStaticAwsCredentialVendor() {
+    credentialsOperations =
+        new CloudCredentialVendor(new AwsCredentialVendor(serverProperties), null, null);
+  }
+
+  @Test
+  public void testVendStaticCredentialsByAccessKeyId() {
+    final String ACCESS_KEY_ID = "AKIA_MATCH";
+    final String SECRET_KEY = "matchedSecret";
+
+    mockS3AccessKeyCredential(ACCESS_KEY_ID);
     when(serverProperties.resolveS3StaticAccessKeyConfiguration(ACCESS_KEY_ID))
         .thenReturn(
             Optional.of(
                 S3StorageConfig.builder().accessKey(ACCESS_KEY_ID).secretKey(SECRET_KEY).build()));
-    when(serverProperties.getS3StaticCredentialTtl()).thenReturn(java.time.Duration.ofHours(1));
-
-    AwsCredentialVendor awsCredentialVendor = new AwsCredentialVendor(serverProperties);
-    credentialsOperations = new CloudCredentialVendor(awsCredentialVendor, null, null);
+    when(serverProperties.getS3StaticCredentialTtl()).thenReturn(Duration.ofHours(1));
+    useStaticAwsCredentialVendor();
 
     TemporaryCredentials credentials =
-        vendCredential(S3_PATH, Set.of(CredentialContext.Privilege.SELECT));
+        vendCredential(STATIC_S3_PATH, Set.of(CredentialContext.Privilege.SELECT));
 
     assertThat(credentials.getAwsTempCredentials().getAccessKeyId()).isEqualTo(ACCESS_KEY_ID);
     assertThat(credentials.getAwsTempCredentials().getSecretAccessKey()).isEqualTo(SECRET_KEY);
+    // Stores without STS do not issue a session token.
+    assertThat(credentials.getAwsTempCredentials().getSessionToken()).isNull();
     assertThat(credentials.getExpirationTime()).isGreaterThan(System.currentTimeMillis());
   }
 
   @Test
+  public void testVendStaticCredentialsIncludesConfiguredSessionToken() {
+    final String ACCESS_KEY_ID = "AKIA_WITH_TOKEN";
+    final String SECRET_KEY = "matchedSecret";
+    final String SESSION_TOKEN = "configuredSessionToken";
+
+    mockS3AccessKeyCredential(ACCESS_KEY_ID);
+    when(serverProperties.resolveS3StaticAccessKeyConfiguration(ACCESS_KEY_ID))
+        .thenReturn(
+            Optional.of(
+                S3StorageConfig.builder()
+                    .accessKey(ACCESS_KEY_ID)
+                    .secretKey(SECRET_KEY)
+                    .sessionToken(SESSION_TOKEN)
+                    .build()));
+    when(serverProperties.getS3StaticCredentialTtl()).thenReturn(Duration.ofHours(1));
+    useStaticAwsCredentialVendor();
+
+    TemporaryCredentials credentials =
+        vendCredential(STATIC_S3_PATH, Set.of(CredentialContext.Privilege.SELECT));
+
+    assertThat(credentials.getAwsTempCredentials().getAccessKeyId()).isEqualTo(ACCESS_KEY_ID);
+    assertThat(credentials.getAwsTempCredentials().getSecretAccessKey()).isEqualTo(SECRET_KEY);
+    assertThat(credentials.getAwsTempCredentials().getSessionToken()).isEqualTo(SESSION_TOKEN);
+  }
+
+  @Test
+  public void testVendStaticCredentialsStampsConfiguredTtl() {
+    final String ACCESS_KEY_ID = "AKIA_TTL";
+    final Duration TTL = Duration.ofMinutes(7);
+
+    mockS3AccessKeyCredential(ACCESS_KEY_ID);
+    when(serverProperties.resolveS3StaticAccessKeyConfiguration(ACCESS_KEY_ID))
+        .thenReturn(
+            Optional.of(
+                S3StorageConfig.builder().accessKey(ACCESS_KEY_ID).secretKey("secret").build()));
+    when(serverProperties.getS3StaticCredentialTtl()).thenReturn(TTL);
+    useStaticAwsCredentialVendor();
+
+    long before = System.currentTimeMillis();
+    TemporaryCredentials credentials =
+        vendCredential(STATIC_S3_PATH, Set.of(CredentialContext.Privilege.SELECT));
+    long after = System.currentTimeMillis();
+
+    // The soft expiry is stamped as now + the configured TTL, not a hardcoded lifetime.
+    assertThat(credentials.getExpirationTime())
+        .isBetween(before + TTL.toMillis(), after + TTL.toMillis());
+  }
+
+  @Test
   public void testVendStaticCredentialsFailsWhenNotConfigured() {
-    final String S3_PATH = "s3://ontap-bucket/path/to/data";
     final String ACCESS_KEY_ID = "AKIA_UNKNOWN";
 
-    CredentialDAO credentialDAO =
-        CredentialDAO.from(
-            new CreateCredentialRequest()
-                .name("s3-access-key-credential")
-                .purpose(CredentialPurpose.STORAGE)
-                .awsS3AccessKey(new AwsS3AccessKeyRequest().accessKeyId(ACCESS_KEY_ID)),
-            "test-user");
-
-    reset(externalLocationUtils);
-    doReturn(Optional.of(credentialDAO))
-        .when(externalLocationUtils)
-        .getExternalLocationCredentialDaoForPath(any());
-
-    when(serverProperties.getS3Configurations()).thenReturn(Map.of());
-    doReturn(S3StorageConfig.builder().build())
-        .when(serverProperties)
-        .getS3MasterRoleConfiguration();
+    mockS3AccessKeyCredential(ACCESS_KEY_ID);
     when(serverProperties.resolveS3StaticAccessKeyConfiguration(ACCESS_KEY_ID))
         .thenReturn(Optional.empty());
+    useStaticAwsCredentialVendor();
 
-    AwsCredentialVendor awsCredentialVendor = new AwsCredentialVendor(serverProperties);
-    credentialsOperations = new CloudCredentialVendor(awsCredentialVendor, null, null);
-
-    assertThatThrownBy(() -> vendCredential(S3_PATH, Set.of(CredentialContext.Privilege.SELECT)))
+    assertThatThrownBy(
+            () -> vendCredential(STATIC_S3_PATH, Set.of(CredentialContext.Privilege.SELECT)))
         .isInstanceOf(BaseException.class)
         .hasMessageContaining("No static S3 secret configured for access key id")
+        .hasMessageContaining("s3.static.secretKey." + ACCESS_KEY_ID)
+        .extracting(exception -> ((BaseException) exception).getErrorCode())
+        .isEqualTo(ErrorCode.FAILED_PRECONDITION);
+  }
+
+  @Test
+  public void testVendStaticCredentialsFailsWhenCredentialHasNoAccessKeyId() {
+    // Rejected by the API on create/update, so only reachable through a hand-edited row.
+    mockS3AccessKeyCredential("");
+    useStaticAwsCredentialVendor();
+
+    assertThatThrownBy(
+            () -> vendCredential(STATIC_S3_PATH, Set.of(CredentialContext.Privilege.SELECT)))
+        .isInstanceOf(BaseException.class)
+        .hasMessageContaining("Storage credential has no S3 access key id")
         .extracting(exception -> ((BaseException) exception).getErrorCode())
         .isEqualTo(ErrorCode.FAILED_PRECONDITION);
   }
