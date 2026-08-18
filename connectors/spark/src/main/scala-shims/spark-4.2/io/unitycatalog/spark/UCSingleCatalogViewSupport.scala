@@ -14,7 +14,7 @@ import org.apache.spark.sql.connector.catalog.{
  * `UCSingleCatalog` and resolved per Spark version via the `scala-shims/spark-X.Y/`
  * directory mechanism (see `project/CrossSparkVersions.scala`):
  *
- *   - `scala-shims/spark-4.1/io/unitycatalog/spark/UCSingleCatalogViewSupport.scala`: empty trait
+ *   - `scala-shims/spark-4.0-4.1/io/unitycatalog/spark/UCSingleCatalogViewSupport.scala`: empty trait
  *   - this file (`scala-shims/spark-4.2/...`): real impl
  *
  * The trait is self-typed against [[UCSingleCatalog]] so it can read the catalog's

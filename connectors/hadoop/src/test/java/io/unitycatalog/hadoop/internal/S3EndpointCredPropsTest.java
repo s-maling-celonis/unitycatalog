@@ -9,6 +9,7 @@ import io.unitycatalog.hadoop.UCCredentialHadoopConfs;
 import io.unitycatalog.hadoop.internal.auth.AwsCredential;
 import io.unitycatalog.hadoop.internal.auth.GenericCredential;
 import io.unitycatalog.hadoop.internal.auth.GenericCredentialFetcher;
+import java.util.List;
 import java.util.Map;
 import org.apache.hadoop.conf.Configuration;
 import org.junit.jupiter.api.AfterEach;
@@ -89,7 +90,7 @@ class S3EndpointCredPropsTest {
   private static GenericCredentialFetcher fetcher(GenericCredential cred) {
     GenericCredentialFetcher api = mock(GenericCredentialFetcher.class);
     try {
-      when(api.createCredential()).thenReturn(cred);
+      when(api.createCredentials()).thenReturn(List.of(cred));
     } catch (Exception e) {
       throw new RuntimeException(e);
     }

@@ -61,7 +61,6 @@ public class TableRepository {
   private static final Logger LOGGER = LoggerFactory.getLogger(TableRepository.class);
   private final SessionFactory sessionFactory;
   private final Repositories repositories;
-  private final FileOperations fileOperations;
   private final ServerProperties serverProperties;
   private static final PagedListingHelper<TableInfoDAO> LISTING_HELPER =
       new PagedListingHelper<>(TableInfoDAO.class);
@@ -70,7 +69,6 @@ public class TableRepository {
       Repositories repositories, SessionFactory sessionFactory, ServerProperties serverProperties) {
     this.repositories = repositories;
     this.sessionFactory = sessionFactory;
-    this.fileOperations = repositories.getFileOperations();
     this.serverProperties = serverProperties;
   }
 
@@ -745,10 +743,12 @@ public class TableRepository {
           session.persist(tableInfoDAO);
           if (RepositoryUtils.isViewLike(tableType.getValue())) {
             DependencyDAO.DependentType dependentType = DependencyDAO.DependentType.TABLE;
+            // view_dependencies is optional (see validateViewLike); treat an absent list as empty.
             List<DependencyDAO> depDAOs =
-                createTable.getViewDependencies().getDependencies().stream()
+                Optional.ofNullable(createTable.getViewDependencies())
+                    .map(DependencyList::getDependencies).orElse(List.of()).stream()
                     .map(dep -> DependencyDAO.from(dep, tableUUID, dependentType))
-                    .collect(Collectors.toList());
+                    .toList();
             repositories
                 .getDependencyRepository()
                 .createDependencies(session, tableUUID, dependentType, depDAOs);
@@ -768,7 +768,11 @@ public class TableRepository {
 
   private void validateMetricView(Session session, CreateTable createTable) {
     validateViewLike(session, createTable, "metric view");
-    if (createTable.getViewDependencies().getDependencies().isEmpty()) {
+    // A metric view's dependencies are always client-supplied; require at least one.
+    if (Optional.ofNullable(createTable.getViewDependencies())
+        .map(DependencyList::getDependencies)
+        .orElse(List.of())
+        .isEmpty()) {
       throw new BaseException(
           ErrorCode.INVALID_ARGUMENT,
           "view_dependencies must contain at least one entry for metric view");
@@ -784,10 +788,14 @@ public class TableRepository {
       throw new BaseException(
           ErrorCode.INVALID_ARGUMENT, "view_definition is required for " + entityLabel);
     }
+    // view_dependencies is optional here (shared by view + metric view):
+    //  - a plain view may omit it (e.g. the Spark connector sends null when it cannot derive
+    //    lineage from the view text).
+    //  - metric views DO require it, enforced by the validateMetricView caller, not here.
+    // When present, every listed dependency must resolve to an existing table/function.
     DependencyList viewDeps = createTable.getViewDependencies();
     if (viewDeps == null || viewDeps.getDependencies() == null) {
-      throw new BaseException(
-          ErrorCode.INVALID_ARGUMENT, "view_dependencies is required for " + entityLabel);
+      return;
     }
     List<DependencyDAO> depDAOs =
         viewDeps.getDependencies().stream()
@@ -966,5 +974,43 @@ public class TableRepository {
         .forEach(session::remove);
     session.remove(tableInfoDAO);
     return tableInfoDAO;
+  }
+
+  /**
+   * Renames a table within the same schema. Looks up the source table by its three-part name
+   * (throwing {@link ErrorCode#TABLE_NOT_FOUND} if absent) and rejects a collision with an existing
+   * table of the target name in the same schema (throwing {@link ErrorCode#TABLE_ALREADY_EXISTS}).
+   * Renaming a table to its current name is an idempotent no-op. Metadata-only: the table UUID,
+   * schema, and storage location are all unchanged.
+   */
+  public void renameTable(String catalog, String schema, String table, String newName) {
+    ValidationUtils.validateSqlObjectName(newName);
+    String callerId = IdentityUtils.findPrincipalEmailAddress();
+    TransactionManager.executeWithTransaction(
+        sessionFactory,
+        session -> {
+          UUID schemaId =
+              repositories.getSchemaRepository().getSchemaIdOrThrow(session, catalog, schema);
+          TableInfoDAO tableInfoDAO = findBySchemaIdAndName(session, schemaId, table);
+          if (tableInfoDAO == null) {
+            throw new BaseException(ErrorCode.TABLE_NOT_FOUND, "Table not found: " + table);
+          }
+          // Do the no-op check after the table lookup. A missing table must still return
+          // TABLE_NOT_FOUND rather than succeed as a no-op.
+          if (table.equals(newName)) {
+            return null;
+          }
+          if (findBySchemaIdAndName(session, schemaId, newName) != null) {
+            throw new BaseException(
+                ErrorCode.TABLE_ALREADY_EXISTS, "Table already exists: " + newName);
+          }
+          tableInfoDAO.setName(newName);
+          tableInfoDAO.setUpdatedAt(new Date());
+          tableInfoDAO.setUpdatedBy(callerId);
+          session.merge(tableInfoDAO);
+          return null;
+        },
+        "Failed to rename table " + catalog + "." + schema + "." + table,
+        /* readOnly = */ false);
   }
 }

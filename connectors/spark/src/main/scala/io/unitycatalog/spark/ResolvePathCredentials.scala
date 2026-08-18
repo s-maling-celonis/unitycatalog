@@ -45,6 +45,10 @@ import scala.collection.JavaConverters._
  * When UC cannot vend credentials for a path (not managed by UC, no permission, etc.), the plan
  * node is left unchanged so Spark can use ambient storage credentials (e.g.
  * `spark.hadoop.fs.s3a.*`, instance profile) configured on the session.
+ *
+ * Bare `delta.`path`` cloud relations are excluded: Delta's analysis path does not propagate
+ * relation options into `DeltaLog`, so vended credentials would not reach execution and can
+ * interfere with ambient credentials. Delta bare-path support is tracked separately.
  */
 case class ResolvePathCredentials(spark: SparkSession) extends Rule[LogicalPlan] {
 
@@ -57,8 +61,7 @@ case class ResolvePathCredentials(spark: SparkSession) extends Rule[LogicalPlan]
       case Some(uc) =>
         plan.resolveOperators {
           // Bare `format`.`<cloud path>` — used for reads and in query FROM clauses.
-          case u: UnresolvedRelation
-              if u.multipartIdentifier.length == 2 && isCloudPath(u.multipartIdentifier.last) =>
+          case u: UnresolvedRelation if isEligibleBarePathRelation(u) =>
             injectUnresolvedRelationCredentials(u, uc)
 
           // `InsertIntoStatement.table` is not a tree child (only `query` is), so the generic
@@ -68,15 +71,15 @@ case class ResolvePathCredentials(spark: SparkSession) extends Rule[LogicalPlan]
           // time and kept for future Spark versions.
           case i: InsertIntoStatement =>
             i.table match {
-              case u: UnresolvedRelation
-                  if u.multipartIdentifier.length == 2 &&
-                    isCloudPath(u.multipartIdentifier.last) =>
+              case u: UnresolvedRelation if isEligibleBarePathRelation(u) =>
                 i.copy(table = injectUnresolvedRelationCredentials(u, uc))
               case _ => i
             }
 
           // Write: INSERT OVERWRITE DIRECTORY '<cloud path>' USING <format> ...
-          case i: InsertIntoDir if i.storage.locationUri.exists(u => isCloudPath(u.toString)) =>
+          case i: InsertIntoDir
+              if !isDeltaProvider(i.provider) &&
+                i.storage.locationUri.exists(u => isCloudPath(u.toString)) =>
             val location = i.storage.locationUri.get.toString
             val conf =
               uc.vendPathCredentialConfOrEmpty(
@@ -117,11 +120,21 @@ case class ResolvePathCredentials(spark: SparkSession) extends Rule[LogicalPlan]
 object ResolvePathCredentials {
 
   /**
-   * URI schemes for which UC can vend credentials. These match the schemes UC external locations
-   * are registered with and the ones [[UCCredentialHadoopConfs]] understands; other schemes (local
-   * paths, `s3a`, HDFS, ...) are left untouched.
+   * URI schemes for which UC can vend credentials. These match [[CloudType]] (including Hadoop's
+   * `s3a://` alias for S3). UC external locations and the path-credentials API use canonical
+   * `s3://` URLs; [[UCSingleCatalog.vendPathCredentialConf]] rewrites `s3a://` for lookup only.
    */
-  private val CLOUD_SCHEMES = Set("s3", "gs", "abfs", "abfss")
+  private val CLOUD_SCHEMES = Set("s3", "s3a", "gs", "abfs", "abfss")
+
+  private def isDeltaProvider(provider: Option[String]): Boolean =
+    provider.exists(_.equalsIgnoreCase("delta"))
+
+  /** True for bare `format.`cloud-path`` relations that should receive UC path credentials. */
+  private def isEligibleBarePathRelation(relation: UnresolvedRelation): Boolean = {
+    relation.multipartIdentifier.length == 2 &&
+    !isDeltaProvider(Some(relation.multipartIdentifier.head)) &&
+    isCloudPath(relation.multipartIdentifier.last)
+  }
 
   /** True when `pathStr` is an absolute URI whose scheme is one UC can vend credentials for. */
   private def isCloudPath(pathStr: String): Boolean = {

@@ -5,14 +5,16 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 
+import io.unitycatalog.hadoop.internal.CredentialUtil;
 import io.unitycatalog.hadoop.internal.UCHadoopConfConstants;
-import io.unitycatalog.hadoop.internal.id.CredId;
-import io.unitycatalog.hadoop.internal.id.TableCredId;
+import io.unitycatalog.hadoop.internal.id.FileSystemCredId;
 import io.unitycatalog.hadoop.internal.util.MapIdGenerator;
 import java.net.URI;
+import java.util.List;
 import java.util.Map;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileSystem;
+import org.apache.hadoop.fs.RawLocalFileSystem;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
@@ -56,6 +58,12 @@ class CredScopedFileSystemCacheTest {
     return conf;
   }
 
+  private static void setCredPrefixes(Configuration conf, String... prefixes) {
+    conf.setStrings(
+        UCHadoopConfConstants.UC_CREDENTIAL_PREFIXES_KEY,
+        CredentialUtil.encodeCredPrefixes(List.of(prefixes)));
+  }
+
   @Test
   void sameScopeReusesSameDelegate() throws Exception {
     URI uri = new URI("file:///tmp");
@@ -68,11 +76,42 @@ class CredScopedFileSystemCacheTest {
   }
 
   @Test
+  void noCredentialRequestUsesDefaultFilesystemWithoutUcProvider() throws Exception {
+    Configuration conf = new Configuration(false);
+    conf.set("fs.file.impl", RawLocalFileSystem.class.getName());
+    conf.setBoolean("fs.file.impl.disable.cache", true);
+
+    CredScopedFileSystem fsA = init(new URI("file:///tmp/a"), conf);
+    CredScopedFileSystem fsB = init(new URI("file:///tmp/b"), conf);
+
+    assertThat(fsA.getDelegate()).isInstanceOf(RawLocalFileSystem.class);
+    assertThat(fsA.getDelegate()).isSameAs(fsB.getDelegate());
+    assertThat(fsA.getDelegate().getConf().get(UCHadoopConfConstants.UC_CREDENTIALS_TYPE_KEY))
+        .isNull();
+    assertThat(fsA.getDelegate().getConf().get(UCHadoopConfConstants.S3A_CREDENTIALS_PROVIDER))
+        .isNull();
+  }
+
+  @Test
   void differentScopeGetsDifferentDelegate() throws Exception {
     URI uri = new URI("file:///tmp");
 
     CredScopedFileSystem fsRead = init(uri, tableConf("tid-1", "READ"));
     CredScopedFileSystem fsWrite = init(uri, tableConf("tid-1", "WRITE"));
+
+    assertThat(fsRead.getDelegate()).isNotSameAs(fsWrite.getDelegate());
+  }
+
+  @Test
+  void differentScopeSamePrefixGetsDifferentDelegate() throws Exception {
+    URI uri = new URI("file:///tmp");
+    Configuration confRead = tableConf("tid-1", "READ");
+    setCredPrefixes(confRead, "file:///tmp/a");
+    Configuration confWrite = tableConf("tid-1", "WRITE");
+    setCredPrefixes(confWrite, "file:///tmp/a");
+
+    CredScopedFileSystem fsRead = init(uri, confRead);
+    CredScopedFileSystem fsWrite = init(uri, confWrite);
 
     assertThat(fsRead.getDelegate()).isNotSameAs(fsWrite.getDelegate());
   }
@@ -88,9 +127,65 @@ class CredScopedFileSystemCacheTest {
   }
 
   @Test
+  void sameScopeDifferentPrefixGetsDifferentDelegate() throws Exception {
+    URI uri = new URI("file:///tmp");
+    Configuration confA = tableConf("tid-1", "READ");
+    setCredPrefixes(confA, "file:///tmp/a");
+    Configuration confB = tableConf("tid-1", "READ");
+    setCredPrefixes(confB, "file:///tmp/b");
+
+    CredScopedFileSystem fsA = init(uri, confA);
+    CredScopedFileSystem fsB = init(uri, confB);
+
+    assertThat(fsA.getDelegate()).isNotSameAs(fsB.getDelegate());
+  }
+
+  @Test
+  void sameScopeSamePrefixReusesSameDelegate() throws Exception {
+    URI uri = new URI("file:///tmp");
+    Configuration conf = tableConf("tid-1", "READ");
+    setCredPrefixes(conf, "file:///tmp/a");
+
+    CredScopedFileSystem fs1 = init(uri, conf);
+    CredScopedFileSystem fs2 = init(uri, conf);
+
+    assertThat(fs1.getDelegate()).isSameAs(fs2.getDelegate());
+  }
+
+  @Test
+  void differentlyFormattedPrefixesGetDifferentDelegates() throws Exception {
+    URI uri = new URI("file:///tmp");
+    Configuration confA = tableConf("tid-1", "READ");
+    setCredPrefixes(confA, "file:///tmp/a");
+    Configuration confB = tableConf("tid-1", "READ");
+    setCredPrefixes(confB, "file:///tmp/a/");
+
+    CredScopedFileSystem fsA = init(uri, confA);
+    CredScopedFileSystem fsB = init(uri, confB);
+
+    assertThat(fsA.getDelegate()).isNotSameAs(fsB.getDelegate());
+  }
+
+  @Test
+  void multiCredSelectionDeterminesDelegateIdentity() throws Exception {
+    Configuration conf = tableConf("tid-1", "READ");
+    conf.setStrings(
+        UCHadoopConfConstants.UC_CREDENTIAL_PREFIXES_KEY,
+        CredentialUtil.encodeCredPrefixes(List.of("file:///tmp/a", "file:///tmp/b")));
+
+    // URIs covered by the same credential resolve to one delegate; different ones do not.
+    CredScopedFileSystem fsA1 = init(new URI("file:///tmp/a/one"), conf);
+    CredScopedFileSystem fsA2 = init(new URI("file:///tmp/a/two"), conf);
+    CredScopedFileSystem fsB = init(new URI("file:///tmp/b/one"), conf);
+
+    assertThat(fsA1.getDelegate()).isSameAs(fsA2.getDelegate());
+    assertThat(fsA1.getDelegate()).isNotSameAs(fsB.getDelegate());
+  }
+
+  @Test
   void evictedEntryClosesCachedDelegate() throws Exception {
     FileSystem mockFs = mock(FileSystem.class);
-    CredId key = new TableCredId(EMPTY_CRED_CONTEXT_ID, "tid-evict", "READ");
+    FileSystemCredId key = FileSystemCredId.create(tableConf("tid-evict", "READ"));
     CredScopedFileSystem.CACHE.put(key, mockFs);
 
     CredScopedFileSystem.clearCacheForTesting();

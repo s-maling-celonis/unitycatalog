@@ -11,6 +11,10 @@ import java.util.Map;
 import java.util.Properties;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.ReadWriteLock;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 import org.apache.commons.io.IOUtils;
 import org.casbin.adapter.JDBCAdapter;
@@ -32,13 +36,19 @@ import org.slf4j.LoggerFactory;
  * and policy mutations.
  *
  * <p>{@link CasbinPolicyRefresher} polls the shared {@code casbin_rule} table so grants and
- * revocations made through other instances are picked up.
+ * revocations made through other instances are picked up. Reload builds a fresh enforcer and swaps
+ * it under the exclusive side of {@code reloadLock} so {@code enforce()} keeps using the previous
+ * instance. Local writes take the shared side so they are not lost across the swap, but do not wait
+ * for each other.
  */
 public class JCasbinAuthorizer implements UnityCatalogAuthorizer, AutoCloseable {
 
   private static final Logger LOGGER = LoggerFactory.getLogger(JCasbinAuthorizer.class);
 
-  private final SyncedEnforcer enforcer;
+  private final AtomicReference<SyncedEnforcer> current = new AtomicReference<>();
+  final ReadWriteLock reloadLock = new ReentrantReadWriteLock();
+  private final JDBCAdapter adapter;
+  private final String modelText;
   private final CasbinPolicyRefresher refresher;
   private final long refreshDebounceNanos;
 
@@ -62,23 +72,20 @@ public class JCasbinAuthorizer implements UnityCatalogAuthorizer, AutoCloseable 
     String url = properties.getProperty("hibernate.connection.url");
     String user = resolveConnectionUsername(properties);
     String password = properties.getProperty("hibernate.connection.password");
-    JDBCAdapter adapter = new JDBCAdapter(driver, url, user, password);
+    this.adapter = new JDBCAdapter(driver, url, user, password);
 
     InputStream modelStream = this.getClass().getResourceAsStream("/jcasbin_auth_model.conf");
-    String string = IOUtils.toString(modelStream, StandardCharsets.UTF_8);
-    Model model = new Model();
-    model.loadModelFromText(string);
-
-    enforcer = new SyncedEnforcer(model, adapter);
-    enforcer.enableAutoSave(true);
+    this.modelText = IOUtils.toString(modelStream, StandardCharsets.UTF_8);
+    current.set(newEnforcer());
 
     this.refreshDebounceNanos = serverProperties.getPolicyRefreshDebounce().toNanos();
     this.refreshEnabled = serverProperties.isPolicyRefreshEnabled();
-    this.refresher = new CasbinPolicyRefresher(enforcer, hibernateConfigurator.getSessionFactory());
+    this.refresher =
+        new CasbinPolicyRefresher(this::reloadFromStore, hibernateConfigurator.getSessionFactory());
     if (refreshEnabled) {
       refresher.start(serverProperties.getPolicyRefreshInterval());
     } else {
-      LOGGER.warn(
+      LOGGER.info(
           "Casbin policy refresh is disabled. Authorization changes made through another server"
               + " instance will not be seen by this one, so running more than one instance against"
               + " this database is unsafe.");
@@ -103,48 +110,95 @@ public class JCasbinAuthorizer implements UnityCatalogAuthorizer, AutoCloseable 
     return username;
   }
 
+  private SyncedEnforcer live() {
+    return current.get();
+  }
+
+  private SyncedEnforcer newEnforcer() {
+    Model model = new Model();
+    model.loadModelFromText(modelText);
+    SyncedEnforcer enforcer = new SyncedEnforcer(model, adapter);
+    enforcer.enableAutoSave(true);
+    return enforcer;
+  }
+
+  /**
+   * Rebuilds policy from {@code casbin_rule} on a new enforcer and swaps it in. Holds the exclusive
+   * lock for the whole load so local grants are not applied to the outgoing instance.
+   */
+  void reloadFromStore() {
+    reloadLock.writeLock().lock();
+    try {
+      current.set(newEnforcer());
+    } finally {
+      reloadLock.writeLock().unlock();
+    }
+  }
+
+  /**
+   * Runs a policy mutation on the live enforcer.
+   *
+   * <p>Takes the <em>read</em> side of {@code reloadLock} on purpose: many grants may proceed
+   * together (SyncedEnforcer still serializes mutations on one instance), while reload takes the
+   * write side so a mutation cannot land on an enforcer that is about to be discarded. The lock
+   * names refer to the live-enforcer pointer, not to Casbin read vs write.
+   */
+  private <T> T mutate(Function<SyncedEnforcer, T> action) {
+    reloadLock.readLock().lock();
+    try {
+      return action.apply(live());
+    } finally {
+      reloadLock.readLock().unlock();
+    }
+  }
+
   @Override
   public boolean grantAuthorization(UUID principal, UUID resource, Privileges action) {
-    return enforcer.addPolicy(principal.toString(), resource.toString(), action.toString());
+    return mutate(e -> e.addPolicy(principal.toString(), resource.toString(), action.toString()));
   }
 
   @Override
   public boolean revokeAuthorization(UUID principal, UUID resource, Privileges action) {
-    return enforcer.removePolicy(principal.toString(), resource.toString(), action.toString());
+    return mutate(
+        e -> e.removePolicy(principal.toString(), resource.toString(), action.toString()));
   }
 
   @Override
   public boolean clearAuthorizationsForPrincipal(UUID principal) {
-    return enforcer.removeFilteredPolicy(PRINCIPAL_INDEX, principal.toString());
+    return mutate(e -> e.removeFilteredPolicy(PRINCIPAL_INDEX, principal.toString()));
   }
 
   @Override
   public boolean clearAuthorizationsForResource(UUID resource) {
-    return enforcer.removeFilteredPolicy(RESOURCE_INDEX, resource.toString());
+    return mutate(e -> e.removeFilteredPolicy(RESOURCE_INDEX, resource.toString()));
   }
 
   @Override
   public boolean addHierarchyChild(UUID parent, UUID child) {
-    return enforcer.addNamedGroupingPolicy(HIERARCHY_POLICY, parent.toString(), child.toString());
+    return mutate(
+        e -> e.addNamedGroupingPolicy(HIERARCHY_POLICY, parent.toString(), child.toString()));
   }
 
   @Override
   public boolean removeHierarchyChild(UUID parent, UUID child) {
-    return enforcer.removeNamedGroupingPolicy(
-        HIERARCHY_POLICY, parent.toString(), child.toString());
+    return mutate(
+        e -> e.removeNamedGroupingPolicy(HIERARCHY_POLICY, parent.toString(), child.toString()));
   }
 
   @Override
   public boolean removeHierarchyChildren(UUID resource) {
-    return enforcer.removeFilteredNamedGroupingPolicy(
-        HIERARCHY_POLICY, HIERARCHY_PARENT_INDEX, resource.toString());
+    return mutate(
+        e ->
+            e.removeFilteredNamedGroupingPolicy(
+                HIERARCHY_POLICY, HIERARCHY_PARENT_INDEX, resource.toString()));
   }
 
   @Override
   public UUID getHierarchyParent(UUID resource) {
     List<List<String>> policy =
-        enforcer.getFilteredNamedGroupingPolicy(
-            HIERARCHY_POLICY, HIERARCHY_CHILD_INDEX, resource.toString());
+        live()
+            .getFilteredNamedGroupingPolicy(
+                HIERARCHY_POLICY, HIERARCHY_CHILD_INDEX, resource.toString());
     if (policy.isEmpty() || policy.get(0).isEmpty()) {
       return null;
     }
@@ -153,11 +207,12 @@ public class JCasbinAuthorizer implements UnityCatalogAuthorizer, AutoCloseable 
 
   @Override
   public boolean authorize(UUID principal, UUID resource, Privileges action) {
-    return enforcer.enforce(principal.toString(), resource.toString(), action.toString());
+    return live().enforce(principal.toString(), resource.toString(), action.toString());
   }
 
   @Override
   public boolean authorizeAny(UUID principal, UUID resource, Privileges... actions) {
+    SyncedEnforcer enforcer = live();
     return Arrays.stream(actions)
         .anyMatch(
             action ->
@@ -166,6 +221,7 @@ public class JCasbinAuthorizer implements UnityCatalogAuthorizer, AutoCloseable 
 
   @Override
   public boolean authorizeAll(UUID principal, UUID resource, Privileges... actions) {
+    SyncedEnforcer enforcer = live();
     return Arrays.stream(actions)
         .allMatch(
             action ->
@@ -175,7 +231,7 @@ public class JCasbinAuthorizer implements UnityCatalogAuthorizer, AutoCloseable 
   @Override
   public List<Privileges> listAuthorizations(UUID principal, UUID resource) {
     List<List<String>> list =
-        enforcer.getPermissionsForUserInDomain(principal.toString(), resource.toString());
+        live().getPermissionsForUserInDomain(principal.toString(), resource.toString());
     return list.stream()
         .map(l -> l.get(PRIVILEGE_INDEX))
         .map(Privileges::fromValue)
@@ -184,7 +240,7 @@ public class JCasbinAuthorizer implements UnityCatalogAuthorizer, AutoCloseable 
 
   @Override
   public Map<UUID, List<Privileges>> listAuthorizations(UUID resource) {
-    return enforcer.getFilteredPolicy(RESOURCE_INDEX, resource.toString()).stream()
+    return live().getFilteredPolicy(RESOURCE_INDEX, resource.toString()).stream()
         .collect(
             Collectors.groupingBy(
                 l -> UUID.fromString(l.get(PRINCIPAL_INDEX)),
@@ -192,7 +248,11 @@ public class JCasbinAuthorizer implements UnityCatalogAuthorizer, AutoCloseable 
                     l -> Privileges.fromValue(l.get(PRIVILEGE_INDEX)), Collectors.toList())));
   }
 
-  /** Rate-limited reload before returning 403, for cross-instance create-then-read. */
+  /**
+   * Rate-limited policy check before returning 403, for cross-instance create-then-read.
+   *
+   * @return true if the live enforcer was replaced (by this call or a coalesced concurrent check)
+   */
   @Override
   public boolean refreshAuthorizations() {
     if (!refreshEnabled) {
@@ -206,8 +266,9 @@ public class JCasbinAuthorizer implements UnityCatalogAuthorizer, AutoCloseable 
     if (!lastRefreshNanos.compareAndSet(last, now)) {
       return false;
     }
-    refresher.forceReload();
-    return true;
+    SyncedEnforcer before = live();
+    refresher.checkAndReload();
+    return live() != before;
   }
 
   @Override

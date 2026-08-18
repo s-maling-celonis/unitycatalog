@@ -5,7 +5,10 @@ import static io.unitycatalog.server.utils.TestUtils.SCHEMA_NAME;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import io.unitycatalog.client.model.CreateCatalog;
 import io.unitycatalog.spark.utils.OptionsUtil;
+import java.util.List;
+import lombok.SneakyThrows;
 import org.apache.spark.sql.SparkSession;
 import org.junit.jupiter.api.Test;
 
@@ -36,6 +39,13 @@ public class UCViewDDLIntegrationTest extends AbstractViewReadIntegrationTest {
               .config(catalogConf + "." + OptionsUtil.WAREHOUSE, catalog)
               .config(catalogConf + "." + OptionsUtil.RENEW_CREDENTIAL_ENABLED, true)
               .config(catalogConf + "." + OptionsUtil.CRED_SCOPED_FS_ENABLED, true);
+      if (!List.of(SPARK_CATALOG, CATALOG_NAME).contains(catalog)) {
+        createExtraCatalog(catalog);
+      }
+    }
+    if (!List.of(catalogs).contains(SPARK_CATALOG)) {
+      builder.config(
+          "spark.sql.catalog." + SPARK_CATALOG, "org.apache.spark.sql.delta.catalog.DeltaCatalog");
     }
     builder.config("spark.hadoop.fs.s3.impl", S3CredentialTestFileSystem.class.getName());
     builder.config("spark.hadoop.fs.gs.impl", GCSCredentialTestFileSystem.class.getName());
@@ -45,14 +55,21 @@ public class UCViewDDLIntegrationTest extends AbstractViewReadIntegrationTest {
 
   @Override
   protected void createView() {
-    sql("CREATE VIEW %s AS %s", VIEW_FULL_NAME, VIEW_QUERY);
+    sql(
+        "CREATE VIEW %s (%s) AS %s",
+        VIEW_FULL_NAME, String.join(", ", DECLARED_COLUMNS), VIEW_QUERY);
+  }
+
+  @Override
+  protected void dropView() {
+    sql("DROP VIEW IF EXISTS %s", VIEW_FULL_NAME);
   }
 
   @Test
   public void testCreateViewSqlBypassesMissingCatalogViewsAbility() {
     session = createSparkSessionWithCatalogs(CATALOG_NAME);
     // Would fail with MISSING_CATALOG_ABILITY.VIEWS without parser-time ResolveUcViewDdlInParser.
-    sql("CREATE VIEW %s AS %s", VIEW_FULL_NAME, VIEW_QUERY);
+    sql("CREATE VIEW %s AS SELECT 1 AS c", VIEW_FULL_NAME);
     assertThat(sql("SHOW VIEWS IN %s.%s", CATALOG_NAME, SCHEMA_NAME))
         .anyMatch(row -> VIEW_NAME.equals(row.getString(1)));
   }
@@ -71,7 +88,7 @@ public class UCViewDDLIntegrationTest extends AbstractViewReadIntegrationTest {
   @Test
   public void testCreateViewIfNotExistsPreservesExistingView() {
     session = createSparkSessionWithCatalogs(CATALOG_NAME);
-    sql("CREATE VIEW %s AS %s", VIEW_FULL_NAME, VIEW_QUERY);
+    sql("CREATE VIEW %s AS SELECT 1 AS c", VIEW_FULL_NAME);
     sql("CREATE VIEW IF NOT EXISTS %s AS SELECT 2 AS c", VIEW_FULL_NAME);
     assertThat(sql("SELECT * FROM %s", VIEW_FULL_NAME))
         .extracting(row -> row.getInt(0))
@@ -98,12 +115,19 @@ public class UCViewDDLIntegrationTest extends AbstractViewReadIntegrationTest {
   @Test
   public void testCreateOrReplaceViewRejectsWithoutDroppingExistingView() {
     session = createSparkSessionWithCatalogs(CATALOG_NAME);
-    sql("CREATE VIEW %s AS %s", VIEW_FULL_NAME, VIEW_QUERY);
+    sql("CREATE VIEW %s AS SELECT 1 AS c", VIEW_FULL_NAME);
     assertThatThrownBy(
             () -> sql("CREATE OR REPLACE VIEW %s AS SELECT 2 AS c", VIEW_FULL_NAME))
         .hasMessageContaining("no atomic view-replacement API");
     assertThat(sql("SELECT * FROM %s", VIEW_FULL_NAME))
         .extracting(row -> row.getInt(0))
         .containsExactly(1);
+  }
+
+  @SneakyThrows
+  private void createExtraCatalog(String catalogName) {
+    catalogOperations.createCatalog(
+        new CreateCatalog().name(catalogName).comment("Created by UCViewDDLIntegrationTest"));
+    createdCatalogs.add(catalogName);
   }
 }

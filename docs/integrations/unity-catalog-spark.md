@@ -28,6 +28,11 @@ data stored in Unity Catalog through a controlled mechanism.
     | Apache Spark 4.0.x | `io.unitycatalog:unitycatalog-spark_4.0_2.13` | `io.delta:delta-spark_4.0_2.13` |
     | Apache Spark 4.1.x | `io.unitycatalog:unitycatalog-spark_4.1_2.13` | `io.delta:delta-spark_4.1_2.13` |
 
+!!! tip "Metric views"
+    On Apache Spark 4.2 and later, the connector also supports Unity Catalog **metric views** —
+    reusable dimensions and measures defined over a source table or SQL query. See
+    [Metric Views](../usage/metric-views.md).
+
 ## Download and Configure Unity Catalog for Apache Spark
 
 The following steps are required to download and configure Unity Catalog for Apache Spark.
@@ -183,9 +188,10 @@ Notice the following packages (`--packages`) and configurations (`--conf`)
 
 - `--packages` points to the version-matched `delta-spark` and `unitycatalog-spark` artifacts. Use the Spark 4.0.x or
   4.1.x coordinates from the prerequisites table above.
-- `spark.sql.extensions` includes `UCSparkSessionExtensions`. On Spark 4.0.x and 4.1.x this is required to route
-  `CREATE VIEW`, `SHOW VIEWS`, and `DROP VIEW` to Unity Catalog. Reading existing plain SQL views does not require the
-  extension. `CREATE OR REPLACE VIEW`, `ALTER VIEW`, and view rename are not supported on these Spark versions.
+- `spark.sql.extensions` includes `UCSparkSessionExtensions`. On Spark 4.1.x this is required to route
+  `CREATE VIEW`, `SHOW VIEWS`, and `DROP VIEW` to Unity Catalog (Spark 4.0.x keeps the 4.0 build but
+  has no fork view DDL REST path). Reading existing plain SQL views does not require the extension.
+  `CREATE OR REPLACE VIEW`, `ALTER VIEW`, and view rename are not supported on Spark 4.0/4.1.
 - `spark.sql.catalog.spark_catalog` should be set to Delta's session catalog when working with Delta tables.
 - `spark.sql.catalog.<catalog_name>.uri` points to your local development UC instance.
 - `spark.sql.catalog.<catalog_name>.token` is empty when authentication is disabled; refer to [auth](../server/auth.md)

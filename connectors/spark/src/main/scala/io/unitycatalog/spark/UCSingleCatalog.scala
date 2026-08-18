@@ -136,6 +136,35 @@ class UCSingleCatalog
   private def shouldUseDeltaAPI: Boolean =
     DeltaVersionUtils.isDeltaRestApiReady(deltaCatalogLoaded, deltaRestApiEnabled)
 
+  /** Session default format (`spark.sql.sources.default`). */
+  private def sessionDefaultProvider: String =
+    SQLConf.get.getConf(SQLConf.DEFAULT_DATA_SOURCE_NAME)
+
+  /**
+   * Returns true when the effective provider is `delta` -- i.e. `USING delta`, or no `USING`
+   * clause while `spark.sql.sources.default` resolves to delta. Unlike Spark's built-in
+   * `V2SessionCatalog`, a named V2 catalog receives no `provider` property when `USING` is
+   * omitted, so we apply the same default-source fallback Spark itself uses.
+   */
+  private def hasDeltaProvider(properties: util.Map[String, String]): Boolean =
+    Option(properties.get(TableCatalog.PROP_PROVIDER))
+      .getOrElse(sessionDefaultProvider)
+      .equalsIgnoreCase("delta")
+
+  /** Ensures `provider` is present using the same resolution as {@link #hasDeltaProvider}. */
+  private def withMaterializedProvider(
+      properties: util.Map[String, String]): util.Map[String, String] = {
+    if (properties.containsKey(TableCatalog.PROP_PROVIDER)) {
+      properties
+    } else {
+      val augmented = new util.HashMap[String, String](properties)
+      augmented.put(
+        TableCatalog.PROP_PROVIDER,
+        Option(properties.get(TableCatalog.PROP_PROVIDER)).getOrElse(sessionDefaultProvider))
+      augmented
+    }
+  }
+
   /**
    * REPLACE / CREATE OR REPLACE delegation gate.
    *
@@ -144,9 +173,8 @@ class UCSingleCatalog
    *     Delta-side `buildReplaceProps` after loading; we do not pre-check it here.
    *   - Non-Delta REPLACE stays on the legacy path; its rejection error is unchanged.
    */
-  private def shouldDelegateReplaceToDeltaApi(properties: util.Map[String, String]): Boolean = {
-    shouldUseDeltaAPI && UCSingleCatalog.hasDeltaProvider(properties)
-  }
+  private def shouldDelegateReplaceToDeltaApi(properties: util.Map[String, String]): Boolean =
+    shouldUseDeltaAPI && hasDeltaProvider(properties)
 
   /**
    * Returns the properties UC should pass to the Delta catalog delegate for a managed Delta
@@ -159,17 +187,9 @@ class UCSingleCatalog
   private def managedDeltaCreatePropsForDelegate(
       ident: Identifier,
       properties: util.Map[String, String]): util.Map[String, String] = {
-    // `hasDeltaProvider` may resolve to Delta via `spark.sql.sources.default` when no `USING`
-    // clause was given, in which case the map has no `provider` key. Materialize it so the Delta
-    // delegate -- and `UCProxy.createTable`'s `requireProviderSpecified` check -- see an explicit
-    // provider, exactly as an explicit `USING delta` would produce.
-    val withProvider = if (properties.containsKey(TableCatalog.PROP_PROVIDER)) {
-      properties
-    } else {
-      val augmented = new util.HashMap[String, String](properties)
-      augmented.put(TableCatalog.PROP_PROVIDER, "delta")
-      augmented
-    }
+    // Materialize the effective provider (same resolution as `hasDeltaProvider`) so the Delta
+    // delegate and `UCProxy.createTable`'s `requireProviderSpecified` see an explicit `provider`.
+    val withProvider = withMaterializedProvider(properties)
     val validated = validateAndDefaultManagedDeltaCreateProperties(withProvider)
     if (shouldUseDeltaAPI) validated
     else stageManagedDeltaTableAndGetProps(ident, validated)
@@ -205,7 +225,7 @@ class UCSingleCatalog
     }
 
     if (UCSingleCatalog.isManagedTable(properties, ident)) {
-      if (UCSingleCatalog.hasDeltaProvider(properties)) {
+      if (hasDeltaProvider(properties)) {
         // Managed Delta table
         val newProps = managedDeltaCreatePropsForDelegate(ident, properties)
         delegate.createTable(ident, schema, partitions, newProps)
@@ -416,7 +436,7 @@ class UCSingleCatalog
       spark: SparkSession,
       location: String,
       operation: PathOperation): util.Map[String, String] = {
-    val scheme = new Path(location).toUri.getScheme
+    val (apiLocation, scheme) = pathForCredentialApi(location)
     if (scheme == null) return util.Collections.emptyMap[String, String]()
     UCCredentialHadoopConfs
       .builder(uri.toString, scheme)
@@ -426,7 +446,26 @@ class UCSingleCatalog
       .enableCredentialRenewal(renewCredEnabled)
       .enableCredentialScopedFs(credScopedFsEnabled)
       .hadoopConf(UCSingleCatalog.sessionHadoopConf(spark))
-      .buildForPath(location, operation)
+      .buildForPath(apiLocation, operation)
+  }
+
+  /**
+   * UC external locations and the temporary path-credentials API use canonical lowercase
+   * `s3://` URLs on the server. Hadoop clients may reference the same storage as `s3a://`
+   * (any casing); rewrite to `s3://` for credential lookup only and lowercase other schemes.
+   */
+  private def pathForCredentialApi(location: String): (String, String) = {
+    val scheme = new Path(location).toUri.getScheme
+    if (scheme == null) {
+      (location, null)
+    } else {
+      val canonicalScheme =
+        if (scheme.equalsIgnoreCase("s3a")) "s3" else scheme.toLowerCase
+      val apiLocation = location.replaceFirst(
+        s"(?i)^${java.util.regex.Pattern.quote(scheme)}://",
+        s"$canonicalScheme://")
+      (apiLocation, canonicalScheme)
+    }
   }
 
   /**
@@ -633,7 +672,7 @@ class UCSingleCatalog
     UCSingleCatalog.checkUnsupportedNestedNamespace(ident.namespace())
     val stagingCatalog = requireStagingCatalog("CREATE TABLE AS SELECT (CTAS)")
     if (UCSingleCatalog.isManagedTable(properties, ident)) {
-      if (UCSingleCatalog.hasDeltaProvider(properties)) {
+      if (hasDeltaProvider(properties)) {
         // Managed Delta table
         val newProps = managedDeltaCreatePropsForDelegate(ident, properties)
         stagingCatalog.stageCreate(ident, schema, partitions, newProps)
@@ -713,17 +752,6 @@ object UCSingleCatalog {
     !hasExternalClause && !hasLocationClause && !isPathTable
   }
 
-  /**
-   * Returns true when the effective provider is `delta` -- i.e. `USING delta`, or no `USING`
-   * clause while `spark.sql.sources.default` resolves to delta. Unlike Spark's built-in
-   * `V2SessionCatalog`, a named V2 catalog receives no `provider` property when `USING` is
-   * omitted, so we apply the same default-source fallback Spark itself uses.
-   */
-  def hasDeltaProvider(properties: util.Map[String, String]): Boolean =
-    Option(properties.get(TableCatalog.PROP_PROVIDER))
-      .getOrElse(SQLConf.get.defaultDataSourceName)
-      .equalsIgnoreCase("delta")
-
   def checkUnsupportedNestedNamespace(namespace: Array[String]): Unit = {
     if (namespace.length > 1) {
       throw new ApiException("Nested namespaces are not supported: " + namespace.mkString("."))
@@ -756,18 +784,18 @@ object UCSingleCatalog {
 
   /**
    * True when `ident` can be expressed as the dotted `catalog.schema.table` string UC identifies
-   * tables by. A dot inside the schema or table name makes the joined name ambiguous, and UC
-   * rejects it rather than guessing, so such an identifier can never denote a table UC holds.
+   * tables by. Cloud paths (including extensionless ones like `s3://bucket/dir/part`) carry `/`
+   * in the table name and can never denote a UC table row.
    *
    * Spark asks the current catalog to load every relation before falling back to path-based
-   * resolution, so `SELECT * FROM parquet.`s3://bucket/dir/part.parquet`` arrives here as schema
+   * resolution, so `SELECT * FROM parquet.`s3://bucket/dir/part`` arrives here as schema
    * `parquet` with the path as the table name. Callers treat these as absent, which lets Spark
    * carry on to `ResolveSQLOnFile` -- see [[UCProxy.getUCTableLike]].
    */
   def isAddressableTableName(ident: Identifier): Boolean = {
     ident.namespace().length == 1 &&
-      !ident.namespace()(0).contains(".") &&
-      !ident.name().contains(".")
+      !ident.namespace()(0).contains("/") &&
+      !ident.name().contains("/")
   }
 
 }
