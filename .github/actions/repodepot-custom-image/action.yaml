@@ -279,7 +279,12 @@ runs:
             exit 1
           fi
           sed -i "s|/home/runner/.cache|${HOME}/.cache|g" "$classpath"
-          IFS=':' read -r -a entries < "$classpath"
+          # read returns 1 on EOF even after a successful line; do not fail set -e.
+          IFS=':' read -r -a entries < "$classpath" || true
+          if [ "${#entries[@]}" -eq 0 ]; then
+            echo "Empty classpath: $classpath" >&2
+            exit 1
+          fi
           for entry in "${entries[@]}"; do
             case "$entry" in
               "${HOME}/.cache/"*)
