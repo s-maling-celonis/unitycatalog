@@ -3,7 +3,12 @@ name: (Celonis) Dependency Lock Check
 # Fails when the committed *.sbt.lock files no longer match the dependencies
 # resolved from build.sbt. Those locks are what Cycode's SCA scan reads to see
 # transitive dependencies (CBE-56140), so stale locks mean a stale vulnerability
-# picture. Regenerate with `build/sbt dependencyLockWrite` and commit the result.
+# picture.
+#
+# This runs on ubuntu-latest and is the authority on lock contents: we ship a
+# Linux image, and a few coordinates (brotli4j's native shard, via Armeria)
+# resolve per-platform, so locks written on a macOS host will fail here. See
+# dev/dependency-locks.md for the container command that regenerates them.
 #
 # Pinned to the default Spark version from project/spark-versions.json: the
 # connectors/spark dependency graph varies with -DsparkVersion, and a single lock

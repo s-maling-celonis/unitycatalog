@@ -7,18 +7,37 @@ direct dependencies and the vulnerability picture is close to meaningless.
 
 ## Regenerating
 
-After any dependency change, and after every rebase or reconcile against
-`upstream/main`:
+**The locks describe a Linux x86-64 resolution, and must be generated on one.**
+We ship a Linux container image, so that is the dependency set worth scanning —
+and a few coordinates resolve differently per platform, so a lock written on
+macOS will not match. Regenerate inside a container:
 
 ```bash
-build/sbt dependencyLockWrite
+docker run --rm -u "$(id -u):$(id -g)" -e HOME=/tmp -v "$PWD":/repo -w /repo eclipse-temurin:17-jdk ./build/sbt dependencyLockWrite
 ```
 
-Then commit every changed `build.sbt.lock`. CI runs `build/sbt dependencyLockCheck`
-and fails if the committed locks no longer match what `build.sbt` resolves.
+Do this after any dependency change, and after every rebase or reconcile against
+`upstream/main`. Then commit every changed `build.sbt.lock`. CI runs
+`build/sbt dependencyLockCheck` on `ubuntu-latest` and fails if the committed
+locks no longer match, so a lock generated on the wrong platform is caught rather
+than shipped.
 
 The root project aggregates all ten modules, so both tasks fan out to all of them
 without any extra alias.
+
+`build/sbt dependencyLockWrite` on a macOS host still works for inspecting what
+resolves locally — just do not commit the result.
+
+### Why the platform matters
+
+`com.linecorp.armeria:armeria` (build.sbt) pulls in
+`com.aayushatharva.brotli4j`, which selects its native binary through an
+OS/architecture-activated Maven profile. A macOS arm64 host resolves
+`native-osx-aarch64`; a Linux x86-64 host resolves `native-linux-x86_64`. The
+version and the main `brotli4j` artifact are identical either way — only the
+native shard differs. It is currently the only platform-variant coordinate in
+the graph, but treat the container as the source of truth rather than assuming
+that stays true.
 
 ## What lives where
 

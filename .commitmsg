@@ -1,0 +1,15 @@
+Generate dependency locks on Linux, and check on develop only
+
+Armeria pulls in brotli4j, which picks its native binary via an
+OS/architecture-activated Maven profile, so a lock written on a macOS arm64 host
+records native-osx-aarch64 where the CI runner resolves native-linux-x86_64. The
+first CI run failed on exactly that diff in the server and cli locks.
+
+We ship a Linux image, so the Linux resolution is the one worth scanning. Make
+that explicit: regenerate the locks in a container, and treat the ubuntu-latest
+check as the authority on their contents.
+
+Also drop main from the check's triggers -- it only receives merges from develop,
+which has already gated the locks.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
