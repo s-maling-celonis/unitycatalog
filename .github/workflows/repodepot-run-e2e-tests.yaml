@@ -11,6 +11,7 @@ on:
         required: true
         options:
           - unity-catalog-server
+          - unity-catalog-ui
           - unitycatalog-client
           - unitycatalog-controlapi
           - unitycatalog-hadoop
