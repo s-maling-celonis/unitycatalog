@@ -31,7 +31,6 @@ on:
         required: true
         options:
           - unity-catalog-server
-          - unity-catalog-ui
           - unitycatalog-client
           - unitycatalog-controlapi
           - unitycatalog-hadoop
@@ -54,7 +53,7 @@ jobs:
     with:
       target-release: DEV
       repo-depot-version: stable
-      service-names-as-csv: 'unity-catalog-server,unity-catalog-ui,unitycatalog-client,unitycatalog-controlapi,unitycatalog-hadoop,unitycatalog-spark'
+      service-names-as-csv: 'unity-catalog-server,unitycatalog-client,unitycatalog-controlapi,unitycatalog-hadoop,unitycatalog-spark'
 
   on-dispatch:
     name: Build Branch on Dispatch
@@ -64,4 +63,4 @@ jobs:
     with:
       target-release: DEV
       repo-depot-version: stable
-      service-names-as-csv: ${{ inputs.service-name == '~~ALL~~' && 'unity-catalog-server,unity-catalog-ui,unitycatalog-client,unitycatalog-controlapi,unitycatalog-hadoop,unitycatalog-spark' || inputs.service-name }}
+      service-names-as-csv: ${{ inputs.service-name == '~~ALL~~' && 'unity-catalog-server,unitycatalog-client,unitycatalog-controlapi,unitycatalog-hadoop,unitycatalog-spark' || inputs.service-name }}
