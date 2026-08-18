@@ -261,6 +261,42 @@ public class AwsPolicyGeneratorTest {
         .containsExactly("s3:ListBucket");
   }
 
+  @Test
+  public void testGeneratePolicyOmitsKmsWhenDisabled() throws Exception {
+    String policy =
+        AwsPolicyGenerator.generatePolicy(
+            Set.of(UPDATE), List.of(NormalizedURL.from("s3://my-bucket/path1/table1")), false);
+
+    JsonNode root = JSON_MAPPER.readTree(policy);
+    assertThat(findKmsStatement(root)).isNull();
+    assertThat(policy)
+        .doesNotContain("kms:ViaService")
+        .doesNotContain("kms:EncryptionContext")
+        .contains("s3:PutO*");
+    assertThat(root.get("Statement")).hasSize(2);
+  }
+
+  @Test
+  public void testBlankStsEndpointIsTreatedAsAws() {
+    assertThat(AwsPolicyGenerator.stsSupportsKmsPolicyConditions(null)).isTrue();
+    assertThat(AwsPolicyGenerator.stsSupportsKmsPolicyConditions("")).isTrue();
+    assertThat(AwsPolicyGenerator.stsSupportsKmsPolicyConditions("   ")).isTrue();
+  }
+
+  @ParameterizedTest(name = "{index}: {0} -> {1}")
+  @CsvSource({
+    "https://sts.us-east-1.amazonaws.com, true",
+    "https://sts.us-east-1.amazonaws.com.cn, true",
+    "https://vpce-123.sts.us-east-1.vpce.amazonaws.com, true",
+    "http://minio:9000, false",
+    "http://localhost:9000, false",
+    "http://127.0.0.1:9000, false",
+    "http://host.docker.internal:9000, false"
+  })
+  public void testStsEndpointKmsConditionSupport(String endpoint, boolean expected) {
+    assertThat(AwsPolicyGenerator.stsSupportsKmsPolicyConditions(endpoint)).isEqualTo(expected);
+  }
+
   /**
    * Returns the statement that carries the KMS actions, or {@code null} when the policy has none.
    * Located by action prefix rather than by index so that the S3 statements the other tests assert

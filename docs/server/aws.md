@@ -206,6 +206,11 @@ the client instead (`fs.s3a.endpoint` for the Hadoop connector) — otherwise th
 endpoint is handed out for the AWS locations too, and the master role's AssumeRole calls are pointed
 at a store that does not implement STS.
 
+Vended STS session policies include KMS permissions (`kms:Decrypt` / `kms:GenerateDataKey*`) scoped
+by `kms:ViaService` and `kms:EncryptionContext:aws:s3:arn` so SSE-KMS buckets work on AWS. Those
+condition keys are rejected by S3-compatible STS (MinIO: `invalid condition key 'kms:ViaService'`),
+so they are omitted when `aws.endpointUrl` / `s3.endpointUrl.N` is not an AWS STS host.
+
 ## Security considerations
 
 ### What a vended static credential is

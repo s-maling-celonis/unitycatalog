@@ -347,6 +347,64 @@ public class CloudCredentialVendorTest {
       AssumeRoleRequest capturedRequest = requestCaptor.getValue();
       assertThat(capturedRequest.roleArn()).isEqualTo(CREDENTIAL_ROLE_ARN);
       assertThat(capturedRequest.externalId()).isEqualTo(expectedExternalId);
+      assertThat(capturedRequest.policy()).contains("kms:ViaService");
+    }
+  }
+
+  @Test
+  public void testMinioStsSessionPolicyOmitsKmsConditionKeys() {
+    final String CREDENTIAL_ROLE_ARN = "arn:aws:iam::123456789012:role/external-location-role";
+    final String S3_PATH = "s3://my-bucket/path/to/data";
+
+    CredentialDAO credentialDAO =
+        CredentialDAO.from(
+            new CreateCredentialRequest()
+                .name("test-credential")
+                .purpose(CredentialPurpose.STORAGE)
+                .awsIamRole(new AwsIamRoleRequest().roleArn(CREDENTIAL_ROLE_ARN)),
+            "test-user");
+
+    reset(externalLocationUtils);
+    doReturn(Optional.of(credentialDAO))
+        .when(externalLocationUtils)
+        .getExternalLocationCredentialDaoForPath(any());
+
+    when(serverProperties.getS3Configurations()).thenReturn(Map.of());
+    doReturn(S3StorageConfig.builder().endpointUrl("http://minio:9000").build())
+        .when(serverProperties)
+        .getS3MasterRoleConfiguration();
+
+    StsClient mockStsClient = Mockito.mock(StsClient.class);
+    ArgumentCaptor<AssumeRoleRequest> requestCaptor =
+        ArgumentCaptor.forClass(AssumeRoleRequest.class);
+    Credentials stsCredentials =
+        Credentials.builder()
+            .accessKeyId("vendedAccessKey")
+            .secretAccessKey("vendedSecretKey")
+            .sessionToken("vendedSessionToken")
+            .build();
+    when(mockStsClient.assumeRole(requestCaptor.capture()))
+        .thenReturn(AssumeRoleResponse.builder().credentials(stsCredentials).build());
+
+    StsClientBuilder mockBuilder = Mockito.mock(StsClientBuilder.class);
+    when(mockBuilder.region(any())).thenReturn(mockBuilder);
+    when(mockBuilder.credentialsProvider(any())).thenReturn(mockBuilder);
+    when(mockBuilder.endpointOverride(any())).thenReturn(mockBuilder);
+    when(mockBuilder.build()).thenReturn(mockStsClient);
+
+    try (MockedStatic<StsClient> mockedStsClient = Mockito.mockStatic(StsClient.class)) {
+      mockedStsClient.when(StsClient::builder).thenReturn(mockBuilder);
+
+      AwsCredentialVendor awsCredentialVendor = new AwsCredentialVendor(serverProperties);
+      credentialsOperations = new CloudCredentialVendor(awsCredentialVendor, null, null);
+
+      vendCredential(S3_PATH, Set.of(CredentialContext.Privilege.SELECT));
+
+      AssumeRoleRequest capturedRequest = requestCaptor.getValue();
+      assertThat(capturedRequest.policy())
+          .doesNotContain("kms:ViaService")
+          .doesNotContain("kms:EncryptionContext")
+          .contains("s3:GetO*");
     }
   }
 

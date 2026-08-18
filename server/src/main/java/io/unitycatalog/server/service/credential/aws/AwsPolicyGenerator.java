@@ -12,6 +12,7 @@ import org.apache.iceberg.exceptions.NotAuthorizedException;
 import java.net.URI;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -72,34 +73,80 @@ public class AwsPolicyGenerator {
   private static final ObjectMapper JSON_MAPPER = new ObjectMapper();
   private static final ObjectMapper YAML_MAPPER = new ObjectMapper(new YAMLFactory());
 
+  /**
+   * AWS IAM KMS condition keys ({@code kms:ViaService}, {@code
+   * kms:EncryptionContext:aws:s3:arn}) are rejected by S3-compatible STS implementations such as
+   * MinIO ({@code invalid condition key}). Only attach them when AssumeRole targets AWS STS.
+   *
+   * <p>A blank endpoint means the AWS SDK default (real AWS STS). Hosts under {@code
+   * amazonaws.com} / {@code amazonaws.com.cn} are treated as AWS; everything else (MinIO,
+   * localhost, custom gateways) is not.
+   */
+  public static boolean stsSupportsKmsPolicyConditions(String stsEndpointUrl) {
+    if (stsEndpointUrl == null || stsEndpointUrl.isBlank()) {
+      return true;
+    }
+    URI uri;
+    try {
+      uri = URI.create(stsEndpointUrl.trim());
+    } catch (IllegalArgumentException ignored) {
+      return false;
+    }
+    String host = uri.getHost();
+    if (host == null) {
+      return false;
+    }
+    String normalized = host.toLowerCase(Locale.ROOT);
+    return normalized.equals("amazonaws.com")
+        || normalized.endsWith(".amazonaws.com")
+        || normalized.equals("amazonaws.com.cn")
+        || normalized.endsWith(".amazonaws.com.cn");
+  }
+
   // This can support generating a policy across multiple buckets and paths, however, the assumed
   // role the policy is applied to for a scoped-session needs to have access across those buckets
   @SneakyThrows
   public static String generatePolicy(
       Set<CredentialContext.Privilege> privileges,
       List<NormalizedURL> locations) {
+    return generatePolicy(privileges, locations, true);
+  }
+
+  @SneakyThrows
+  public static String generatePolicy(
+      Set<CredentialContext.Privilege> privileges,
+      List<NormalizedURL> locations,
+      boolean includeKmsPermissions) {
     JsonNode policyRoot = loadYaml(POLICY_STATEMENT);
     ArrayNode policyStatement = (ArrayNode) policyRoot.findPath("Statement");
     JsonNode operationsStatement = loadYaml(OPERATION_STATEMENT);
     policyStatement.add(operationsStatement);
-    JsonNode kmsStatement = loadYaml(KMS_STATEMENT);
+    JsonNode kmsStatement = includeKmsPermissions ? loadYaml(KMS_STATEMENT) : null;
 
     // Add the appropriate S3 and KMS operations for the privileges requested
     ArrayNode actions = (ArrayNode) operationsStatement.findPath("Action");
-    ArrayNode kmsActions = (ArrayNode) kmsStatement.findPath("Action");
+    ArrayNode kmsActions =
+        kmsStatement != null ? (ArrayNode) kmsStatement.findPath("Action") : null;
     if (privileges.contains(CredentialContext.Privilege.UPDATE)) {
       UPDATE_ACTIONS.forEach(actions::add);
-      UPDATE_KMS_ACTIONS.forEach(kmsActions::add);
+      if (kmsActions != null) {
+        UPDATE_KMS_ACTIONS.forEach(kmsActions::add);
+      }
     } else if (privileges.contains(CredentialContext.Privilege.SELECT)) {
       SELECT_ACTIONS.forEach(actions::add);
-      SELECT_KMS_ACTIONS.forEach(kmsActions::add);
+      if (kmsActions != null) {
+        SELECT_KMS_ACTIONS.forEach(kmsActions::add);
+      }
     } else {
       throw new NotAuthorizedException(
           String.format("Can't generate policy for unknown privileges '%s' for locations: '%s'",
               privileges, locations));
     }
 
-    ArrayNode kmsEncryptionContexts = (ArrayNode) kmsStatement.findPath(KMS_ENCRYPTION_CONTEXT_KEY);
+    ArrayNode kmsEncryptionContexts =
+        kmsStatement != null
+            ? (ArrayNode) kmsStatement.findPath(KMS_ENCRYPTION_CONTEXT_KEY)
+            : null;
 
     // Group each location by s3 bucket it's located in, then for each
     // bucket, add the bucket arn for the listBucket and operations statements,
@@ -115,7 +162,9 @@ public class AwsPolicyGenerator {
       // A bucket with S3 Bucket Keys enabled encrypts under the bucket arn rather than the object
       // arn, so the bucket has to be allowed as an encryption context on its own. That case can't
       // be scoped to a path: the same data key covers every object in the bucket.
-      kmsEncryptionContexts.add(String.format("arn:aws:s3:::%s", bucketName));
+      if (kmsEncryptionContexts != null) {
+        kmsEncryptionContexts.add(String.format("arn:aws:s3:::%s", bucketName));
+      }
 
       ArrayNode conditionalPrefixes = (ArrayNode) listStatement.findPath("s3:prefix");
       paths.forEach(path -> {
@@ -141,7 +190,9 @@ public class AwsPolicyGenerator {
 
     // Appended after the per-bucket statements so that the position of the S3 statements
     // within the policy doesn't change
-    policyStatement.add(kmsStatement);
+    if (kmsStatement != null) {
+      policyStatement.add(kmsStatement);
+    }
 
     return JSON_MAPPER.writeValueAsString(policyRoot);
   }
@@ -154,7 +205,9 @@ public class AwsPolicyGenerator {
   private static void addObjectArn(
       String objectArn, ArrayNode operationsResource, ArrayNode kmsEncryptionContexts) {
     operationsResource.add(objectArn);
-    kmsEncryptionContexts.add(objectArn);
+    if (kmsEncryptionContexts != null) {
+      kmsEncryptionContexts.add(objectArn);
+    }
   }
 
   /**
