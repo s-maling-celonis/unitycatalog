@@ -146,6 +146,15 @@ def javafmtCheckSettings() = Seq(
   (Compile / compile) := ((Compile / compile) dependsOn (Compile / javafmtAll)).value
 )
 
+// sbt-dependency-lock writes each project's build.sbt.lock into that project's
+// base directory, and the OpenAPI-generated projects are based inside gitignored
+// generated-output trees -- so their locks could never be committed. Redirect
+// them under dev/sca/. Cycode's SCA scan discovers lock files by matching the
+// build.sbt.lock filename anywhere in the tree, so the directory does not matter
+// (CBE-56140; see dev/dependency-locks.md).
+def scaLockUnder(dir: String) =
+  dependencyLockFile := (ThisBuild / baseDirectory).value / "dev" / "sca" / dir / "build.sbt.lock"
+
 lazy val controlApi = (project in file("target/control/java"))
   .enablePlugins(OpenApiGeneratorPlugin)
   .disablePlugins(JavaFormatterPlugin, CheckstylePlugin)
@@ -165,6 +174,7 @@ lazy val controlApi = (project in file("target/control/java"))
       "org.apache.httpcomponents" % "httpclient" % orgApacheHttpVersion,
       "org.apache.httpcomponents" % "httpmime" % orgApacheHttpVersion,
     ),
+    scaLockUnder("controlapi"),
     (Compile / compile) := ((Compile / compile) dependsOn generate).value,
 
     // OpenAPI generation specs
@@ -505,6 +515,7 @@ lazy val serverModels = (project in file("server") / "target" / "models")
       "jakarta.annotation" % "jakarta.annotation-api" % "3.0.0" % Provided,
       "com.fasterxml.jackson.core" % "jackson-annotations" % jacksonVersion,
     ),
+    scaLockUnder("servermodels"),
     // Generate model codes from both all.yaml and delta.yaml into the same output directory.
     // Both use "resteasy" for minimal server-side models (no client SDK dependencies).
     // Polymorphic types (TableUpdate, TableRequirement, DataType) use the
@@ -549,6 +560,7 @@ lazy val controlModels = (project in file("server") / "target" / "controlmodels"
       "jakarta.annotation" % "jakarta.annotation-api" % "3.0.0" % Provided,
       "com.fasterxml.jackson.core" % "jackson-annotations" % jacksonVersion,
     ),
+    scaLockUnder("controlmodels"),
     // OpenAPI generation configs for generating model codes from the spec
     openApiInputSpec := (file(".") / "api" / "control.yaml").toString,
     openApiGeneratorName := "java",
@@ -821,7 +833,7 @@ lazy val root = (project in file("."))
     name := s"$artifactNamePrefix",
     createTarballSettings(),
     commonSettings,
-    rootReleaseSettings
+    rootReleaseSettings,
   )
 
 def generateClasspathFile(targetDir: File, classpath: Classpath): Unit = {

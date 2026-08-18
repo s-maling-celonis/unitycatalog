@@ -36,3 +36,7 @@ addSbtPlugin("software.purpledragon" % "sbt-checkstyle-plugin" % "4.0.1")
 dependencyOverrides += "com.puppycrawl.tools" % "checkstyle" % "9.3"
 
 addSbtPlugin("com.github.sbt" % "sbt-jacoco" % "3.4.0")
+
+// Emits build.sbt.lock files enumerating transitive dependencies, so SCA scanners
+// (Cycode) can see the full dependency set instead of only direct declarations.
+addSbtPlugin("software.purpledragon" % "sbt-dependency-lock" % "1.5.1")
