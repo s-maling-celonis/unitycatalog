@@ -76,6 +76,7 @@ public interface AwsCredentialGenerator {
     // This is the role ARN to assume for the per-bucket config. Otherwise, the CredentialContext
     // contains a CredentialDAO and it will assume the role ARN in CredentialDAO instead.
     private final String staticAwsRoleArn;
+    private final boolean includeKmsPermissions;
 
     public StsAwsCredentialGenerator(StsClientBuilder builder, S3StorageConfig config) {
       // Get STS region
@@ -107,6 +108,8 @@ public interface AwsCredentialGenerator {
       }
       this.stsClient = stsBuilder.build();
       this.staticAwsRoleArn = config.getAwsRoleArn();
+      this.includeKmsPermissions =
+          AwsPolicyGenerator.stsSupportsKmsPolicyConditions(config.getEndpointUrl());
     }
 
     @Override
@@ -119,7 +122,9 @@ public interface AwsCredentialGenerator {
       // externalId is only from CredentialDAO. Per-bucket config does not need it.
       Optional<String> externalId = awsIamRole.map(AwsIamRoleResponse::getExternalId);
 
-      String awsPolicy = AwsPolicyGenerator.generatePolicy(ctx.getPrivileges(), ctx.getLocations());
+      String awsPolicy =
+          AwsPolicyGenerator.generatePolicy(
+              ctx.getPrivileges(), ctx.getLocations(), includeKmsPermissions);
       String roleSessionName = "uc-%s".formatted(UUID.randomUUID());
 
       AssumeRoleRequest.Builder roleRequestBuilder =
