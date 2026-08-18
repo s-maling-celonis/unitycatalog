@@ -15,7 +15,6 @@ on:
         required: true
         options:
           - unity-catalog-server
-          - unity-catalog-ui
       release-candidate:
         description: Release Candidate
         type: string

@@ -78,10 +78,6 @@ runs:
             echo "needs-image=true"
             echo "docker-context=."
             ;;
-          unity-catalog-ui)
-            echo "needs-image=true"
-            echo "docker-context=ui"
-            ;;
           unitycatalog-client)
             echo "sbt-project=client"
             echo "project-path=clients/java"
@@ -119,19 +115,10 @@ runs:
         mkdir -p "$UC_HOME/.cache/coursier"
 
     - name: Setup Java
-      if: inputs.component-name != 'unity-catalog-ui'
       uses: celonis/core-setup-java-action@v4.0.2
       with:
         use-cache: 'false'
         maven-version: '3.9.16'
-
-    - name: Setup Node
-      if: inputs.component-name == 'unity-catalog-ui'
-      uses: actions/setup-node@v4
-      with:
-        node-version: '18'
-        cache: yarn
-        cache-dependency-path: ${{ inputs.working-directory }}/ui/yarn.lock
 
     - name: Build
       id: build
@@ -161,10 +148,6 @@ runs:
             ;;
           unitycatalog-client|unitycatalog-controlapi|unitycatalog-hadoop|unitycatalog-spark)
             build_sbt_module "${{ steps.component.outputs.sbt-project }}" "${{ steps.component.outputs.project-path }}"
-            ;;
-          unity-catalog-ui)
-            cd ui
-            yarn install --network-timeout 1000000
             ;;
           *)
             echo "Unsupported component: ${{ inputs.component-name }}" >&2
@@ -247,10 +230,6 @@ runs:
             build/sbt $SBT_HEAP -DsparkVersion=4.1.0 -DdeltaVersion=4.3.1 publishLocal \
               "${{ steps.component.outputs.sbt-project }}/test"
             ;;
-          unity-catalog-ui)
-            cd ui
-            yarn test --watchAll=false --passWithNoTests
-            ;;
           *)
             echo "Unsupported component: ${{ inputs.component-name }}" >&2
             exit 1
@@ -258,12 +237,6 @@ runs:
         esac
 
         echo "status=true" >> "$GITHUB_OUTPUT"
-
-    - name: Restore Node for repo-depot tooling
-      if: inputs.component-name == 'unity-catalog-ui'
-      uses: actions/setup-node@v5
-      with:
-        node-version-file: tooling/package.json
 
     - name: Stage PREBUILT server artifacts for Docker
       if: steps.component.outputs.needs-image == 'true' && inputs.component-name == 'unity-catalog-server'

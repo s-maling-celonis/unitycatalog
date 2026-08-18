@@ -5,6 +5,8 @@ workflows:
       - 'mkdocs.yml'
       - '**.md'
       - 'ai/**'
+      - 'clients/python/**'
+      - 'ui/**'
       - 'examples/**'
       - 'integration-tests/**'
       - 'tests/**'
