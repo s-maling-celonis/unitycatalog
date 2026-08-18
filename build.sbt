@@ -56,6 +56,20 @@ lazy val openApiToolsJacksonBindNullableVersion = "0.2.6"
 lazy val log4jVersion = "2.25.3"
 val orgApacheHttpVersion = "4.5.14"
 
+// brotli4j (transitive via Armeria) selects its native binary through an
+// OS/architecture-activated Maven profile, so the coordinate *name* differs by
+// build host: native-osx-aarch64 on an arm64 Mac, native-linux-x86_64 on the CI
+// runner. Keep the arch-specific shard out of the SCA locks so they stay
+// host-independent and dependencyLockCheck is winnable from any machine. The
+// parent com.aayushatharva.brotli4j:brotli4j artifact remains locked at its real
+// version, so the library is still visible to the scanner -- only the packaged
+// binary, which advisories are not issued against, is omitted.
+//
+// GlobFilter is required: sbt's implicit String => NameFilter is an exact match,
+// so a bare "native-*" would silently match nothing.
+ThisBuild / dependencyLockModuleFilter :=
+  moduleFilter(organization = "com.aayushatharva.brotli4j", name = GlobFilter("native-*"))
+
 lazy val commonSettings = Seq(
   organization := orgName,
   // Compilation configs

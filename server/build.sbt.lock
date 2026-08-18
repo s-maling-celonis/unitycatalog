@@ -1,6 +1,6 @@
 {
   "lockVersion" : 1,
-  "timestamp" : "2026-08-18T10:32:49.274740Z",
+  "timestamp" : "2026-08-18T11:30:38.216504Z",
   "configurations" : [
     "compile",
     "optional",
@@ -17,22 +17,6 @@
         {
           "name" : "brotli4j.jar",
           "hash" : "sha1:990e983bb462867d036c7c243c6566f65fdca68f"
-        }
-      ],
-      "configurations" : [
-        "compile",
-        "runtime",
-        "test"
-      ]
-    },
-    {
-      "org" : "com.aayushatharva.brotli4j",
-      "name" : "native-osx-aarch64",
-      "version" : "1.16.0",
-      "artifacts" : [
-        {
-          "name" : "native-osx-aarch64.jar",
-          "hash" : "sha1:2cb4be6f61472903ea448542f7aadf2f23deb41f"
         }
       ],
       "configurations" : [
