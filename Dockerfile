@@ -70,6 +70,9 @@ RUN if [ "$PREBUILT" = "true" ]; then \
       && cp -a "$CACHE_SRC/." "$HOME/.cache/" \
       && chown -R "$USER:$USER" "$HOME/.cache"; \
     fi
+# Staging tree is only needed to enter the build context. Drop it after
+# promoting artifacts so the image does not keep two copies of the cache.
+RUN rm -rf /home/unitycatalog/build/ci-staging
 USER $USER
 RUN if [ "$PREBUILT" != "true" ]; then ./build/sbt -info clean package; fi
 
