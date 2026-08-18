@@ -814,7 +814,9 @@ lazy val integrationTests = (project in file("integration-tests"))
   )
 
 lazy val root = (project in file("."))
-  .aggregate(serverModels, client, pythonClient, server, cli, spark, hadoop, controlApi, controlModels, apiDocs)
+  // pythonClient stays defined for explicit pythonClient/generate, but is not
+  // aggregated so default package/publishLocal/generate skip OpenAPI Python codegen.
+  .aggregate(serverModels, client, server, cli, spark, hadoop, controlApi, controlModels, apiDocs)
   .settings(
     name := s"$artifactNamePrefix",
     createTarballSettings(),

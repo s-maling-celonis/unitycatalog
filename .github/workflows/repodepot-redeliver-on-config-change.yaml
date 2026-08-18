@@ -27,6 +27,6 @@ jobs:
     with:
       repo-depot-version: stable
       repository-name: celonis/unitycatalog
-      service-name: unity-catalog-ui
+      service-name: unity-catalog-server
       skip-eligibility-check: true
     secrets: inherit

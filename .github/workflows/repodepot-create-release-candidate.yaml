@@ -17,7 +17,6 @@ on:
         options:
           - '~~ALL~~'
           - unity-catalog-server
-          - unity-catalog-ui
           - unitycatalog-client
           - unitycatalog-controlapi
           - unitycatalog-hadoop
@@ -62,7 +61,7 @@ jobs:
       target-release: ${{ inputs.target-release }}
       custom-release: ${{ inputs.custom-release }}
       repo-depot-version: stable
-      service-names-as-csv: ${{ inputs.service-name == '~~ALL~~' && 'unity-catalog-server,unity-catalog-ui,unitycatalog-client,unitycatalog-controlapi,unitycatalog-hadoop,unitycatalog-spark' || inputs.service-name }}
+      service-names-as-csv: ${{ inputs.service-name == '~~ALL~~' && 'unity-catalog-server,unitycatalog-client,unitycatalog-controlapi,unitycatalog-hadoop,unitycatalog-spark' || inputs.service-name }}
 
   on-push:
     name: On Push
@@ -73,5 +72,5 @@ jobs:
       target-release: EXISTING
       custom-release: ${{ github.ref_name }}
       repo-depot-version: stable
-      service-names-as-csv: 'unity-catalog-server,unity-catalog-ui,unitycatalog-client,unitycatalog-controlapi,unitycatalog-hadoop,unitycatalog-spark'
+      service-names-as-csv: 'unity-catalog-server,unitycatalog-client,unitycatalog-controlapi,unitycatalog-hadoop,unitycatalog-spark'
       release-branch-with-service-name: ${{ github.ref_name }}
