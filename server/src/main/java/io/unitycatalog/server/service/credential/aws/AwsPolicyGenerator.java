@@ -16,6 +16,8 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
+import software.amazon.awssdk.regions.Region;
+import software.amazon.awssdk.regions.RegionMetadata;
 
 public class AwsPolicyGenerator {
 
@@ -117,6 +119,23 @@ public class AwsPolicyGenerator {
       Set<CredentialContext.Privilege> privileges,
       List<NormalizedURL> locations,
       boolean includeKmsPermissions) {
+    return generatePolicy(privileges, locations, includeKmsPermissions, null);
+  }
+
+  /**
+   * Builds the AssumeRole session policy for the given locations.
+   *
+   * <p>{@code awsRegion} selects the S3 ARN partition ({@code aws}, {@code aws-us-gov}, {@code
+   * aws-cn}) via the AWS SDK region catalog. A blank region keeps the commercial {@code aws}
+   * partition, matching the previous hardcoded ARNs.
+   */
+  @SneakyThrows
+  public static String generatePolicy(
+      Set<CredentialContext.Privilege> privileges,
+      List<NormalizedURL> locations,
+      boolean includeKmsPermissions,
+      String awsRegion) {
+    String partition = s3PartitionId(awsRegion);
     JsonNode policyRoot = loadYaml(POLICY_STATEMENT);
     ArrayNode policyStatement = (ArrayNode) policyRoot.findPath("Statement");
     JsonNode operationsStatement = loadYaml(OPERATION_STATEMENT);
@@ -157,13 +176,13 @@ public class AwsPolicyGenerator {
 
       ArrayNode bucketResource = (ArrayNode) listStatement.findPath("Resource");
       ArrayNode operationsResource = (ArrayNode) operationsStatement.findPath("Resource");
-      bucketResource.add(String.format("arn:aws:s3:::%s", bucketName));
+      bucketResource.add(s3Arn(partition, bucketName));
 
       // A bucket with S3 Bucket Keys enabled encrypts under the bucket arn rather than the object
       // arn, so the bucket has to be allowed as an encryption context on its own. That case can't
       // be scoped to a path: the same data key covers every object in the bucket.
       if (kmsEncryptionContexts != null) {
-        kmsEncryptionContexts.add(String.format("arn:aws:s3:::%s", bucketName));
+        kmsEncryptionContexts.add(s3Arn(partition, bucketName));
       }
 
       ArrayNode conditionalPrefixes = (ArrayNode) listStatement.findPath("s3:prefix");
@@ -173,16 +192,16 @@ public class AwsPolicyGenerator {
 
         if (sanitizedPath.isEmpty()) {
           conditionalPrefixes.add("*");
-          addObjectArn(String.format("arn:aws:s3:::%s/*", bucketName),
+          addObjectArn(s3Arn(partition, bucketName + "/*"),
               operationsResource, kmsEncryptionContexts);
         } else {
           conditionalPrefixes.add(sanitizedPath);
           conditionalPrefixes.add(sanitizedPath + "/");
           conditionalPrefixes.add(sanitizedPath + "/*");
 
-          addObjectArn(String.format("arn:aws:s3:::%s/%s/*", bucketName, sanitizedPath),
+          addObjectArn(s3Arn(partition, bucketName + "/" + sanitizedPath + "/*"),
               operationsResource, kmsEncryptionContexts);
-          addObjectArn(String.format("arn:aws:s3:::%s/%s", bucketName, sanitizedPath),
+          addObjectArn(s3Arn(partition, bucketName + "/" + sanitizedPath),
               operationsResource, kmsEncryptionContexts);
         }
       });
@@ -195,6 +214,32 @@ public class AwsPolicyGenerator {
     }
 
     return JSON_MAPPER.writeValueAsString(policyRoot);
+  }
+
+  /**
+   * IAM partition for S3 ARNs in the session policy. Derived from the AWS SDK region catalog so
+   * GovCloud ({@code us-gov-*}) yields {@code aws-us-gov} and China ({@code cn-*}) yields {@code
+   * aws-cn}. A blank or unrecognized region keeps {@code aws}, which is what the policy used
+   * before this was parameterized.
+   */
+  static String s3PartitionId(String awsRegion) {
+    if (awsRegion == null || awsRegion.isBlank()) {
+      return "aws";
+    }
+    try {
+      RegionMetadata metadata = Region.of(awsRegion).metadata();
+      if (metadata == null || metadata.partition() == null) {
+        return "aws";
+      }
+      String partitionId = metadata.partition().id();
+      return partitionId == null || partitionId.isBlank() ? "aws" : partitionId;
+    } catch (RuntimeException e) {
+      return "aws";
+    }
+  }
+
+  private static String s3Arn(String partition, String resource) {
+    return String.format("arn:%s:s3:::%s", partition, resource);
   }
 
   /**
