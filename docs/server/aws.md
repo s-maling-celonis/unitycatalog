@@ -207,9 +207,12 @@ endpoint is handed out for the AWS locations too, and the master role's AssumeRo
 at a store that does not implement STS.
 
 Vended STS session policies include KMS permissions (`kms:Decrypt` / `kms:GenerateDataKey*`) scoped
-by `kms:ViaService` and `kms:EncryptionContext:aws:s3:arn` so SSE-KMS buckets work on AWS. Those
-condition keys are rejected by S3-compatible STS (MinIO: `invalid condition key 'kms:ViaService'`),
-so they are omitted when `aws.endpointUrl` / `s3.endpointUrl.N` is not an AWS STS host.
+by `kms:ViaService` so SSE-KMS buckets work on AWS. Encryption-context ARNs are not included: they
+duplicate every S3 resource and on long managed-table paths (especially GovCloud `arn:aws-us-gov:`)
+they overflow the STS packed-policy limit. S3 resource statements already constrain which objects
+the session can touch. `kms:ViaService` is rejected by S3-compatible STS (MinIO: `invalid condition
+key`), so the whole KMS statement is omitted when `aws.endpointUrl` / `s3.endpointUrl.N` is not an
+AWS STS host.
 
 ## Security considerations
 

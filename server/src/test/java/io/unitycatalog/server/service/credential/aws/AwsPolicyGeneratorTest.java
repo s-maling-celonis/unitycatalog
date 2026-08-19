@@ -3,7 +3,6 @@ package io.unitycatalog.server.service.credential.aws;
 import static io.unitycatalog.server.service.credential.CredentialContext.Privilege.SELECT;
 import static io.unitycatalog.server.service.credential.CredentialContext.Privilege.UPDATE;
 import static io.unitycatalog.server.service.credential.aws.AwsPolicyGenerator.BUCKET_STATEMENT;
-import static io.unitycatalog.server.service.credential.aws.AwsPolicyGenerator.KMS_ENCRYPTION_CONTEXT_KEY;
 import static io.unitycatalog.server.service.credential.aws.AwsPolicyGenerator.KMS_STATEMENT;
 import static io.unitycatalog.server.service.credential.aws.AwsPolicyGenerator.OPERATION_STATEMENT;
 import static io.unitycatalog.server.service.credential.aws.AwsPolicyGenerator.POLICY_STATEMENT;
@@ -198,54 +197,31 @@ public class AwsPolicyGeneratorTest {
   }
 
   @Test
-  public void testKmsStatementIsScopedToGrantedS3Arns() throws Exception {
+  public void testKmsStatementOmitsEncryptionContext() throws Exception {
     String policy =
         AwsPolicyGenerator.generatePolicy(
-            Set.of(SELECT), List.of(NormalizedURL.from("s3://my-bucket/path1/table1")));
+            Set.of(UPDATE), List.of(NormalizedURL.from("s3://my-bucket/path1/table1")));
 
     JsonNode statement = findKmsStatement(JSON_MAPPER.readTree(policy));
-    assertThat(statement.findPath(KMS_ENCRYPTION_CONTEXT_KEY))
-        .map(JsonNode::asText)
-        .containsExactly(
-            "arn:aws:s3:::my-bucket",
-            "arn:aws:s3:::my-bucket/path1/table1/*",
-            "arn:aws:s3:::my-bucket/path1/table1");
+    assertThat(statement.findPath("kms:ViaService").asText()).isEqualTo("s3.*.amazonaws.com");
+    assertThat(policy).doesNotContain("kms:EncryptionContext");
   }
 
   @Test
-  public void testKmsStatementCoversEveryBucket() throws Exception {
+  public void testLongGovCloudManagedTablePathFitsStsSessionPolicyLimit() {
+    String location =
+        "s3://storium-usgov-celonisoutpost-com/"
+            + "2810ce0f-866e-42a2-88a2-c1abcefa4807_datalake_unity/"
+            + "__unitystorage/schemas/c800dd5b-c4f5-48ae-ac0f-87cd5be7fce7/"
+            + "tables/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
     String policy =
         AwsPolicyGenerator.generatePolicy(
-            Set.of(UPDATE),
-            Stream.of("s3://my-bucket1/path1/table1", "s3://my-bucket2")
-                .map(NormalizedURL::from)
-                .toList());
+            Set.of(UPDATE), List.of(NormalizedURL.from(location)), true, "us-gov-west-1");
 
-    JsonNode statement = findKmsStatement(JSON_MAPPER.readTree(policy));
-    assertThat(statement.findPath(KMS_ENCRYPTION_CONTEXT_KEY))
-        .map(JsonNode::asText)
-        .containsExactlyInAnyOrder(
-            "arn:aws:s3:::my-bucket1",
-            "arn:aws:s3:::my-bucket1/path1/table1/*",
-            "arn:aws:s3:::my-bucket1/path1/table1",
-            "arn:aws:s3:::my-bucket2",
-            "arn:aws:s3:::my-bucket2/*");
-  }
-
-  @Test
-  public void testKmsEncryptionContextEscapesIamSpecialCharacters() throws Exception {
-    String policy =
-        AwsPolicyGenerator.generatePolicy(
-            Set.of(UPDATE), List.of(NormalizedURL.from("s3://victim-bucket/*")));
-
-    JsonNode statement = findKmsStatement(JSON_MAPPER.readTree(policy));
-    assertThat(statement.findPath(KMS_ENCRYPTION_CONTEXT_KEY))
-        .map(JsonNode::asText)
-        .containsExactly(
-            "arn:aws:s3:::victim-bucket",
-            "arn:aws:s3:::victim-bucket/${*}/*",
-            "arn:aws:s3:::victim-bucket/${*}")
-        .doesNotContain("arn:aws:s3:::victim-bucket/*", "arn:aws:s3:::victim-bucket/*/*");
+    // STS rejects AssumeRole when the packed session policy hits 100%. The plaintext limit is
+    // 2048 characters; staying well under that keeps packed size in budget on long usgov paths.
+    assertThat(policy.length()).isLessThan(1600);
+    assertThat(policy).doesNotContain("kms:EncryptionContext");
   }
 
   @Test
@@ -303,12 +279,9 @@ public class AwsPolicyGeneratorTest {
             expectedBucketArn + "/path1/table1/*", expectedBucketArn + "/path1/table1");
     assertThat(root.get("Statement").get(1).get("Resource").get(0).asText())
         .isEqualTo(expectedBucketArn);
-    assertThat(findKmsStatement(root).findPath(KMS_ENCRYPTION_CONTEXT_KEY))
-        .map(JsonNode::asText)
-        .containsExactly(
-            expectedBucketArn,
-            expectedBucketArn + "/path1/table1/*",
-            expectedBucketArn + "/path1/table1");
+    assertThat(findKmsStatement(root).findPath("kms:ViaService").asText())
+        .isEqualTo("s3.*.amazonaws.com");
+    assertThat(policy).doesNotContain("kms:EncryptionContext");
   }
 
   @Test
