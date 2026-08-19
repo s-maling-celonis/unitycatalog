@@ -261,6 +261,72 @@ public class AwsPolicyGeneratorTest {
         .containsExactly("s3:ListBucket");
   }
 
+  @ParameterizedTest(name = "{index}: region {0} -> partition {1}")
+  @CsvSource({
+    "us-east-1, aws",
+    "us-west-2, aws",
+    "us-gov-west-1, aws-us-gov",
+    "us-gov-east-1, aws-us-gov",
+    "cn-north-1, aws-cn",
+    "cn-northwest-1, aws-cn",
+    "'', aws"
+  })
+  public void testS3PartitionIdFromRegion(String region, String expectedPartition) {
+    assertThat(AwsPolicyGenerator.s3PartitionId(region)).isEqualTo(expectedPartition);
+  }
+
+  @Test
+  public void testNullRegionDefaultsToAwsPartition() {
+    assertThat(AwsPolicyGenerator.s3PartitionId(null)).isEqualTo("aws");
+  }
+
+  @ParameterizedTest(name = "{index}: {0} uses {1}")
+  @CsvSource({
+    "us-east-1, arn:aws:s3:::my-bucket",
+    "us-gov-west-1, arn:aws-us-gov:s3:::my-bucket",
+    "cn-north-1, arn:aws-cn:s3:::my-bucket",
+    "'', arn:aws:s3:::my-bucket"
+  })
+  public void testSessionPolicyS3ArnsUseRegionPartition(String region, String expectedBucketArn)
+      throws Exception {
+    String policy =
+        AwsPolicyGenerator.generatePolicy(
+            Set.of(SELECT),
+            List.of(NormalizedURL.from("s3://my-bucket/path1/table1")),
+            true,
+            region);
+
+    JsonNode root = JSON_MAPPER.readTree(policy);
+    assertThat(root.get("Statement").get(0).get("Resource"))
+        .map(JsonNode::asText)
+        .containsExactly(
+            expectedBucketArn + "/path1/table1/*", expectedBucketArn + "/path1/table1");
+    assertThat(root.get("Statement").get(1).get("Resource").get(0).asText())
+        .isEqualTo(expectedBucketArn);
+    assertThat(findKmsStatement(root).findPath(KMS_ENCRYPTION_CONTEXT_KEY))
+        .map(JsonNode::asText)
+        .containsExactly(
+            expectedBucketArn,
+            expectedBucketArn + "/path1/table1/*",
+            expectedBucketArn + "/path1/table1");
+  }
+
+  @Test
+  public void testGovCloudPolicyDoesNotEmitCommercialS3Arns() throws Exception {
+    String policy =
+        AwsPolicyGenerator.generatePolicy(
+            Set.of(UPDATE),
+            List.of(NormalizedURL.from("s3://gov-bucket/path/table")),
+            true,
+            "us-gov-west-1");
+
+    assertThat(policy)
+        .contains("arn:aws-us-gov:s3:::gov-bucket")
+        .doesNotContain("arn:aws:s3:::gov-bucket");
+    JsonNode statement = findKmsStatement(JSON_MAPPER.readTree(policy));
+    assertThat(statement.findPath("kms:ViaService").asText()).isEqualTo("s3.*.amazonaws.com");
+  }
+
   @Test
   public void testGeneratePolicyOmitsKmsWhenDisabled() throws Exception {
     String policy =
