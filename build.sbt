@@ -56,6 +56,20 @@ lazy val openApiToolsJacksonBindNullableVersion = "0.2.6"
 lazy val log4jVersion = "2.25.3"
 val orgApacheHttpVersion = "4.5.14"
 
+// brotli4j (transitive via Armeria) selects its native binary through an
+// OS/architecture-activated Maven profile, so the coordinate *name* differs by
+// build host: native-osx-aarch64 on an arm64 Mac, native-linux-x86_64 on the CI
+// runner. Keep the arch-specific shard out of the SCA locks so they stay
+// host-independent and dependencyLockCheck is winnable from any machine. The
+// parent com.aayushatharva.brotli4j:brotli4j artifact remains locked at its real
+// version, so the library is still visible to the scanner -- only the packaged
+// binary, which advisories are not issued against, is omitted.
+//
+// GlobFilter is required: sbt's implicit String => NameFilter is an exact match,
+// so a bare "native-*" would silently match nothing.
+ThisBuild / dependencyLockModuleFilter :=
+  moduleFilter(organization = "com.aayushatharva.brotli4j", name = GlobFilter("native-*"))
+
 lazy val commonSettings = Seq(
   organization := orgName,
   // Compilation configs
@@ -146,6 +160,15 @@ def javafmtCheckSettings() = Seq(
   (Compile / compile) := ((Compile / compile) dependsOn (Compile / javafmtAll)).value
 )
 
+// sbt-dependency-lock writes each project's build.sbt.lock into that project's
+// base directory, and the OpenAPI-generated projects are based inside gitignored
+// generated-output trees -- so their locks could never be committed. Redirect
+// them under dev/sca/. Cycode's SCA scan discovers lock files by matching the
+// build.sbt.lock filename anywhere in the tree, so the directory does not matter
+// (CBE-56140; see dev/dependency-locks.md).
+def scaLockUnder(dir: String) =
+  dependencyLockFile := (ThisBuild / baseDirectory).value / "dev" / "sca" / dir / "build.sbt.lock"
+
 lazy val controlApi = (project in file("target/control/java"))
   .enablePlugins(OpenApiGeneratorPlugin)
   .disablePlugins(JavaFormatterPlugin, CheckstylePlugin)
@@ -165,6 +188,7 @@ lazy val controlApi = (project in file("target/control/java"))
       "org.apache.httpcomponents" % "httpclient" % orgApacheHttpVersion,
       "org.apache.httpcomponents" % "httpmime" % orgApacheHttpVersion,
     ),
+    scaLockUnder("controlapi"),
     (Compile / compile) := ((Compile / compile) dependsOn generate).value,
 
     // OpenAPI generation specs
@@ -505,6 +529,7 @@ lazy val serverModels = (project in file("server") / "target" / "models")
       "jakarta.annotation" % "jakarta.annotation-api" % "3.0.0" % Provided,
       "com.fasterxml.jackson.core" % "jackson-annotations" % jacksonVersion,
     ),
+    scaLockUnder("servermodels"),
     // Generate model codes from both all.yaml and delta.yaml into the same output directory.
     // Both use "resteasy" for minimal server-side models (no client SDK dependencies).
     // Polymorphic types (TableUpdate, TableRequirement, DataType) use the
@@ -549,6 +574,7 @@ lazy val controlModels = (project in file("server") / "target" / "controlmodels"
       "jakarta.annotation" % "jakarta.annotation-api" % "3.0.0" % Provided,
       "com.fasterxml.jackson.core" % "jackson-annotations" % jacksonVersion,
     ),
+    scaLockUnder("controlmodels"),
     // OpenAPI generation configs for generating model codes from the spec
     openApiInputSpec := (file(".") / "api" / "control.yaml").toString,
     openApiGeneratorName := "java",
@@ -821,7 +847,7 @@ lazy val root = (project in file("."))
     name := s"$artifactNamePrefix",
     createTarballSettings(),
     commonSettings,
-    rootReleaseSettings
+    rootReleaseSettings,
   )
 
 def generateClasspathFile(targetDir: File, classpath: Classpath): Unit = {

@@ -1,0 +1,11 @@
+# Cycode scan configuration (CBE-56140).
+#
+# The Python client, the UI and the AI components are not built by default CI and
+# are not shipped in the unity-catalog-server image, so their dependencies are
+# excluded from SCA scanning to keep findings limited to what we actually deliver.
+exclusions:
+  sca:
+    paths:
+    - /clients/python
+    - /ui
+    - /ai
