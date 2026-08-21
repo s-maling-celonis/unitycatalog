@@ -174,8 +174,10 @@ bin/uc external_location create --name my_loc --url s3://my-bucket/path --creden
 ```
 
 Temporary credential APIs then return the matching access key and secret (with a stamped
-expiration). The underlying key does not expire, and clients pick up a rotation after the stamped
-TTL. To rotate, add the new pair alongside the old one and point the credential at it:
+expiration, and typically no session token). The Hadoop/Spark connector applies access and secret
+only in that case (`AwsBasicCredentials` / `fs.s3a.access.key` + `fs.s3a.secret.key`) so S3A can
+talk to STS-less stores. IAM-role credentials still vend and use an STS session token as before.
+The underlying key does not expire, and clients pick up a rotation after the stamped TTL. To rotate, add the new pair alongside the old one and point the credential at it:
 
 ```sh
 # server.properties: s3.static.secretKey.AKIAEXAMPLE2=...
