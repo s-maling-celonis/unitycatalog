@@ -16,6 +16,7 @@ import org.apache.hadoop.fs.s3a.AWSCredentialProviderList;
 import org.apache.hadoop.fs.s3a.Constants;
 import org.apache.hadoop.fs.s3a.auth.CredentialProviderListFactory;
 import org.junit.jupiter.api.Test;
+import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
 import software.amazon.awssdk.auth.credentials.AwsCredentialsProvider;
 import software.amazon.awssdk.auth.credentials.AwsSessionCredentials;
 
@@ -120,5 +121,20 @@ public class AwsVendedTokenProviderTest extends BaseTokenProviderTest<AwsVendedT
     List<AwsCredentialsProvider> providers = list.getProviders();
     assertThat(providers).hasSize(1);
     assertThat(providers.get(0)).isInstanceOf(AwsVendedTokenProvider.class);
+  }
+
+  @Test
+  public void staticAccessKeyWithoutSessionTokenUsesBasicCredentials() {
+    Configuration conf = newTableBasedConf("unity-catalog-table");
+    conf.set(UCHadoopConfConstants.S3A_INIT_ACCESS_KEY, "ak");
+    conf.set(UCHadoopConfConstants.S3A_INIT_SECRET_KEY, "sk");
+    conf.setLong(UCHadoopConfConstants.S3A_INIT_CRED_EXPIRED_TIME, Long.MAX_VALUE);
+
+    AwsVendedTokenProvider provider = new AwsVendedTokenProvider(conf);
+    software.amazon.awssdk.auth.credentials.AwsCredentials actual = provider.resolveCredentials();
+
+    assertThat(actual).isInstanceOf(AwsBasicCredentials.class);
+    assertThat(actual.accessKeyId()).isEqualTo("ak");
+    assertThat(actual.secretAccessKey()).isEqualTo("sk");
   }
 }

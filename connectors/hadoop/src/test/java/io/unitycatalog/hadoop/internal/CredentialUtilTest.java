@@ -70,6 +70,14 @@ class CredentialUtilTest {
             new AwsCredential(
                 "access-key", "secret-key", "session-token", EXPIRATION, "s3://bucket/table")),
         Arguments.of(
+            "AWS without session token",
+            new TemporaryCredentials()
+                .awsTempCredentials(
+                    new AwsCredentials().accessKeyId("access-key").secretAccessKey("secret-key"))
+                .expirationTime(EXPIRATION)
+                .url("s3://bucket/table"),
+            new AwsCredential("access-key", "secret-key", null, EXPIRATION, "s3://bucket/table")),
+        Arguments.of(
             "Azure",
             new TemporaryCredentials()
                 .azureUserDelegationSas(new AzureUserDelegationSAS().sasToken("sas-token"))

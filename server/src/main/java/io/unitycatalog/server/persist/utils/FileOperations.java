@@ -185,7 +185,9 @@ public class FileOperations {
     Map<String, String> config = new HashMap<>();
     config.put(S3FileIOProperties.ACCESS_KEY_ID, awsCredentials.getAccessKeyId());
     config.put(S3FileIOProperties.SECRET_ACCESS_KEY, awsCredentials.getSecretAccessKey());
-    config.put(S3FileIOProperties.SESSION_TOKEN, awsCredentials.getSessionToken());
+    if (awsCredentials.getSessionToken() != null && !awsCredentials.getSessionToken().isEmpty()) {
+      config.put(S3FileIOProperties.SESSION_TOKEN, awsCredentials.getSessionToken());
+    }
     config.put(AwsClientProperties.CLIENT_REGION, s3Region);
     String endpointUrl = s3BucketEndpointMap.get(path.getStorageBase());
     if (endpointUrl != null) {
