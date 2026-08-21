@@ -354,6 +354,10 @@ steps with Spark as an authenticated client to UC.
 
 ## Using Google Identity with Unity Catalog UI
 
+This fork does not include the OSS UI sources (`ui/`). The steps below apply to
+[upstream `ui/`](https://github.com/unitycatalog/unitycatalog/tree/main/ui), or to a running
+published UI container.
+
 We previously configured Google as the Identity Provider and configured UC Server settings for CLI access. However, we
 can also apply this authentication and authorization to the Unity Catalog UI.
 
