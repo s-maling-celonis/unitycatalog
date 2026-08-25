@@ -67,7 +67,7 @@ You have to ensure that your local environment has the following:
 
 - Clone this repository.
 - Ensure the `JAVA_HOME` environment variable your terminal is configured to point to JDK17.
-- Compile the project using `build/sbt package`
+- Compile the project using `mvn package`
 
 ### Run the UC Server
 
@@ -166,21 +166,21 @@ See the [cli usage](docs/usage/cli.md) for more details.
 
 ## Building Unity Catalog
 
-Unity Catalog is built using [sbt](https://www.scala-sbt.org/).
+Unity Catalog is built using [Maven](https://maven.apache.org/). Use **JDK 17** to compile and run tests. The enforcer plugin allows JDK 17–24 (`[17,25)`); JDK 25+ is rejected because Hadoop 3.4.2 still calls `Subject.getSubject`, which was removed in Java 25. Bytecode `--release` is 17 for the server and 11 for the Java client and Spark connector.
 
 To build UC (incl. [Spark Integration](./connectors/spark) module), run the following command:
 
 ```sh
-build/sbt clean package publishLocal
+mvn clean package
 ```
 
-Refer to [sbt docs](https://www.scala-sbt.org/1.x/docs/) for more commands.
+Spark line is selected with `-DsparkVersion=4.0`, `4.1` (default), or `4.2`. The reactor module is `unitycatalog-spark`; `mvn install` also publishes the Spark-suffixed coordinate used by `--packages` (`unitycatalog-spark_4.1_2.13` by default). Use `-DskipSparkSuffix=true` for `unitycatalog-spark_2.13`. Use `-DskipDeltaSpark=true` when a matching `delta-spark` artifact is not available yet.
 
 ## Deployment
 
 - To create a tarball that can be used to deploy the UC server or run the CLI, run the following:
   ```sh
-  build/sbt createTarball
+  mvn -Pdist package -DskipTests
   ```
   This will create a tarball in the `target` directory. See the full [deployment guide](docs/deployment.md) for more details.
 
@@ -190,24 +190,35 @@ Refer to [sbt docs](https://www.scala-sbt.org/1.x/docs/) for more commands.
   set that version to be the default Java version (e.g. via the env variable `JAVA_HOME`)
 - To compile all the code without running tests, run the following:
   ```sh
-  build/sbt clean compile
+  mvn clean compile
   ```
 - To compile and execute tests, run the following:
   ```sh
-  build/sbt -J-Xmx2G clean test
+  mvn -T 1C clean test
   ```
+- To test a single module without re-running upstream tests (`-am test` would), run:
+  ```sh
+  ./dev/maven/test-module.sh examples/cli
+  ./dev/maven/test-module.sh connectors/spark
+  ```
+  The script installs SNAPSHOT dependencies with tests skipped, then runs tests only in the selected module.
+  Checkstyle runs during `compile` for Java modules (`-Dcheckstyle.skip=true` to skip).
 - To execute tests with coverage, run the following:
   ```sh
-  build/sbt -J-Xmx2G jacoco
+  mvn verify
+  ```
+- To regenerate the third-party license report (also run in CI on the primary test combo):
+  ```sh
+  mvn license:aggregate-add-third-party
   ```
 - To update the API specification, just update the `api/all.yaml` and then run the following:
   ```sh
-  build/sbt generate
+  mvn generate-sources
   ```
   This will regenerate the OpenAPI data models in the UC server and data models + APIs in the client SDK.
 - To format the code, run the following:
   ```sh
-  build/sbt javafmtAll
+  mvn spotless:apply
   ```
 
 ## Setting up IDE
@@ -216,11 +227,11 @@ IntelliJ is the recommended IDE to use when developing Unity Catalog. The below 
 
 1. Clone Unity Catalog into a local folder, such as `~/unitycatalog`.
 2. Select `File` > `New Project` > `Project from Existing Sources...` and select `~/unitycatalog`.
-3. Under `Import project from external model` select `sbt`. Click `Next`.
+3. Under `Import project from external model` select `Maven`. Click `Next`.
 4. Click `Finish`.
 
-Java code adheres to the [Google style](https://google.github.io/styleguide/javaguide.html), which is verified via `build/sbt javafmtCheckAll` during builds.
-In order to automatically fix Java code style issues, please use `build/sbt javafmtAll`.
+Java code adheres to the [Google style](https://google.github.io/styleguide/javaguide.html), which is verified via `mvn spotless:check` during CI.
+In order to automatically fix Java code style issues, please use `mvn spotless:apply`.
 
 ### Configuring Code Formatter for Eclipse/IntelliJ
 
@@ -229,8 +240,7 @@ Follow the instructions for [Eclipse](https://github.com/google/google-java-form
 
 ### Using more recent JDKs
 
-The build script [checks for a lower bound on the JDK](./build.sbt#L14) but the [current SBT version](./project/build.properties)
-imposes an upper bound. Please check the [JDK compatibility](https://docs.scala-lang.org/overviews/jdk-compatibility/overview.html) documentation for more information
+The Maven build [requires JDK 17–24](./pom.xml) via the enforcer plugin (`[17,25)`). Spark and Hadoop modules still compile with `--release 11` / `17` for runtime compatibility. Run tests on **JDK 17**; Hadoop and CLI Delta tests fail on JDK 25+ (`Subject.getSubject` removed).
 
 ### Serving the documentation with mkdocs
 

@@ -50,9 +50,8 @@ import org.sparkproject.guava.collect.Iterators;
  * export CATALOG_URI=...
  * export CATALOG_AUTH_TOKEN=...
  * export S3_BASE_LOCATION=...
- * SBT_OPTS="-Xmx8G -XX:+UseG1GC" \
- * ./build/sbt \
- * "integrationTests/testOnly io.unitycatalog.integrationtests.SparkCredentialRenewalTest"
+ * MAVEN_OPTS="-Xmx8G -XX:+UseG1GC" \
+ * mvn -pl integration-tests -am test -Dtest=SparkCredentialRenewalTest
  * </pre>
  */
 public class SparkCredentialRenewalTest {

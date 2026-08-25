@@ -9,7 +9,7 @@ This guide outlines how to deploy the Unity Catalog server.
 - To generate the tarball, run the following command in the source code:
 
     ```sh
-    build/sbt createTarball
+    mvn -Pdist package -DskipTests
     ```
 
 ### Unpacking the tarball

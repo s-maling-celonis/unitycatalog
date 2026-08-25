@@ -11,13 +11,12 @@ runs:
       with:
         java-version: '17'
         distribution: 'zulu'
-        cache: 'sbt'
+        cache: 'maven'
 
     - name: Restore UC build cache
       uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
       with:
         path: |
-          ~/.ivy2/local/io/unitycatalog
           ~/.m2/repository/io/unitycatalog
           server/target
           server-shaded/target
@@ -26,6 +25,6 @@ runs:
           connectors/spark/target
           examples/cli/target
           integration-tests/target
-          target/control/java/target
+          control-api/target
         key: uc-build-${{ github.run_id }}
         fail-on-cache-miss: true

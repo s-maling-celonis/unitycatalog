@@ -24,7 +24,7 @@ runs:
       with:
         java-version: '17'
         distribution: 'zulu'
-        cache: 'sbt'
+        cache: 'maven'
 
     - name: Resolve Spark source build
       if: inputs.use-spark-source-cache == 'true'
@@ -84,6 +84,6 @@ runs:
           echo "Spark Maven artifacts are not present after restore/build."
           exit 1
         fi
-        # build_delta.sh and sbt read these to resolve the commit-qualified Spark artifacts.
+        # build_delta.sh and Maven/Delta read these to resolve commit-qualified Spark artifacts.
         echo "SPARK_COMMIT=${{ steps.spark-source.outputs.spark_sha }}" >> "$GITHUB_ENV"
         echo "SPARK_ARTIFACT_VERSION=$SPARK_ARTIFACT_VERSION" >> "$GITHUB_ENV"

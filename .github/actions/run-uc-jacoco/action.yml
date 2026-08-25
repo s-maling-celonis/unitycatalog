@@ -1,13 +1,11 @@
 name: Run UC JaCoCo tests
 description: >-
-  Restore the shared UC build cache and run JaCoCo for one or more sbt projects.
-  The calling job must run actions/checkout first.
+  Restore the shared UC build cache and run Maven verify (including JaCoCo) for
+  one reactor module. The calling job must run actions/checkout first.
 
 inputs:
-  sbt-targets:
-    description: >-
-      Space-separated sbt targets, e.g. "server/jacoco" or
-      "serverModels/jacoco controlApi/jacoco".
+  maven-pl:
+    description: Maven -pl module path, e.g. "server" or "connectors/hadoop".
     required: true
   spark-version:
     description: Optional Spark version (-DsparkVersion) for connector tests.
@@ -34,4 +32,4 @@ runs:
         if [[ -n "${{ inputs.delta-version }}" ]]; then
           SPARK_ARGS="$SPARK_ARGS -DdeltaVersion=${{ inputs.delta-version }}"
         fi
-        build/sbt $SPARK_ARGS -J-Xmx2G ${{ inputs.sbt-targets }}
+        mvn -B $SPARK_ARGS -pl ${{ inputs.maven-pl }} verify

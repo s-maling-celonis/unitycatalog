@@ -73,28 +73,28 @@ runs:
       run: |
         case "${{ inputs.component-name }}" in
           unity-catalog-server)
-            echo "sbt-project=server"
+            echo "maven-pl=server"
             echo "project-path=server"
             echo "needs-image=true"
             echo "docker-context=."
             ;;
           unitycatalog-client)
-            echo "sbt-project=client"
+            echo "maven-pl=clients/java"
             echo "project-path=clients/java"
             echo "publishes-maven=true"
             ;;
           unitycatalog-controlapi)
-            echo "sbt-project=controlApi"
-            echo "project-path=target/control/java"
+            echo "maven-pl=control-api"
+            echo "project-path=control-api"
             echo "publishes-maven=true"
             ;;
           unitycatalog-hadoop)
-            echo "sbt-project=hadoop"
+            echo "maven-pl=connectors/hadoop"
             echo "project-path=connectors/hadoop"
             echo "publishes-maven=true"
             ;;
           unitycatalog-spark)
-            echo "sbt-project=spark"
+            echo "maven-pl=connectors/spark"
             echo "project-path=connectors/spark"
             echo "publishes-maven=true"
             ;;
@@ -111,8 +111,7 @@ runs:
         UC_HOME="${GITHUB_WORKSPACE}/${{ inputs.working-directory }}/build/ci-staging/home"
         echo "UC_HOME=$UC_HOME" >> "$GITHUB_ENV"
         echo "HOME=$UC_HOME" >> "$GITHUB_ENV"
-        echo "COURSIER_CACHE=$UC_HOME/.cache/coursier" >> "$GITHUB_ENV"
-        mkdir -p "$UC_HOME/.cache/coursier"
+        mkdir -p "$UC_HOME/.m2"
 
     - name: Setup Java
       uses: celonis/core-setup-java-action@v4.0.2
@@ -130,11 +129,10 @@ runs:
       run: |
         set -euo pipefail
 
-        build_sbt_module() {
-          local sbt_project="$1"
+        build_maven_module() {
+          local maven_pl="$1"
           local project_path="$2"
-          build/sbt "set ThisBuild / version := \"${REPO_DEPOT_VERSION}\"" \
-            "$sbt_project/package" "$sbt_project/makePom"
+          mvn -B -pl "$maven_pl" -am package -DskipTests
           sed -i 's#git@github.com:unitycatalog/unitycatalog.git#git@github.com:celonis/unitycatalog.git#g' \
             "$(find "$project_path" -name '*.pom')"
           sed -i 's#<groupId>io.unitycatalog</groupId>#<groupId>cloud.celonis</groupId>#g' \
@@ -143,11 +141,10 @@ runs:
 
         case "${{ inputs.component-name }}" in
           unity-catalog-server)
-            # PREBUILT staging home is configured before Setup Java.
-            mkdir -p "${HOME}/.cache/coursier"
+            mkdir -p "${HOME}/.m2"
             ;;
           unitycatalog-client|unitycatalog-controlapi|unitycatalog-hadoop|unitycatalog-spark)
-            build_sbt_module "${{ steps.component.outputs.sbt-project }}" "${{ steps.component.outputs.project-path }}"
+            build_maven_module "${{ steps.component.outputs.maven-pl }}" "${{ steps.component.outputs.project-path }}"
             ;;
           *)
             echo "Unsupported component: ${{ inputs.component-name }}" >&2
@@ -208,27 +205,24 @@ runs:
       env:
         CI: true
         REPO_DEPOT_VERSION: ${{ inputs.image-tag }}
-        # sbt JVM heap for RepoDepot test/assembly (tuned for ~8GB runners; bump if OOM on larger runners).
-        SBT_HEAP: -J-Xmx6g
+        # Maven heap for RepoDepot test/package (tuned for ~8GB runners; bump if OOM on larger runners).
+        MAVEN_OPTS: -Xmx6g
       run: |
         set -euo pipefail
         df -h
 
         case "${{ inputs.component-name }}" in
           unity-catalog-server)
-            build/sbt "set ThisBuild / version := \"${REPO_DEPOT_VERSION}\"" \
-              $SBT_HEAP server/test server/package cli/package
+            mvn -B -pl server,examples/cli -am verify
             ;;
           unitycatalog-client|unitycatalog-controlapi)
-            build/sbt $SBT_HEAP "${{ steps.component.outputs.sbt-project }}/test"
+            mvn -B -pl "${{ steps.component.outputs.maven-pl }}" -am test
             ;;
           unitycatalog-hadoop)
-            build/sbt $SBT_HEAP serverShaded/assembly \
-              "${{ steps.component.outputs.sbt-project }}/test"
+            mvn -B -pl server-shaded,connectors/hadoop -am test
             ;;
           unitycatalog-spark)
-            build/sbt $SBT_HEAP -DsparkVersion=4.1.0 -DdeltaVersion=4.3.1 publishLocal \
-              "${{ steps.component.outputs.sbt-project }}/test"
+            mvn -B -DsparkVersion=4.1.0 -DdeltaVersion=4.3.1 -pl connectors/spark -am test
             ;;
           *)
             echo "Unsupported component: ${{ inputs.component-name }}" >&2
@@ -247,29 +241,28 @@ runs:
         # .dockerignore excludes server/target/ and examples/cli/target/; stage under build/.
         rm -rf build/ci-staging/prebuilt/server/target \
           build/ci-staging/prebuilt/examples/cli/target \
-          build/ci-staging/prebuilt/target/control/java/target \
+          build/ci-staging/prebuilt/control-api/target \
           build/ci-staging/prebuilt/home
         mkdir -p build/ci-staging/prebuilt/server \
           build/ci-staging/prebuilt/examples/cli \
-          build/ci-staging/prebuilt/target/control/java \
+          build/ci-staging/prebuilt/control-api \
           build/ci-staging/prebuilt/home
         cp -a server/target build/ci-staging/prebuilt/server/
         cp -a examples/cli/target build/ci-staging/prebuilt/examples/cli/
-        cp -a target/control/java/target build/ci-staging/prebuilt/target/control/java/
+        cp -a control-api/target build/ci-staging/prebuilt/control-api/
 
-        # server/test pulls Spark/Delta/etc. into Coursier. Copy only jars that
-        # the runtime classpaths reference so the PREBUILT image does not ship
-        # the test cache (the previous full-cache copy fills 4 CPU runner disks).
+        # Copy only jars that the runtime classpaths reference so the PREBUILT
+        # image does not ship the test cache.
         CACHE_SRC=""
-        if [ -d "${HOME}/.cache" ]; then
-          CACHE_SRC="${HOME}/.cache"
-        elif [ -d /home/runner/.cache ]; then
-          CACHE_SRC="/home/runner/.cache"
+        if [ -d "${HOME}/.m2" ]; then
+          CACHE_SRC="${HOME}/.m2"
+        elif [ -d /home/runner/.m2 ]; then
+          CACHE_SRC="/home/runner/.m2"
         else
-          echo "No coursier cache found under HOME or /home/runner/.cache" >&2
+          echo "No Maven cache found under HOME or /home/runner/.m2" >&2
           exit 1
         fi
-        slim_cache="build/ci-staging/prebuilt/home/.cache"
+        slim_cache="build/ci-staging/prebuilt/home/.m2"
         mkdir -p "$slim_cache"
         for classpath in \
           build/ci-staging/prebuilt/server/target/classpath \
@@ -278,8 +271,7 @@ runs:
             echo "Missing $classpath" >&2
             exit 1
           fi
-          sed -i "s|/home/runner/.cache|${HOME}/.cache|g" "$classpath"
-          # read returns 1 on EOF even after a successful line; do not fail set -e.
+          sed -i "s|/home/runner/.m2|${HOME}/.m2|g" "$classpath"
           IFS=':' read -r -a entries < "$classpath" || true
           if [ "${#entries[@]}" -eq 0 ]; then
             echo "Empty classpath: $classpath" >&2
@@ -287,11 +279,11 @@ runs:
           fi
           for entry in "${entries[@]}"; do
             case "$entry" in
-              "${HOME}/.cache/"*)
-                rel="${entry#${HOME}/.cache/}"
+              "${HOME}/.m2/"*)
+                rel="${entry#${HOME}/.m2/}"
                 ;;
-              /home/runner/.cache/*)
-                rel="${entry#/home/runner/.cache/}"
+              /home/runner/.m2/*)
+                rel="${entry#/home/runner/.m2/}"
                 ;;
               *)
                 continue
@@ -309,12 +301,11 @@ runs:
             fi
           done
         done
-        echo "Coursier cache before/after slimming:"
+        echo "Maven cache before/after slimming:"
         du -sh "$CACHE_SRC" "$slim_cache" || true
 
-        # Staged copies are under build/ci-staging/prebuilt; drop workspace duplicates.
-        rm -rf server/target examples/cli/target target/control/java/target
-        rm -rf "${HOME}/.cache" /home/runner/.cache/coursier 2>/dev/null || true
+        rm -rf server/target examples/cli/target control-api/target
+        rm -rf "${HOME}/.m2" /home/runner/.m2/repository 2>/dev/null || true
         docker builder prune -af || true
         docker system prune -af --volumes || true
         df -h
@@ -404,9 +395,9 @@ runs:
             ls -la /home/unitycatalog/examples/cli/target 2>&1 || ls -la /home/unitycatalog/examples/cli 2>&1 || true
             exit 1
           fi
-          grep -q "/home/unitycatalog/.cache" "$CLASSPATH"
-          grep -q "/home/unitycatalog/.cache" "$CLI_CLASSPATH"
-          test -d /home/unitycatalog/.cache/coursier
+          grep -q "/home/unitycatalog/.m2" "$CLASSPATH"
+          grep -q "/home/unitycatalog/.m2" "$CLI_CLASSPATH"
+          test -d /home/unitycatalog/.m2
           test -x /home/unitycatalog/bin/uc
           /home/unitycatalog/bin/uc --help >/dev/null
         '

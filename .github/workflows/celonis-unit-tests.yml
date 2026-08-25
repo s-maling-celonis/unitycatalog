@@ -43,9 +43,9 @@ jobs:
       matrix:
         project:
           - server
-          - hadoop
-          - client
-          - cli
+          - connectors/hadoop
+          - clients/java
+          - examples/cli
     steps:
       - name: Checkout Branch
         uses: actions/checkout@v4.1.2
@@ -55,7 +55,7 @@ jobs:
       - name: Run module JaCoCo
         uses: ./.github/actions/run-uc-jacoco
         with:
-          sbt-targets: ${{ matrix.project }}/jacoco
+          maven-pl: ${{ matrix.project }}
 
   aggregate-module-tests:
     name: Unit tests (generated modules)
@@ -67,11 +67,10 @@ jobs:
         with:
           ref: ${{ github.ref }}
           token: ${{ secrets.CELOBOT_GITHUB_TOKEN }}
-      - name: Run generated module JaCoCo
+      - name: Compile generated control-api
         uses: ./.github/actions/run-uc-jacoco
         with:
-          sbt-targets: >-
-            serverModels/jacoco controlApi/jacoco controlModels/jacoco apiDocs/jacoco
+          maven-pl: control-api
 
   spark-tests:
     name: Spark tests (Spark ${{ matrix.spark-version }}, Delta ${{ matrix.delta-version }})
@@ -114,4 +113,4 @@ jobs:
         uses: ./.github/actions/restore-uc-build-cache
       - name: Run license check
         shell: bash
-        run: build/sbt licenseCheck
+        run: mvn -B license:aggregate-add-third-party

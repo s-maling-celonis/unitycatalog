@@ -1,6 +1,6 @@
 package io.unitycatalog.server.persist;
 
-import io.unitycatalog.control.model.User;
+import io.unitycatalog.server.control.model.User;
 import io.unitycatalog.server.exception.BaseException;
 import io.unitycatalog.server.exception.ErrorCode;
 import io.unitycatalog.server.persist.dao.UserDAO;
