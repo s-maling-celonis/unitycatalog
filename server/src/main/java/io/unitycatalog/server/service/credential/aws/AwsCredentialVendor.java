@@ -14,6 +14,8 @@ import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
 import lombok.Getter;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.services.sts.StsClient;
 import software.amazon.awssdk.services.sts.StsClientBuilder;
 import software.amazon.awssdk.services.sts.model.Credentials;
@@ -37,6 +39,8 @@ import software.amazon.awssdk.services.sts.model.Credentials;
  * </ol>
  */
 public class AwsCredentialVendor {
+
+  private static final Logger LOGGER = LoggerFactory.getLogger(AwsCredentialVendor.class);
 
   private final ServerProperties serverProperties;
   private final Map<NormalizedURL, S3StorageConfig> perBucketS3Configs;
@@ -112,10 +116,19 @@ public class AwsCredentialVendor {
     if (context.getCredentialDAO().isPresent()) {
       CredentialDAO credentialDAO = context.getCredentialDAO().get();
       if (credentialDAO.getCredentialType() == CredentialDAO.CredentialType.S3_ACCESS_KEY) {
+        LOGGER.debug(
+            "Vending S3 credentials using static access key: credential={}, storageBase={}",
+            credentialDAO.getName(),
+            context.getStorageBase());
         generator =
             createStaticAccessKeyGenerator(
                 credentialDAO.getAwsS3AccessKeyResponse().getAccessKeyId());
       } else if (credentialDAO.getCredentialType() == CredentialDAO.CredentialType.AWS_IAM_ROLE) {
+        LOGGER.debug(
+            "Vending S3 credentials using STS AssumeRole: credential={}, roleArn={}, storageBase={}",
+            credentialDAO.getName(),
+            credentialDAO.getAwsIamRoleResponse().getRoleArn(),
+            context.getStorageBase());
         generator = getAwsS3MasterRoleStsGenerator();
       } else {
         throw new BaseException(
