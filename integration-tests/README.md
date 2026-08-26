@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- Run `build/sbt clean package publishLocal` to publish spark connector to local maven cache
+- Run `mvn clean install -DskipTests` to publish the Spark connector to the local Maven cache
 - These tests currently assume you have existing cloud resources set up (e.g. S3 bucket & IAM role for S3)
  
 ## Set up catalog
@@ -47,6 +47,6 @@ export ABFSS_BASE_LOCATION=abfss://<container>@<account_name>.dfs.core.windows.n
 
 Finally, run the tests:
 ```sh
-build/sbt integrationTests/test
+mvn -pl integration-tests -am test
 ```
  

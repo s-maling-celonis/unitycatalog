@@ -331,7 +331,7 @@ public class SdkExternalLocationAccessControlTest extends SdkAccessControlBaseCR
             new TablesApi(apiClient)
                 .createTable(createExternalTableRequest(name, location))
                 .getStorageLocation(),
-      "PERMISSION_DENIED");
+        "PERMISSION_DENIED");
   }
 
   /**
@@ -349,7 +349,7 @@ public class SdkExternalLocationAccessControlTest extends SdkAccessControlBaseCR
                     deltaExternalTableRequest(name, location))
                 .getMetadata()
                 .getLocation(),
-      "PermissionDeniedException");
+        "PermissionDeniedException");
   }
 
   @FunctionalInterface
@@ -514,8 +514,7 @@ public class SdkExternalLocationAccessControlTest extends SdkAccessControlBaseCR
   }
 
   /** Minimum valid DeltaCreateTableRequest for an EXTERNAL Delta table. */
-  private static DeltaCreateTableRequest
-      deltaExternalTableRequest(String name, String location) {
+  private static DeltaCreateTableRequest deltaExternalTableRequest(String name, String location) {
     return new DeltaCreateTableRequest()
         .name(name)
         .location(location)
@@ -533,9 +532,7 @@ public class SdkExternalLocationAccessControlTest extends SdkAccessControlBaseCR
                     List.of(
                         new DeltaStructField()
                             .name("id")
-                            .type(
-                                new DeltaPrimitiveType()
-                                    .type("long"))
+                            .type(new DeltaPrimitiveType().type("long"))
                             .nullable(true)
                             .metadata(new DeltaStructFieldMetadata()))))
         .properties(java.util.Map.of("delta.enableDeletionVectors", "true"))

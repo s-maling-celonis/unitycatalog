@@ -24,12 +24,14 @@ public class BaseSparkTest {
             .appName("test")
             .master("local[*]")
             .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
-            .config("spark.sql.catalog.spark_catalog",
+            .config(
+                "spark.sql.catalog.spark_catalog",
                 "org.apache.spark.sql.delta.catalog.DeltaCatalog")
             // s3 conf
             .config("spark.hadoop.fs.s3.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem")
             // GCS conf
-            .config("spark.hadoop.fs.AbstractFileSystem.gs.impl",
+            .config(
+                "spark.hadoop.fs.AbstractFileSystem.gs.impl",
                 "com.google.cloud.hadoop.fs.gcs.GoogleHadoopFS");
 
     for (String catalog : catalogs) {
@@ -48,7 +50,7 @@ public class BaseSparkTest {
 
   protected static String getBaseLocation(LocationType locationType) throws IOException {
     return switch (locationType) {
-      // todo: add hook to clean up temp directory
+        // todo: add hook to clean up temp directory
       case FILE -> Files.createTempDirectory("uc-test-table").toFile().getAbsolutePath();
       case S3 -> TestUtils.S3_BASE_LOCATION;
       case GS -> TestUtils.GS_BASE_LOCATION;

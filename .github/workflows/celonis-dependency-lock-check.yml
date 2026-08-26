@@ -1,17 +1,9 @@
 name: (Celonis) Dependency Lock Check
 
-# Fails when the committed *.sbt.lock files no longer match the dependencies
-# resolved from build.sbt. Those locks are what Cycode's SCA scan reads to see
-# transitive dependencies (CBE-56140), so stale locks mean a stale vulnerability
-# picture. Regenerate with `build/sbt dependencyLockWrite` and commit the result.
+# sbt.lock files were removed with the Maven conversion. Cycode should read
+# Maven POMs / lockfiles instead of sbt dependencyLock.
 #
-# The locks are host-independent -- see the dependencyLockModuleFilter note in
-# build.sbt -- so a lock written on a developer's Mac matches what this Linux
-# runner resolves.
-#
-# Pinned to the default Spark version from project/spark-versions.json: the
-# connectors/spark dependency graph varies with -DsparkVersion, and a single lock
-# can only describe one variant.
+# Pinned to the default Spark version from project/spark-versions.json.
 
 on:
   push:
@@ -40,4 +32,4 @@ jobs:
 
       - name: Check dependency locks are up to date
         run: |
-          build/sbt dependencyLockCheck
+          echo "sbt dependencyLockCheck is not used after the Maven conversion."

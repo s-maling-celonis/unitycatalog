@@ -6,11 +6,11 @@ ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 TARBALL_JAR_DIR="$ROOT_DIR/jars"
 CLI_CLASS_FILE="$ROOT_DIR/examples/cli/src/main/java/io/unitycatalog/cli/UnityCatalogCli.java"
 
-# This function generates the unity catalog jars using sbt
+# This function generates the unity catalog jars using Maven
 generate_jar() {
-  GENERATE_JAR_COMMAND="$ROOT_DIR/build/sbt -info clean package"
-  echo "Running SBT to generate CLI JAR: $GENERATE_JAR_COMMAND"
-  $GENERATE_JAR_COMMAND || exit
+  GENERATE_JAR_COMMAND="mvn -f \"$ROOT_DIR/pom.xml\" -pl server,examples/cli -am package -DskipTests"
+  echo "Running Maven to generate CLI JAR: $GENERATE_JAR_COMMAND"
+  eval "$GENERATE_JAR_COMMAND" || exit
 }
 
 # This function runs the java command to run the CLI

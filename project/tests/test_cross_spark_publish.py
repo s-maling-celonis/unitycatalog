@@ -3,7 +3,7 @@
 Cross-Spark Version Build Testing for Unity Catalog
 
 Tests the UC build system by validating JAR file names for:
-1. Default publish (publishM2) - publishes Spark module WITH Spark suffix
+1. Default publish (`mvn install`) - publishes Spark module WITH Spark suffix
 2. Backward-compat publish (skipSparkSuffix=true) - publishes WITHOUT suffix
 3. Per-version publish validates the correct suffix for each Spark version
 
@@ -12,7 +12,7 @@ Usage:
 
 The script will:
 1. Load Spark versions from project/spark-versions.json (shared source of truth)
-2. Test default publishM2 publishes Spark module WITH suffix
+2. Test default `mvn install` publishes Spark module WITH suffix
 3. Test skipSparkSuffix=true publishes WITHOUT suffix (backward compatibility)
 4. Test per-version publish for each release-like Spark version
 5. Exit with status 0 on success, 1 on failure
@@ -102,13 +102,15 @@ class CrossSparkPublishTest:
         self.uc_version = self._get_uc_version()
 
     def _get_uc_version(self) -> str:
-        version_re = re.compile(r'version\s*:=\s*"([^"]+)"')
-        with open(self.uc_root / "version.sbt", "r") as f:
-            for line in f:
-                m = version_re.search(line)
-                if m:
-                    return m.group(1)
-        sys.exit("Error: Could not parse version from version.sbt")
+        pom = (self.uc_root / "pom.xml").read_text()
+        m = re.search(
+            r"<artifactId>unitycatalog</artifactId>\s*<version>([^<]+)</version>",
+            pom,
+            re.DOTALL,
+        )
+        if m:
+            return m.group(1)
+        sys.exit("Error: Could not parse version from pom.xml")
 
     def clean_maven_cache(self) -> None:
         m2_repo = Path.home() / ".m2" / "repository" / "io" / "unitycatalog"
@@ -130,22 +132,30 @@ class CrossSparkPublishTest:
             for jar_file in version_dir.glob("*.jar"):
                 if not any(x in jar_file.name for x in ["-tests", "-sources", "-javadoc"]):
                     # Only include spark connector JARs
-                    if "unitycatalog-spark" in jar_file.name:
+                    # Reactor coordinate is unitycatalog-spark; published GAV keeps the Spark suffix.
+                    if "unitycatalog-spark" in jar_file.name and jar_file.name != f"unitycatalog-spark-{self.uc_version}.jar":
                         found_jars.add(jar_file.name)
         return found_jars
 
-    def run_sbt_command(self, description: str, command: List[str]) -> bool:
+    def run_publish(self, description: str, extra_defs: List[str]) -> bool:
         # The Test-scoped delta-spark dependency is only required for running tests,
         # not for publishing. Some Spark versions (e.g. previews) have no matching
-        # Delta release yet, which would otherwise fail `update` during `publishM2`.
-        # `publishM2` doesn't include Test deps in the POM, so skipping is safe here.
-        augmented = list(command)
-        if augmented and augmented[0].endswith("sbt"):
-            augmented.insert(1, "-DskipDeltaSpark=true")
+        # Delta release yet, which would otherwise fail resolution during `install`.
+        cmd = [
+            "mvn",
+            "-B",
+            "-DskipDeltaSpark=true",
+            "-DskipTests",
+            *extra_defs,
+            "-pl",
+            "connectors/spark",
+            "-am",
+            "install",
+        ]
         print(f"  {description}")
         try:
             subprocess.run(
-                augmented,
+                cmd,
                 cwd=self.uc_root,
                 check=True,
                 stdout=subprocess.DEVNULL,
@@ -153,7 +163,7 @@ class CrossSparkPublishTest:
             )
             return True
         except subprocess.CalledProcessError:
-            print(f"  FAIL: Command failed: {' '.join(augmented)}")
+            print(f"  FAIL: Command failed: {' '.join(cmd)}")
             return False
 
     def validate_jars(self, expected: Set[str], test_name: str) -> bool:
@@ -314,25 +324,25 @@ class CrossSparkPublishTest:
             return False
 
     def test_default_publish(self) -> bool:
-        """Default publishM2 should publish spark module WITH Spark suffix."""
+        """Default install should publish spark module WITH Spark suffix."""
         spark_spec = SPARK_VERSIONS[DEFAULT_SPARK]
 
         print("\n" + "=" * 70)
         print(
-            f"TEST: Default spark/publishM2 (should publish WITH suffix for Spark {DEFAULT_SPARK})"
+            f"TEST: Default spark install (should publish WITH suffix for Spark {DEFAULT_SPARK})"
         )
         print("=" * 70)
 
         self.clean_maven_cache()
 
-        if not self.run_sbt_command(
-            "Running: build/sbt spark/publishM2",
-            ["build/sbt", "spark/publishM2"],
+        if not self.run_publish(
+            "Running: mvn -pl connectors/spark -am install",
+            [],
         ):
             return False
 
         expected = substitute_version(spark_spec.spark_related_jars, self.uc_version)
-        return self.validate_jars(expected, "Default spark/publishM2 (with suffix)")
+        return self.validate_jars(expected, "Default spark install (with suffix)")
 
     def test_backward_compat_publish(self) -> bool:
         """skipSparkSuffix=true should publish spark module WITHOUT suffix."""
@@ -344,9 +354,9 @@ class CrossSparkPublishTest:
 
         self.clean_maven_cache()
 
-        if not self.run_sbt_command(
-            "Running: build/sbt -DskipSparkSuffix=true spark/publishM2",
-            ["build/sbt", "-DskipSparkSuffix=true", "spark/publishM2"],
+        if not self.run_publish(
+            "Running: mvn -DskipSparkSuffix=true -pl connectors/spark -am install",
+            ["-DskipSparkSuffix=true"],
         ):
             return False
 
@@ -371,13 +381,9 @@ class CrossSparkPublishTest:
 
             self.clean_maven_cache()
 
-            if not self.run_sbt_command(
-                f"Running: build/sbt -DsparkVersion={spark_version} spark/publishM2",
-                [
-                    "build/sbt",
-                    f"-DsparkVersion={spark_version}",
-                    "spark/publishM2",
-                ],
+            if not self.run_publish(
+                f"Running: mvn -DsparkVersion={spark_version} -pl connectors/spark -am install",
+                [f"-DsparkVersion={spark_version}"],
             ):
                 all_passed = False
                 continue
@@ -401,9 +407,9 @@ class CrossSparkPublishTest:
         self.clean_maven_cache()
 
         # Step 1: Publish WITHOUT suffix (backward compatibility)
-        if not self.run_sbt_command(
-            "Step 1: build/sbt -DskipSparkSuffix=true spark/publishM2 (no suffix)",
-            ["build/sbt", "-DskipSparkSuffix=true", "spark/publishM2"],
+        if not self.run_publish(
+            "Step 1: mvn -DskipSparkSuffix=true -pl connectors/spark -am install (no suffix)",
+            ["-DskipSparkSuffix=true"],
         ):
             return False
 
@@ -411,13 +417,9 @@ class CrossSparkPublishTest:
         for spark_version, spark_spec in SPARK_VERSIONS.items():
             if "SNAPSHOT" in spark_version or spark_spec.requires_spark_commit:
                 continue
-            if not self.run_sbt_command(
-                f"Step 2: build/sbt -DsparkVersion={spark_version} spark/publishM2",
-                [
-                    "build/sbt",
-                    f"-DsparkVersion={spark_version}",
-                    "spark/publishM2",
-                ],
+            if not self.run_publish(
+                f"Step 2: mvn -DsparkVersion={spark_version} -pl connectors/spark -am install",
+                [f"-DsparkVersion={spark_version}"],
             ):
                 return False
 
@@ -444,8 +446,8 @@ class CrossSparkPublishTest:
 def main():
     try:
         uc_root = Path(__file__).parent.parent.parent
-        if not (uc_root / "build.sbt").exists():
-            print("Error: build.sbt not found. Run from UC repository root.")
+        if not (uc_root / "pom.xml").exists():
+            print("Error: pom.xml not found. Run from UC repository root.")
             sys.exit(1)
 
         print("=" * 70)
@@ -480,7 +482,7 @@ def main():
             f"  Source-build cache key:                 {'PASS' if t1 else 'FAIL'}"
         )
         print(
-            f"  Default publishM2 (with suffix):        {'PASS' if t2 else 'FAIL'}"
+            f"  Default install (with suffix):           {'PASS' if t2 else 'FAIL'}"
         )
         print(
             f"  skipSparkSuffix (backward compat):      {'PASS' if t3 else 'FAIL'}"

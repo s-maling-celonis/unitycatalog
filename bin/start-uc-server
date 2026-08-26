@@ -6,11 +6,11 @@ ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 TARBALL_JAR_DIR="$ROOT_DIR/jars"
 SERVER_CLASS_FILE="$ROOT_DIR/server/src/main/java/io/unitycatalog/server/UnityCatalogServer.java"
 
-# This function generates the unity catalog jars using sbt
+# This function generates the unity catalog jars using Maven
 generate_jar() {
-  local GENERATE_JAR_COMMAND="$ROOT_DIR/build/sbt -info clean package"
-  echo "Running SBT to generate Server JAR: $GENERATE_JAR_COMMAND"
-  $GENERATE_JAR_COMMAND || exit
+  local GENERATE_JAR_COMMAND="mvn -f \"$ROOT_DIR/pom.xml\" -pl server,examples/cli -am package -DskipTests"
+  echo "Running Maven to generate Server JAR: $GENERATE_JAR_COMMAND"
+  eval "$GENERATE_JAR_COMMAND" || exit
 }
 
 # This function starts the unity catalog server
@@ -23,7 +23,7 @@ run_uc_server_java_command() {
 # This function runs the server using the source code
 run_in_source_code() {
   SERVER_TARGET_DIR="$ROOT_DIR/server/target"
-  SERVER_JAR=$(find "$SERVER_TARGET_DIR" -name "unitycatalog-server*.jar" | head -n 1)
+  SERVER_JAR=$(find "$SERVER_TARGET_DIR" -name "unitycatalog-server*.jar" ! -name "*sources*" ! -name "*javadoc*" ! -name "*tests*" | head -n 1)
 
   if [ -z "$SERVER_JAR" ]; then
       echo "Server JAR not found starting with 'unitycatalog-server*' in the target directory '$SERVER_TARGET_DIR'."
@@ -31,7 +31,7 @@ run_in_source_code() {
   fi
 
   SERVER_CLASSPATH_FILE="$SERVER_TARGET_DIR/classpath"
-  if [ -z "$SERVER_CLASSPATH_FILE" ]; then
+  if [ ! -f "$SERVER_CLASSPATH_FILE" ]; then
       echo "No classpath file found in the target directory '$SERVER_TARGET_DIR'."
       generate_jar
   fi

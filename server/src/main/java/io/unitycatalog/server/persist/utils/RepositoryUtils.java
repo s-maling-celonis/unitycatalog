@@ -15,11 +15,11 @@ import io.unitycatalog.server.persist.dao.TableInfoDAO;
 import io.unitycatalog.server.utils.Constants;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
-import java.util.HashMap;
 import org.hibernate.Session;
 import org.hibernate.query.Query;
 
@@ -40,15 +40,15 @@ public class RepositoryUtils {
         return entityInfo;
       }
       Class<?> entityClass = PROPERTY_TYPE_MAP.getOrDefault(entityType, Map.class);
-      Method setPropertiesMethod =
-          entityInfo.getClass().getMethod("setProperties", entityClass);
+      Method setPropertiesMethod = entityInfo.getClass().getMethod("setProperties", entityClass);
       Map<String, String> propertyMap = PropertyDAO.toMap(propertyDAOList);
-      Object propertiesArgument = switch (entityClass.getSimpleName()) {
-        case "Map" -> propertyMap;
-        case "String" -> propertyMap.toString();
-        default -> throw new IllegalArgumentException(
-            "Unsupported parameter type: " + entityClass.getSimpleName());
-      };
+      Object propertiesArgument =
+          switch (entityClass.getSimpleName()) {
+            case "Map" -> propertyMap;
+            case "String" -> propertyMap.toString();
+            default -> throw new IllegalArgumentException(
+                "Unsupported parameter type: " + entityClass.getSimpleName());
+          };
       setPropertiesMethod.invoke(entityInfo, propertiesArgument);
       return entityInfo;
     } catch (NoSuchMethodException | IllegalAccessException | InvocationTargetException e) {
@@ -84,8 +84,7 @@ public class RepositoryUtils {
     return parts;
   }
 
-  public static String getAssetFullName(
-      String catalogName, String schemaName, String assetName) {
+  public static String getAssetFullName(String catalogName, String schemaName, String assetName) {
     return catalogName + "." + schemaName + "." + assetName;
   }
 
@@ -111,8 +110,8 @@ public class RepositoryUtils {
 
   public record CatalogAndSchemaDaoOpt(
       Optional<CatalogInfoDAO> catalogInfoDAO, Optional<SchemaInfoDAO> schemaInfoDAO) {}
-  public record CatalogAndSchemaDao(
-      CatalogInfoDAO catalogInfoDAO, SchemaInfoDAO schemaInfoDAO) {}
+
+  public record CatalogAndSchemaDao(CatalogInfoDAO catalogInfoDAO, SchemaInfoDAO schemaInfoDAO) {}
 
   public static CatalogAndSchemaDaoOpt getCatalogAndSchemaDaoOpt(
       Session session, String catalogName, String schemaName) {
@@ -149,9 +148,8 @@ public class RepositoryUtils {
   /**
    * Retrieves the catalog and schema names for a given schema ID.
    *
-   * <p>This method performs a lookup to find the schema by its UUID, then retrieves
-   * the associated catalog information. It returns both the catalog and schema names
-   * as a pair.
+   * <p>This method performs a lookup to find the schema by its UUID, then retrieves the associated
+   * catalog information. It returns both the catalog and schema names as a pair.
    *
    * @param session the Hibernate session used to query the database
    * @param schemaId the unique identifier of the schema
@@ -162,13 +160,12 @@ public class RepositoryUtils {
   public static CatalogAndSchemaNames getCatalogAndSchemaNames(Session session, UUID schemaId) {
     SchemaInfoDAO schemaInfoDAO = session.get(SchemaInfoDAO.class, schemaId);
     if (schemaInfoDAO == null) {
-      throw new BaseException(
-              ErrorCode.SCHEMA_NOT_FOUND, "Schema not found: " + schemaId);
+      throw new BaseException(ErrorCode.SCHEMA_NOT_FOUND, "Schema not found: " + schemaId);
     }
     CatalogInfoDAO catalogInfoDAO = session.get(CatalogInfoDAO.class, schemaInfoDAO.getCatalogId());
     if (catalogInfoDAO == null) {
       throw new BaseException(
-              ErrorCode.CATALOG_NOT_FOUND, "Catalog not found: " + schemaInfoDAO.getCatalogId());
+          ErrorCode.CATALOG_NOT_FOUND, "Catalog not found: " + schemaInfoDAO.getCatalogId());
     }
     return new CatalogAndSchemaNames(catalogInfoDAO.getName(), schemaInfoDAO.getName());
   }

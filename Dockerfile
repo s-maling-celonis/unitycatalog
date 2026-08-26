@@ -7,24 +7,29 @@ ARG BUILD_HOME=
 # Build stage, using Amazon Corretto jdk 17 on alpine with arm64 support
 FROM amazoncorretto:17-alpine3.20-jdk@sha256:c045f0537bc890f9e61924f33f35e9667f696b4f372dad4a73861a9396b5d0b5 as base
 
-# Dependencies are installed in $HOME/.cache by sbt
+# Dependencies are installed in $HOME/.m2 by Maven
 ARG USER="unitycatalog"
 ARG HOME=/home/unitycatalog
 ARG PREBUILT
 ARG BUILD_ROOT
 ARG BUILD_HOME
 ENV HOME=$HOME
+ENV MAVEN_OPTS="-Duser.home=$HOME"
 
-# Corporate Maven mirror for the sbt launcher / Ivy (see build/sbt).
-# Pass at build time: --build-arg MAVEN_PROXY_URL=$MAVEN_PROXY_URL
+# The JVM derives user.home from the passwd entry and ignores HOME, so Maven
+# would otherwise use /root/.m2. Maven writes absolute jar paths into
+# server/target/classpath, so this directory must resolve identically in both
+# stages or the server starts with some classpath entries missing.
+
+# Corporate Maven mirror. Pass at build time: --build-arg MAVEN_PROXY_URL=$MAVEN_PROXY_URL
 ARG MAVEN_PROXY_URL
 ENV MAVEN_PROXY_URL=${MAVEN_PROXY_URL}
 
 WORKDIR $HOME
 
-COPY --parents dev/ build/ project/ examples/ server/ api/ clients/ version.sbt build.sbt ./
+COPY --parents .mvn/ dev/ control-api/ server-shaded/ examples/ server/ api/ clients/ connectors/ integration-tests/ pom.xml ./
 
-RUN apk add --no-cache bash \
+RUN apk add --no-cache bash maven \
  && addgroup -S "$USER" \
  && adduser -S -G "$USER" -h "$HOME" "$USER" \
  && chown -R "$USER:$USER" "$HOME"
@@ -32,7 +37,7 @@ RUN apk add --no-cache bash \
 USER root
 RUN if [ "$PREBUILT" = "true" ]; then \
       if [ ! -d "$HOME/build/ci-staging/prebuilt/server/target" ]; then \
-        echo "PREBUILT build requires $HOME/build/ci-staging/prebuilt/server/target from host sbt" >&2; \
+        echo "PREBUILT build requires $HOME/build/ci-staging/prebuilt/server/target from host Maven" >&2; \
         exit 1; \
       fi; \
       mkdir -p "$HOME/server/target" \
@@ -41,7 +46,7 @@ RUN if [ "$PREBUILT" = "true" ]; then \
     fi
 RUN if [ "$PREBUILT" = "true" ]; then \
       if [ ! -d "$HOME/build/ci-staging/prebuilt/examples/cli/target" ]; then \
-        echo "PREBUILT build requires $HOME/build/ci-staging/prebuilt/examples/cli/target from host sbt" >&2; \
+        echo "PREBUILT build requires $HOME/build/ci-staging/prebuilt/examples/cli/target from host Maven" >&2; \
         exit 1; \
       fi; \
       mkdir -p "$HOME/examples/cli/target" \
@@ -49,32 +54,32 @@ RUN if [ "$PREBUILT" = "true" ]; then \
       && chown -R "$USER:$USER" "$HOME/examples/cli/target"; \
     fi
 RUN if [ "$PREBUILT" = "true" ]; then \
-      if [ ! -d "$HOME/build/ci-staging/prebuilt/target/control/java/target" ]; then \
-        echo "PREBUILT build requires $HOME/build/ci-staging/prebuilt/target/control/java/target from host sbt" >&2; \
+      if [ ! -d "$HOME/build/ci-staging/prebuilt/control-api/target" ]; then \
+        echo "PREBUILT build requires $HOME/build/ci-staging/prebuilt/control-api/target from host Maven" >&2; \
         exit 1; \
       fi; \
-      mkdir -p "$HOME/target/control/java/target" \
-      && cp -a "$HOME/build/ci-staging/prebuilt/target/control/java/target/." "$HOME/target/control/java/target/" \
-      && chown -R "$USER:$USER" "$HOME/target/control/java/target"; \
+      mkdir -p "$HOME/control-api/target" \
+      && cp -a "$HOME/build/ci-staging/prebuilt/control-api/target/." "$HOME/control-api/target/" \
+      && chown -R "$USER:$USER" "$HOME/control-api/target"; \
     fi
 RUN if [ "$PREBUILT" = "true" ]; then \
-      if [ -d "$HOME/build/ci-staging/prebuilt/home/.cache" ]; then \
-        CACHE_SRC="$HOME/build/ci-staging/prebuilt/home/.cache"; \
-      elif [ -d "$HOME/build/ci-staging/home/.cache" ]; then \
-        CACHE_SRC="$HOME/build/ci-staging/home/.cache"; \
+      if [ -d "$HOME/build/ci-staging/prebuilt/home/.m2" ]; then \
+        CACHE_SRC="$HOME/build/ci-staging/prebuilt/home/.m2"; \
+      elif [ -d "$HOME/build/ci-staging/home/.m2" ]; then \
+        CACHE_SRC="$HOME/build/ci-staging/home/.m2"; \
       else \
-        echo "PREBUILT build requires coursier cache under build/ci-staging" >&2; \
+        echo "PREBUILT build requires Maven cache under build/ci-staging" >&2; \
         exit 1; \
       fi; \
-      mkdir -p "$HOME/.cache" \
-      && cp -a "$CACHE_SRC/." "$HOME/.cache/" \
-      && chown -R "$USER:$USER" "$HOME/.cache"; \
+      mkdir -p "$HOME/.m2" \
+      && cp -a "$CACHE_SRC/." "$HOME/.m2/" \
+      && chown -R "$USER:$USER" "$HOME/.m2"; \
     fi
 # Staging tree is only needed to enter the build context. Drop it after
 # promoting artifacts so the image does not keep two copies of the cache.
 RUN rm -rf /home/unitycatalog/build/ci-staging
 USER $USER
-RUN if [ "$PREBUILT" != "true" ]; then ./build/sbt -info clean package; fi
+RUN if [ "$PREBUILT" != "true" ]; then mvn -q -pl server,examples/cli -am package -DskipTests; fi
 
 USER root
 RUN if [ "$PREBUILT" = "true" ] && [ -f "$HOME/server/target/classpath" ]; then \
@@ -114,18 +119,19 @@ COPY --from=base $HOME/examples $HOME/examples
 COPY --from=base $HOME/server $HOME/server
 COPY --from=base $HOME/api $HOME/api
 COPY --from=base $HOME/clients $HOME/clients
-# Root target/ exists only after in-Docker sbt (non-PREBUILT). Coursier cache
-# lives at $HOME/.cache after base RUN (PREBUILT) or in-Docker sbt (non-PREBUILT).
+COPY --from=base $HOME/control-api $HOME/control-api
+# Root target/ exists after in-Docker Maven (generated OpenAPI). Maven cache
+# lives at $HOME/.m2 after base RUN (PREBUILT) or in-Docker Maven (non-PREBUILT).
 RUN --mount=type=bind,from=base,source=/home/unitycatalog,target=/base,readonly <<'EOF'
 set -e
-if [ -d /base/.cache ]; then
-  cp -a /base/.cache /home/unitycatalog/.cache
-elif [ -d /base/build/ci-staging/prebuilt/home/.cache ]; then
-  cp -a /base/build/ci-staging/prebuilt/home/.cache /home/unitycatalog/.cache
-elif [ -d /base/build/ci-staging/home/.cache ]; then
-  cp -a /base/build/ci-staging/home/.cache /home/unitycatalog/.cache
+if [ -d /base/.m2 ]; then
+  cp -a /base/.m2 /home/unitycatalog/.m2
+elif [ -d /base/build/ci-staging/prebuilt/home/.m2 ]; then
+  cp -a /base/build/ci-staging/prebuilt/home/.m2 /home/unitycatalog/.m2
+elif [ -d /base/build/ci-staging/home/.m2 ]; then
+  cp -a /base/build/ci-staging/home/.m2 /home/unitycatalog/.m2
 else
-  echo "No coursier cache found in base image" >&2
+  echo "No Maven cache found in base image" >&2
   exit 1
 fi
 if [ -d /base/target ]; then

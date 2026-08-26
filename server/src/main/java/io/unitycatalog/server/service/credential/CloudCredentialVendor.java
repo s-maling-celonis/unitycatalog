@@ -38,7 +38,7 @@ public class CloudCredentialVendor {
       case ABFS, ABFSS -> vendAzureCredential(context);
       case GS -> vendGcpCredential(context);
       case S3 -> vendAwsCredential(context);
-      // For local file system, we return empty credentials
+        // For local file system, we return empty credentials
       case FILE, NULL -> new TemporaryCredentials();
     };
   }

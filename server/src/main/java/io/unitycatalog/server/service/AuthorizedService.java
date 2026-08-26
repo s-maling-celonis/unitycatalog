@@ -94,9 +94,10 @@ public abstract class AuthorizedService {
 
     for (DeletedResource resource : deleted) {
       switch (resource.type()) {
-        case TABLE, VOLUME, FUNCTION, REGISTERED_MODEL ->
-            removeHierarchicalAuthorizations(resource.id(), resource.parentId());
-        default -> {}
+        case TABLE, VOLUME, FUNCTION, REGISTERED_MODEL -> removeHierarchicalAuthorizations(
+            resource.id(), resource.parentId());
+        default -> {
+        }
       }
     }
 

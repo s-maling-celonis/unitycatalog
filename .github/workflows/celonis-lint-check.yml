@@ -27,4 +27,4 @@ jobs:
 
       - name: Run Java format check
         run: |
-          build/sbt javafmtCheck
+          mvn -B spotless:check

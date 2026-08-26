@@ -2,8 +2,8 @@ package io.unitycatalog.server.service;
 
 import com.auth0.jwt.interfaces.Claim;
 import com.auth0.jwt.interfaces.DecodedJWT;
-import io.unitycatalog.control.model.TokenType;
-import io.unitycatalog.control.model.User;
+import io.unitycatalog.server.control.model.TokenType;
+import io.unitycatalog.server.control.model.User;
 import io.unitycatalog.server.exception.ErrorCode;
 import io.unitycatalog.server.exception.OAuthInvalidRequestException;
 import io.unitycatalog.server.persist.UserRepository;
