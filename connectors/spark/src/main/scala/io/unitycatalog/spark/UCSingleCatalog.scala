@@ -19,6 +19,7 @@ import io.unitycatalog.client.retry.JitterDelayRetryPolicy
 import io.unitycatalog.client.{ApiClient, ApiException}
 import io.unitycatalog.hadoop.UCCredentialHadoopConfs
 import io.unitycatalog.hadoop.UCCredentialHadoopConfs.{PathOperation, TableOperation}
+import io.unitycatalog.hadoop.internal.UCHadoopConfConstants
 import io.unitycatalog.spark.auth.AuthConfigUtils
 import io.unitycatalog.spark.compat.SparkCatalogCompatibility
 import io.unitycatalog.spark.utils.OptionsUtil
@@ -436,7 +437,7 @@ class UCSingleCatalog
       spark: SparkSession,
       location: String,
       operation: PathOperation): util.Map[String, String] = {
-    val (apiLocation, scheme) = pathForCredentialApi(location)
+    val (apiLocation, scheme) = UCSingleCatalog.pathForCredentialApi(location)
     if (scheme == null) return util.Collections.emptyMap[String, String]()
     UCCredentialHadoopConfs
       .builder(uri.toString, scheme)
@@ -447,25 +448,6 @@ class UCSingleCatalog
       .enableCredentialScopedFs(credScopedFsEnabled)
       .hadoopConf(UCSingleCatalog.sessionHadoopConf(spark))
       .buildForPath(apiLocation, operation)
-  }
-
-  /**
-   * UC external locations and the temporary path-credentials API use canonical lowercase
-   * `s3://` URLs on the server. Hadoop clients may reference the same storage as `s3a://`
-   * (any casing); rewrite to `s3://` for credential lookup only and lowercase other schemes.
-   */
-  private def pathForCredentialApi(location: String): (String, String) = {
-    val scheme = new Path(location).toUri.getScheme
-    if (scheme == null) {
-      (location, null)
-    } else {
-      val canonicalScheme =
-        if (scheme.equalsIgnoreCase("s3a")) "s3" else scheme.toLowerCase
-      val apiLocation = location.replaceFirst(
-        s"(?i)^${java.util.regex.Pattern.quote(scheme)}://",
-        s"$canonicalScheme://")
-      (apiLocation, canonicalScheme)
-    }
   }
 
   /**
@@ -480,15 +462,19 @@ class UCSingleCatalog
     try {
       vendPathCredentialConf(spark, location, operation)
     } catch {
-      case e: ApiException =>
+      case e: ApiException if UCSingleCatalog.isAmbientPathCredentialFailure(e) =>
         logDebug(
           s"Path credential vending failed for $location ($operation): ${e.getMessage}")
         util.Collections.emptyMap[String, String]()
+      case e: ApiException =>
+        logWarning(
+          s"Path credential vending failed for $location ($operation) with HTTP ${e.getCode}: ${e.getMessage}")
+        throw e
     }
   }
 
   /**
-   * Vends path credentials when read vs write is unknown at parse time (e.g. bare
+   * Vends path credentials when read vs write is unknown at analysis time (e.g. bare
    * `parquet.`s3://...`` in SELECT or INSERT INTO). Tries PATH_READ_WRITE first,
    * falls back to PATH_READ, then to an empty map for ambient credentials — same ambiguity
    * handling as loadTable.
@@ -694,6 +680,68 @@ object UCSingleCatalog {
   // DeltaCatalog loading status for testing purpose.
   val LOAD_DELTA_CATALOG = ThreadLocal.withInitial[Boolean](() => true)
   val DELTA_CATALOG_LOADED = ThreadLocal.withInitial[Boolean](() => false)
+
+  /**
+   * UC external locations and the temporary path-credentials API use canonical lowercase
+   * `s3://` URLs on the server. Hadoop clients may reference the same storage as `s3a://`
+   * (any casing); rewrite to `s3://` for credential lookup only and lowercase other schemes.
+   */
+  private[spark] def pathForCredentialApi(location: String): (String, String) = {
+    val scheme = new Path(location).toUri.getScheme
+    if (scheme == null) {
+      (location, null)
+    } else {
+      val canonicalScheme =
+        if (scheme.equalsIgnoreCase("s3a")) "s3" else scheme.toLowerCase
+      val apiLocation = location.replaceFirst(
+        s"(?i)^${java.util.regex.Pattern.quote(scheme)}://",
+        s"$canonicalScheme://")
+      (apiLocation, canonicalScheme)
+    }
+  }
+
+  /**
+   * Skip markers after an allowed vending miss so [[ResolvePathCredentials]] does not re-issue
+   * RPCs on later analyzer passes. Intentionally not {@code credentials.type=path} /
+   * {@code fs.unitycatalog.path}: those keys are a Hadoop {@code PathCredId} and require a
+   * credential context id.
+   */
+  private[spark] def pathCredentialSkipProps(
+      location: String): util.Map[String, String] = {
+    val (apiLocation, scheme) = pathForCredentialApi(location)
+    if (scheme == null) {
+      util.Collections.emptyMap[String, String]()
+    } else {
+      val props = new util.HashMap[String, String]()
+      props.put(
+        UCHadoopConfConstants.UC_PATH_VENDING_ATTEMPTED_KEY,
+        UCHadoopConfConstants.UC_PATH_VENDING_ATTEMPTED_VALUE)
+      props.put(UCHadoopConfConstants.UC_PATH_VENDING_LOCATION_KEY, apiLocation)
+      props
+    }
+  }
+
+  /**
+   * HTTP statuses that mean the path is not usable via UC (unmanaged / no permission) and may
+   * fall back to ambient Hadoop credentials. 400 covers OSS {@code FAILED_PRECONDITION} when no
+   * external location or bucket config covers the path.
+   */
+  private[spark] def isAmbientPathCredentialFailure(e: ApiException): Boolean = {
+    val code = e.getCode
+    code == 400 || code == 403 || code == 404
+  }
+
+  /**
+   * Allowed miss → empty map for ambient fallback; anything else is rethrown (caller logs).
+   */
+  private[spark] def emptyIfAmbientPathCredentialFailure(
+      e: ApiException): util.Map[String, String] = {
+    if (isAmbientPathCredentialFailure(e)) {
+      util.Collections.emptyMap[String, String]()
+    } else {
+      throw e
+    }
+  }
 
   /**
    * Returns the current session's Hadoop configuration, blended with any session-scoped

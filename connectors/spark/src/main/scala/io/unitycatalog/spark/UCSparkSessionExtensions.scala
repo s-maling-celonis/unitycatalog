@@ -22,7 +22,13 @@ package io.unitycatalog.spark
 import org.apache.spark.sql.SparkSessionExtensions
 import org.apache.spark.sql.catalyst.parser.extensions.UCSparkSqlExtensionsParser
 
-/** Spark session extensions for UC view DDL routing and bare cloud-path credential vending. */
+/**
+ * Spark session extensions for UC view DDL routing and bare cloud-path credential vending.
+ *
+ * [[ResolvePathCredentials]] is registered as a hint resolution rule so it runs before
+ * `ResolveSQLOnFile` lists the path for schema inference. View DDL continues to use the parser
+ * extension so it can be routed to REST before Spark rejects catalogs without `ViewCatalog`.
+ */
 class UCSparkSessionExtensions
     extends (SparkSessionExtensions => Unit)
     with UCSparkSessionExtensionsViewSupport {
@@ -31,6 +37,7 @@ class UCSparkSessionExtensions
     extensions.injectParser { case (spark, parser) =>
       new UCSparkSqlExtensionsParser(spark, parser)
     }
+    extensions.injectHintResolutionRule(ResolvePathCredentials(_))
     injectViewRules(extensions)
   }
 }

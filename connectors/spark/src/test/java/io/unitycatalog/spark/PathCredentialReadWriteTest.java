@@ -6,12 +6,17 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.unitycatalog.client.ApiException;
+import io.unitycatalog.hadoop.internal.CredPropsUtil;
+import io.unitycatalog.hadoop.internal.UCHadoopConfConstants;
+import io.unitycatalog.hadoop.internal.auth.AwsCredential;
+import io.unitycatalog.hadoop.internal.auth.GenericCredentialFetcher;
 import io.unitycatalog.spark.utils.OptionsUtil;
 import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.analysis.UnresolvedRelation;
@@ -31,10 +36,10 @@ import org.junit.jupiter.params.provider.EnumSource;
  * storage credentials until Delta execution support lands separately.
  *
  * <p>Unlike the other Spark integration tests, these register {@code UCSparkSessionExtensions} (the
- * home of the parser hook that invokes the rule), and use the {@link S3CredentialTestFileSystem}
- * fake filesystem to assert the vended credentials reach S3A. The test principal is the metastore
- * owner, so path authorization passes and credentials fall back to the per-bucket server config
- * ({@code accessKey0}/... for {@code s3://test-bucket0}) configured in {@link
+ * home of the analyzer hint resolution rule), and use the {@link S3CredentialTestFileSystem} fake
+ * filesystem to assert the vended credentials reach S3A. The test principal is the metastore owner,
+ * so path authorization passes and credentials fall back to the per-bucket server config ({@code
+ * accessKey0}/... for {@code s3://test-bucket0}) configured in {@link
  * BaseSparkIntegrationTest#setUpProperties()}.
  */
 public class PathCredentialReadWriteTest extends BaseSparkIntegrationTest {
@@ -258,6 +263,11 @@ public class PathCredentialReadWriteTest extends BaseSparkIntegrationTest {
         .anyMatch(msg -> msg != null && msg.contains(substring));
   }
 
+  /** Applies the analyzer path-credential rule to a parsed plan (parser is side-effect free). */
+  private LogicalPlan injectPathCredentials(LogicalPlan plan) {
+    return new ResolvePathCredentials(session).apply(plan);
+  }
+
   /** Finds a bare {@code format.`cloud-path`} relation anywhere in a parsed plan tree. */
   private static UnresolvedRelation findBareCloudPathRelation(LogicalPlan plan) {
     if (plan instanceof UnresolvedRelation) {
@@ -279,9 +289,9 @@ public class PathCredentialReadWriteTest extends BaseSparkIntegrationTest {
   /**
    * Writes to a bare cloud path and reads it back. Exercises {@code INSERT OVERWRITE DIRECTORY}
    * ({@code InsertIntoDir}) and {@code parquet.`path`} reads ({@code UnresolvedRelation}).
-   * Bare-path {@code INSERT INTO} write targets are covered at parse time in {@link
-   * #testInsertIntoBarePathInjectsCredentialsAtParseTime()} because Spark 4.x rejects them at
-   * analysis ({@code TABLE_OR_VIEW_NOT_FOUND}) on all supported versions (4.0–4.2).
+   * Bare-path {@code INSERT INTO} write targets are covered by {@link
+   * #testInsertIntoBarePathInjectsCredentials()} because Spark 4.x rejects them at analysis ({@code
+   * TABLE_OR_VIEW_NOT_FOUND}) on all supported versions (4.0–4.2).
    */
   @ParameterizedTest
   @CsvSource({"s3,  false, false", "s3,  true,  true", "s3a, false, false"})
@@ -297,13 +307,18 @@ public class PathCredentialReadWriteTest extends BaseSparkIntegrationTest {
 
     if ("s3a".equalsIgnoreCase(scheme)) {
       LogicalPlan readPlan =
-          session
-              .sessionState()
-              .sqlParser()
-              .parsePlan(String.format("SELECT * FROM parquet.`%s`", location));
+          injectPathCredentials(
+              session
+                  .sessionState()
+                  .sqlParser()
+                  .parsePlan(String.format("SELECT * FROM parquet.`%s`", location)));
       UnresolvedRelation relation = findBareCloudPathRelation(readPlan);
       assertThat(relation).isNotNull();
       assertThat(relation.options().get("fs.s3a.access.key")).isEqualTo("accessKey0");
+      assertThat(relation.options().get(UCHadoopConfConstants.UC_CREDENTIALS_TYPE_KEY))
+          .isEqualTo(UCHadoopConfConstants.UC_CREDENTIALS_TYPE_PATH_VALUE);
+      assertThat(relation.options().get(UCHadoopConfConstants.UC_PATH_KEY))
+          .isEqualTo(location.replaceFirst("(?i)^s3a://", "s3://"));
     }
 
     assertSingleRow(sql("SELECT * FROM parquet.`%s`", location));
@@ -317,7 +332,7 @@ public class PathCredentialReadWriteTest extends BaseSparkIntegrationTest {
    * DeltaExternalTableReadWriteTest#testDeltaPathTable()} under the path-cred session layout).
    *
    * <p>Cloud storage: seeds data via a UC catalog table, then asserts {@link
-   * ResolvePathCredentials} does not inject credentials into parsed {@code delta.`s3://...`} (Delta
+   * ResolvePathCredentials} does not inject credentials into {@code delta.`s3://...`} (Delta
    * bare-path execution with UC-vended credentials is tracked in a follow-up PR).
    */
   @Test
@@ -335,20 +350,19 @@ public class PathCredentialReadWriteTest extends BaseSparkIntegrationTest {
     sql("INSERT INTO %s SELECT 1 AS i, 'a' AS s", seedTable);
 
     LogicalPlan readPlan =
-        session
-            .sessionState()
-            .sqlParser()
-            .parsePlan(String.format("SELECT * FROM delta.`%s`", s3Location));
+        injectPathCredentials(
+            session
+                .sessionState()
+                .sqlParser()
+                .parsePlan(String.format("SELECT * FROM delta.`%s`", s3Location)));
     UnresolvedRelation relation = findBareCloudPathRelation(readPlan);
     assertThat(relation).isNotNull();
     assertThat(relation.options().get("fs.s3a.access.key")).isNull();
   }
 
   /**
-   * {@code SparkSession.sql(text, args)} routes through {@code parsePlanWithParameters}. The UC
-   * parser extension must delegate parameter binding to the underlying parser before applying path
-   * credential injection. Uses a UC-only session (no Delta extension) so the delegate is {@code
-   * SparkSqlParser} directly.
+   * {@code SparkSession.sql(text, args)} must still bind parameters when the UC analyzer extension
+   * is registered. Uses a UC-only session (no Delta extension).
    */
   @Test
   public void testPositionalSqlParameters() {
@@ -369,18 +383,18 @@ public class PathCredentialReadWriteTest extends BaseSparkIntegrationTest {
   /**
    * Spark 4.x rejects {@code INSERT INTO parquet.`s3://...`} at analysis ({@code
    * TABLE_OR_VIEW_NOT_FOUND}) because {@code INSERT} DML requires a registered {@code
-   * table_identifier}. Parsing still builds an {@code InsertIntoStatement} whose target is an
-   * {@code UnresolvedRelation}, so {@link ResolvePathCredentials} must inject credentials before
-   * analysis — this test pins parse-time credential injection only; it does not execute the DML.
+   * table_identifier}. The optional {@code InsertIntoStatement} branch still injects credentials
+   * onto the target {@code UnresolvedRelation} (not a tree child). This test applies the analyzer
+   * rule to the parsed plan; it does not execute the DML.
    */
   @Test
-  public void testInsertIntoBarePathInjectsCredentialsAtParseTime()
-      throws IOException, ParseException {
+  public void testInsertIntoBarePathInjectsCredentials() throws IOException, ParseException {
     session = createPathCredSession(SPARK_CATALOG);
-    String location = bucketPath("insert_into_parse");
+    String location = bucketPath("insert_into_bare_path");
     String insertSql = String.format("INSERT INTO parquet.`%s` SELECT 2 AS i, 'b' AS s", location);
 
-    LogicalPlan plan = session.sessionState().sqlParser().parsePlan(insertSql);
+    LogicalPlan plan =
+        injectPathCredentials(session.sessionState().sqlParser().parsePlan(insertSql));
     assertThat(plan).isInstanceOf(InsertIntoStatement.class);
     LogicalPlan table = ((InsertIntoStatement) plan).table();
     assertThat(table).isInstanceOf(UnresolvedRelation.class);
@@ -401,16 +415,61 @@ public class PathCredentialReadWriteTest extends BaseSparkIntegrationTest {
     sql("INSERT OVERWRITE DIRECTORY '%s' USING parquet SELECT 1 AS i, 'a' AS s", location);
 
     LogicalPlan plan =
-        session
-            .sessionState()
-            .sqlParser()
-            .parsePlan(String.format("SELECT * FROM parquet.`%s`", location));
+        injectPathCredentials(
+            session
+                .sessionState()
+                .sqlParser()
+                .parsePlan(String.format("SELECT * FROM parquet.`%s`", location)));
     UnresolvedRelation relation = findBareCloudPathRelation(plan);
     assertThat(relation)
-        .as("parsed plan should contain bare cloud-path UnresolvedRelation: %s", plan)
+        .as(
+            "analyzer rule should inject credentials onto bare cloud-path UnresolvedRelation: %s",
+            plan)
         .isNotNull();
     assertThat(relation.options().get("fs.s3a.access.key")).isEqualTo("accessKey0");
     assertSingleRow(sql("SELECT * FROM parquet.`%s`", location));
+  }
+
+  /**
+   * The analyzer runs its batches to a fixed point, so the rule is applied to the same plan more
+   * than once. Credentials must be vended only on the first pass: re-vending would issue a UC
+   * request per iteration and, with the credential cache off, hand back a fresh session token every
+   * time, so the plan would never stabilize and the batch would hit its iteration limit.
+   */
+  @Test
+  public void testRepeatedApplicationVendsOnceAndLeavesPlanUnchanged()
+      throws IOException, ParseException {
+    session = createPathCredSession(SPARK_CATALOG);
+    session.conf().set(UCHadoopConfConstants.UC_CREDENTIAL_CACHE_ENABLED_KEY, "false");
+    String location = bucketPath("repeated_rule_application");
+
+    AtomicInteger vends = new AtomicInteger();
+    CredPropsUtil.genericCredFetcherFactory =
+        (apiClient, credId) ->
+            () ->
+                List.of(
+                    new AwsCredential(
+                        "accessKey0",
+                        "secretKey0",
+                        "sessionToken" + vends.incrementAndGet(),
+                        Long.MAX_VALUE,
+                        null));
+    try {
+      LogicalPlan parsed =
+          session
+              .sessionState()
+              .sqlParser()
+              .parsePlan(String.format("SELECT * FROM parquet.`%s`", location));
+      LogicalPlan first = injectPathCredentials(parsed);
+      LogicalPlan second = injectPathCredentials(first);
+
+      assertThat(vends.get()).isEqualTo(1);
+      assertThat(second.fastEquals(first)).as("rule must reach a fixed point: %s", second).isTrue();
+      assertThat(findBareCloudPathRelation(first).options().get("fs.s3a.session.token"))
+          .isEqualTo("sessionToken1");
+    } finally {
+      CredPropsUtil.genericCredFetcherFactory = GenericCredentialFetcher::create;
+    }
   }
 
   /**
@@ -426,15 +485,18 @@ public class PathCredentialReadWriteTest extends BaseSparkIntegrationTest {
     UCSingleCatalog catalog =
         (UCSingleCatalog) session.sessionState().catalogManager().catalog(SPARK_CATALOG);
 
+    String identityPath = location.replaceFirst("(?i)^(s3a|s3)://", "s3://");
     assertThat(catalog.vendPathCredentialConfWithFallback(session, location))
-        .containsEntry("fs.s3a.access.key", "accessKey0");
+        .containsEntry("fs.s3a.access.key", "accessKey0")
+        .containsEntry(
+            UCHadoopConfConstants.UC_CREDENTIALS_TYPE_KEY,
+            UCHadoopConfConstants.UC_CREDENTIALS_TYPE_PATH_VALUE)
+        .containsEntry(UCHadoopConfConstants.UC_PATH_KEY, identityPath);
   }
 
   /**
-   * Path credential vending must use the explicit {@code SparkSession} passed from the parser, not
-   * {@code SparkSession.getActiveSession}. {@code
-   * session.sessionState().sqlParser().parsePlan(...)} does not guarantee an active session on the
-   * calling thread.
+   * Path credential vending must use the explicit {@code SparkSession} passed into the analyzer
+   * rule, not {@code SparkSession.getActiveSession}.
    */
   @Test
   public void testVendPathCredentialsWithoutActiveSession() throws IOException {
@@ -469,6 +531,41 @@ public class PathCredentialReadWriteTest extends BaseSparkIntegrationTest {
                     location))
         .satisfies(e -> assertNoCauseOfType(e, ApiException.class))
         .satisfies(e -> assertCauseChainContainsMessage(e, "invalid path"));
+  }
+
+  /**
+   * An allowed UC miss (unmanaged path) stamps skip markers (not a Hadoop path-cred identity) so a
+   * later analyzer pass does not re-issue the failing RPCs, including when the credential cache is
+   * disabled.
+   */
+  @Test
+  public void testAllowedMissStampsIdentityAndSecondApplyLeavesPlanUnchanged()
+      throws IOException, ParseException {
+    session = createPathCredSession(SPARK_CATALOG);
+    session.conf().set(UCHadoopConfConstants.UC_CREDENTIAL_CACHE_ENABLED_KEY, "false");
+    String location =
+        "s3://" + NO_CREDS_BUCKET + new File(dataDir, "miss_identity").getCanonicalPath();
+
+    LogicalPlan parsed =
+        session
+            .sessionState()
+            .sqlParser()
+            .parsePlan(String.format("SELECT * FROM parquet.`%s`", location));
+    LogicalPlan firstPlan = injectPathCredentials(parsed);
+    UnresolvedRelation first = findBareCloudPathRelation(firstPlan);
+    assertThat(first).isNotNull();
+    assertThat(first.options().get("fs.s3a.access.key")).isNull();
+    assertThat(first.options().get(UCHadoopConfConstants.UC_CREDENTIALS_TYPE_KEY)).isNull();
+    assertThat(first.options().get(UCHadoopConfConstants.UC_PATH_KEY)).isNull();
+    assertThat(first.options().get(UCHadoopConfConstants.UC_PATH_VENDING_ATTEMPTED_KEY))
+        .isEqualTo(UCHadoopConfConstants.UC_PATH_VENDING_ATTEMPTED_VALUE);
+    assertThat(first.options().get(UCHadoopConfConstants.UC_PATH_VENDING_LOCATION_KEY))
+        .isEqualTo(location);
+
+    LogicalPlan second = injectPathCredentials(firstPlan);
+    UnresolvedRelation after = findBareCloudPathRelation(second);
+    assertThat(after.options().asCaseSensitiveMap())
+        .containsExactlyInAnyOrderEntriesOf(first.options().asCaseSensitiveMap());
   }
 
   /**
@@ -532,10 +629,13 @@ public class PathCredentialReadWriteTest extends BaseSparkIntegrationTest {
                 + "WHEN NOT MATCHED THEN INSERT *",
             target, location);
 
-    LogicalPlan plan = session.sessionState().sqlParser().parsePlan(mergeSql);
+    LogicalPlan plan =
+        injectPathCredentials(session.sessionState().sqlParser().parsePlan(mergeSql));
     UnresolvedRelation relation = findBareCloudPathRelation(plan);
     assertThat(relation)
-        .as("parsed plan should contain bare cloud-path UnresolvedRelation: %s", plan)
+        .as(
+            "analyzer rule should inject credentials onto bare cloud-path UnresolvedRelation: %s",
+            plan)
         .isNotNull();
     assertThat(relation.options().get("fs.s3a.access.key")).isEqualTo("accessKey0");
 

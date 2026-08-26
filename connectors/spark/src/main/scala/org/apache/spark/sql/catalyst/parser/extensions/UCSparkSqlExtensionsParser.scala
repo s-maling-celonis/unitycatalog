@@ -19,7 +19,7 @@
 
 package org.apache.spark.sql.catalyst.parser.extensions
 
-import io.unitycatalog.spark.{ResolvePathCredentials, ResolveUcViewDdlInParser}
+import io.unitycatalog.spark.ResolveUcViewDdlInParser
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.{FunctionIdentifier, TableIdentifier}
@@ -39,7 +39,7 @@ class UCSparkSqlExtensionsParser(spark: SparkSession, delegate: ParserInterface)
   }
 
   protected def applyParserExtensions(plan: LogicalPlan): LogicalPlan =
-    ResolvePathCredentials(spark).apply(applyUcExtensions(plan))
+    applyUcExtensions(plan)
 
   override def parseDataType(sqlText: String): DataType = delegate.parseDataType(sqlText)
 
