@@ -20,6 +20,7 @@
 package io.unitycatalog.spark
 
 import org.apache.spark.sql.SparkSessionExtensions
+import org.apache.spark.sql.catalyst.parser.extensions.UCSparkSqlExtensionsParser
 
 /**
  * Spark session extensions for UC view DDL routing and bare cloud-path credential vending.
