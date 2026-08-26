@@ -27,7 +27,9 @@ ENV MAVEN_PROXY_URL=${MAVEN_PROXY_URL}
 
 WORKDIR $HOME
 
-COPY --parents .mvn/ dev/ control-api/ server-shaded/ examples/ server/ api/ clients/ connectors/ integration-tests/ pom.xml ./
+# build/ carries Repo Depot PREBUILT trees (server/cli/control-api targets + slim .m2).
+# Omit it and PREBUILT=true fails: those paths never enter the image.
+COPY --parents .mvn/ dev/ build/ control-api/ server-shaded/ examples/ server/ api/ clients/ connectors/ integration-tests/ pom.xml ./
 
 RUN apk add --no-cache bash maven \
  && addgroup -S "$USER" \
