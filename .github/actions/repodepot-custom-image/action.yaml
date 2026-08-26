@@ -131,12 +131,7 @@ runs:
 
         build_maven_module() {
           local maven_pl="$1"
-          local project_path="$2"
           mvn -B -pl "$maven_pl" -am package -DskipTests
-          sed -i 's#git@github.com:unitycatalog/unitycatalog.git#git@github.com:celonis/unitycatalog.git#g' \
-            "$(find "$project_path" -name '*.pom')"
-          sed -i 's#<groupId>io.unitycatalog</groupId>#<groupId>cloud.celonis</groupId>#g' \
-            "$(find "$project_path" -name '*.pom')"
         }
 
         case "${{ inputs.component-name }}" in
@@ -144,7 +139,7 @@ runs:
             mkdir -p "${HOME}/.m2"
             ;;
           unitycatalog-client|unitycatalog-controlapi|unitycatalog-hadoop|unitycatalog-spark)
-            build_maven_module "${{ steps.component.outputs.maven-pl }}" "${{ steps.component.outputs.project-path }}"
+            build_maven_module "${{ steps.component.outputs.maven-pl }}"
             ;;
           *)
             echo "Unsupported component: ${{ inputs.component-name }}" >&2
@@ -176,22 +171,30 @@ runs:
       run: |
         set -euo pipefail
 
-        pom_file=""
-        while IFS= read -r pom; do
-          jar="${pom%.pom}.jar"
-          if [ -f "$jar" ]; then
-            pom_file="$pom"
-            break
-          fi
-        done < <(find "$PROJECT_PATH/target" -name '*.pom' ! -path '*/streams/*' | sort)
-        jar_file="${pom_file%.pom}.jar"
-        if [ -z "$pom_file" ] || [ ! -f "$jar_file" ]; then
-          echo "Artifact not found. POM: $pom_file JAR: $jar_file" >&2
-          find "$PROJECT_PATH/target" \( -name '*.pom' -o -name '*.jar' \) | head -30 >&2 || true
+        final_name="$(mvn -q -f "$PROJECT_PATH/pom.xml" -DforceStdout help:evaluate -Dexpression=project.build.finalName)"
+        jar_file="$PROJECT_PATH/target/${final_name}.jar"
+        if [ ! -f "$jar_file" ]; then
+          echo "Jar not found: $jar_file" >&2
+          ls -la "$PROJECT_PATH/target" >&2 || true
           exit 1
         fi
+
+        # Spark already writes a flattened, suffix-rewritten POM at package.
+        # Other modules need flatten so we do not publish a parent-relative pom.xml.
+        if [ -f "$PROJECT_PATH/target/published-pom.xml" ]; then
+          src_pom="$PROJECT_PATH/target/published-pom.xml"
+        else
+          mvn -q -f "$PROJECT_PATH/pom.xml" flatten:flatten -Dflatten.updatePomFile=false
+          src_pom="$PROJECT_PATH/.flattened-pom.xml"
+        fi
+
+        pom_file="$PROJECT_PATH/target/github-packages.pom"
+        cp "$src_pom" "$pom_file"
+        # GitHub Packages coordinate is cloud.celonis; source POMs stay io.unitycatalog.
+        sed -i 's#<groupId>io.unitycatalog</groupId>#<groupId>cloud.celonis</groupId>#g' "$pom_file"
         sed -i "0,/<version>/{s|<version>[^<]*</version>|<version>${REPO_DEPOT_VERSION}</version>|}" "$pom_file"
-        echo "Publishing ${pom_file} at version ${REPO_DEPOT_VERSION}"
+
+        echo "Publishing ${jar_file} with ${pom_file} at version ${REPO_DEPOT_VERSION}"
         mvn deploy:deploy-file -e \
           -Dfile="$jar_file" \
           -DrepositoryId=github \
