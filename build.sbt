@@ -297,58 +297,6 @@ lazy val client = (project in file("clients/java"))
     }
   )
 
-lazy val prepareGeneration = taskKey[Unit]("Prepare the environment for OpenAPI code generation")
-
-lazy val pythonClient = (project in file("clients/python"))
-  .disablePlugins(CheckstylePlugin)
-  .settings(
-    name := s"$artifactNamePrefix-python-client",
-    commonSettings,
-    skipReleaseSettings,
-    Compile / compile := (Compile / compile).dependsOn(generate).value,
-
-    prepareGeneration := PythonClientPostBuild.prepareGeneration(
-      streams.value.log, baseDirectory.value,
-      (baseDirectory.value / "target").getAbsolutePath),
-
-    generate := Def.sequential(
-      prepareGeneration,
-      Def.task {
-        val outputDir = (baseDirectory.value / "target").getAbsolutePath
-        val commonProps = Map(
-          "packageVersion" -> s"${version.value.replace("-SNAPSHOT", ".dev0")}",
-          "library"        -> "asyncio"
-        )
-        OpenApiHelper.generate(
-          outputDir = outputDir,
-          generatorName = "python",
-          specs = Seq(
-            OpenApiSpec(
-              inputSpec = (baseDirectory.value.getParentFile.getParentFile / "api" / "all.yaml").getAbsolutePath,
-              packageName = s"$artifactNamePrefix.client",
-              additionalProperties = commonProps
-            ),
-            OpenApiSpec(
-              inputSpec = (baseDirectory.value.getParentFile.getParentFile / "api" / "delta.yaml").getAbsolutePath,
-              packageName = s"$artifactNamePrefix.delta",
-              additionalProperties = commonProps,
-              globalProperties = Map("apis" -> "", "models" -> "")
-            )
-          )
-        )
-      },
-      Def.task {
-        val log = streams.value.log
-        PythonClientPostBuild.processGeneratedFiles(
-          log,
-          (baseDirectory.value / "target").getAbsolutePath,
-          baseDirectory.value,
-        )
-        log.info("OpenAPI Python client generation completed.")
-      }
-    ).value
-  )
-
 lazy val apiDocs = (project in file("api"))
   .disablePlugins(CheckstylePlugin)
   .settings(
@@ -840,8 +788,8 @@ lazy val integrationTests = (project in file("integration-tests"))
   )
 
 lazy val root = (project in file("."))
-  // pythonClient stays defined for explicit pythonClient/generate, but is not
-  // aggregated so default package/publishLocal/generate skip OpenAPI Python codegen.
+  // This fork omits upstream clients/python, ui/, and ai/ (not shipped in the
+  // server image). Replay `git rm -rf clients/python ui ai` on each reconcile.
   .aggregate(serverModels, client, server, cli, spark, hadoop, controlApi, controlModels, apiDocs)
   .settings(
     name := s"$artifactNamePrefix",

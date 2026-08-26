@@ -151,20 +151,7 @@ To quit DuckDB, press `Ctrl`+`D` (if your platform supports it), press `Ctrl`+`C
 
 ![UC UI](./docs/assets/images/uc-ui.png)
 
-To use the Unity Catalog UI, start a new terminal and ensure you have already started the UC server (e.g., `./bin/start-uc-server`)
-
-**Prerequisites**
-
-- Node: https://nodejs.org/en/download/package-manager
-- Yarn: https://classic.yarnpkg.com/lang/en/docs/install
-
-**How to start the UI through yarn**
-
-```
-cd /ui
-yarn install
-yarn start
-```
+This fork does not include the OSS UI sources (`ui/`). `docker compose up` still starts the [published UI image](https://hub.docker.com/r/unitycatalog/unitycatalog-ui) on `http://localhost:3000`. To build or modify the UI, use [upstream `ui/`](https://github.com/unitycatalog/unitycatalog/tree/main/ui).
 
 ## CLI tutorial
 
@@ -252,8 +239,8 @@ For the official documentation, please take a look at [https://docs.unitycatalog
 
 # Docker Builds
 
-You can build a local version of the Unity Catalog Server or UI for local testing. All you need is Docker on your machine. In addition,
-if you are working behind a corporate firewall, simply add the environment variable `MAVEN_PROXY_URL=https://maven-proxy.your-company.com` for the Unity Catalog server build, or `NPM_PROXY_URL=https://npm-proxy.your-company.com/` for the Unity Catalog UI build. If you don't need a proxy, you can safely still run the following commands without any variables set.
+You can build a local version of the Unity Catalog Server for local testing. All you need is Docker on your machine. In addition,
+if you are working behind a corporate firewall, simply add the environment variable `MAVEN_PROXY_URL=https://maven-proxy.your-company.com` for the Unity Catalog server build. If you don't need a proxy, you can safely still run the following commands without any variables set.
 
 ## Unity Catalog Server
 
@@ -264,11 +251,3 @@ docker build \
   .
 ```
 
-## Unity Catalog UI
-
-```bash
-docker build \
-  --build-arg NPM_PROXY_URL="$NPM_PROXY_URL" \
-  -t unitycatalog/unitycatalog-ui:local \
-  ./ui
-```

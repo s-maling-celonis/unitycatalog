@@ -24,12 +24,6 @@ version.sbt @tdas
 # API
 /api/ @rameshchandra @tdas
 
-# UI
-/ui/ @yc-shawn @jamieknight-db
-
-# AI
-/ai/ @dennyglee @serena-ruan @benwilson2
-
 # Spark Connector
 /spark-connector/ @tdas @cloud-fan
 /connectors/spark/ @tdas @openinx @yili-db

@@ -286,18 +286,7 @@ check the /tmp/uc/my_table/folder).
 
 ![UC UI](./assets/images/uc-ui.png)
 
-To use the Unity Catalog UI, start a new terminal and ensure you have already started the Unity Catalog server (e.g., `./bin/start-uc-server`)
-
-!!! warning "Prerequisites"
-    The Unity Catalog UI requires both [Node](https://nodejs.org/en/download/package-manager) and [Yarn](https://classic.yarnpkg.com/lang/en/docs/install).
-
-To start the UI locally, run the following commands to start `yarn`
-
-```console
-cd ui
-yarn install
-yarn start
-```
+This fork does not include the OSS UI sources. `docker compose up` starts the [published UI image](https://hub.docker.com/r/unitycatalog/unitycatalog-ui) at `http://localhost:3000`. To build the UI from source, use [upstream `ui/`](https://github.com/unitycatalog/unitycatalog/tree/main/ui).
 
 ## Manage models in Unity Catalog using MLflow
 

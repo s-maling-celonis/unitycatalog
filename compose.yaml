@@ -14,9 +14,8 @@ services:
         source: unitycatalog_data
         target: /opt/unitycatalog/etc/data
   ui:
-    build:
-      context: ui/
-      dockerfile: Dockerfile
+    # OSS UI sources are not in this fork; use the published image.
+    image: unitycatalog/unitycatalog-ui:latest
     ports:
       - "3000:3000"
     depends_on:
