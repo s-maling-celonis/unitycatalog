@@ -111,7 +111,10 @@ runs:
         UC_HOME="${GITHUB_WORKSPACE}/${{ inputs.working-directory }}/build/ci-staging/home"
         echo "UC_HOME=$UC_HOME" >> "$GITHUB_ENV"
         echo "HOME=$UC_HOME" >> "$GITHUB_ENV"
-        mkdir -p "$UC_HOME/.m2"
+        # HOME only sets the path the classpath files are rewritten to. The JVM takes
+        # user.home from the passwd entry, so Maven still resolves into the runner's
+        # real ~/.m2; do not create an empty .m2 here or it shadows that cache.
+        mkdir -p "$UC_HOME"
 
     - name: Setup Java
       uses: celonis/core-setup-java-action@v4.0.2
@@ -136,7 +139,7 @@ runs:
 
         case "${{ inputs.component-name }}" in
           unity-catalog-server)
-            mkdir -p "${HOME}/.m2"
+            # Compiled by the Test step's verify run.
             ;;
           unitycatalog-client|unitycatalog-controlapi|unitycatalog-hadoop|unitycatalog-spark)
             build_maven_module "${{ steps.component.outputs.maven-pl }}"
@@ -264,13 +267,17 @@ runs:
 
         # Copy only jars that the runtime classpaths reference so the PREBUILT
         # image does not ship the test cache.
+        # Match on repository/, not .m2/: an empty .m2 would otherwise win and every
+        # classpath entry would look missing.
         CACHE_SRC=""
-        if [ -d "${HOME}/.m2" ]; then
-          CACHE_SRC="${HOME}/.m2"
-        elif [ -d /home/runner/.m2 ]; then
-          CACHE_SRC="/home/runner/.m2"
-        else
-          echo "No Maven cache found under HOME or /home/runner/.m2" >&2
+        for candidate in "${HOME}/.m2" /home/runner/.m2; do
+          if [ -d "$candidate/repository" ]; then
+            CACHE_SRC="$candidate"
+            break
+          fi
+        done
+        if [ -z "$CACHE_SRC" ]; then
+          echo "No Maven repository under ${HOME}/.m2 or /home/runner/.m2" >&2
           exit 1
         fi
         slim_cache="build/ci-staging/prebuilt/home/.m2"
