@@ -16,7 +16,7 @@
   <properties>
     <maven.compiler.release>11</maven.compiler.release>
     <!-- Spark 4.2+ connector tests reference Java records; those profiles raise this to 17. -->
-    <maven.compiler.testRelease>11</maven.compiler.testRelease>
+    <maven.compiler.testRelease>${spark.test.release}</maven.compiler.testRelease>
     <spark.published.artifactId>unitycatalog-spark${spark.artifact.suffix}_${scala.binary.version}</spark.published.artifactId>
   </properties>
 

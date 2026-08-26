@@ -73,6 +73,9 @@
          dir shared with the adjacent Spark line. -->
     <spark.shim.dir>scala-shims/spark-4.1</spark.shim.dir>
     <spark.shim.shared.dir>scala-shims/spark-4.1-4.2</spark.shim.shared.dir>
+    <!-- Consumed only by connectors/spark; must not be maven.compiler.testRelease, which
+         would apply to every module and break test code that needs Java 17. -->
+    <spark.test.release>11</spark.test.release>
     <delta.version>4.3.1</delta.version>
     <hadoop.version>3.4.2</hadoop.version>
     <iceberg.version>1.11.0</iceberg.version>
@@ -520,7 +523,7 @@
         <spark.artifact.suffix>_4.0</spark.artifact.suffix>
         <spark.shim.dir>scala-shims/spark-4.0</spark.shim.dir>
         <spark.shim.shared.dir>scala-shims/spark-4.0-4.1</spark.shim.shared.dir>
-        <maven.compiler.testRelease>11</maven.compiler.testRelease>
+        <spark.test.release>11</spark.test.release>
       </properties>
     </profile>
     <profile>
@@ -537,7 +540,7 @@
         <spark.artifact.suffix>_4.0</spark.artifact.suffix>
         <spark.shim.dir>scala-shims/spark-4.0</spark.shim.dir>
         <spark.shim.shared.dir>scala-shims/spark-4.0-4.1</spark.shim.shared.dir>
-        <maven.compiler.testRelease>11</maven.compiler.testRelease>
+        <spark.test.release>11</spark.test.release>
       </properties>
     </profile>
     <profile>
@@ -554,7 +557,7 @@
         <spark.artifact.suffix>_4.1</spark.artifact.suffix>
         <spark.shim.dir>scala-shims/spark-4.1</spark.shim.dir>
         <spark.shim.shared.dir>scala-shims/spark-4.1-4.2</spark.shim.shared.dir>
-        <maven.compiler.testRelease>11</maven.compiler.testRelease>
+        <spark.test.release>11</spark.test.release>
       </properties>
     </profile>
     <profile>
@@ -571,7 +574,7 @@
         <spark.artifact.suffix>_4.1</spark.artifact.suffix>
         <spark.shim.dir>scala-shims/spark-4.1</spark.shim.dir>
         <spark.shim.shared.dir>scala-shims/spark-4.1-4.2</spark.shim.shared.dir>
-        <maven.compiler.testRelease>11</maven.compiler.testRelease>
+        <spark.test.release>11</spark.test.release>
       </properties>
     </profile>
     <profile>
@@ -588,7 +591,7 @@
         <spark.artifact.suffix>_4.2</spark.artifact.suffix>
         <spark.shim.dir>scala-shims/spark-4.2</spark.shim.dir>
         <spark.shim.shared.dir>scala-shims/spark-4.1-4.2</spark.shim.shared.dir>
-        <maven.compiler.testRelease>17</maven.compiler.testRelease>
+        <spark.test.release>17</spark.test.release>
       </properties>
     </profile>
     <profile>
@@ -605,7 +608,7 @@
         <spark.artifact.suffix>_4.2</spark.artifact.suffix>
         <spark.shim.dir>scala-shims/spark-4.2</spark.shim.dir>
         <spark.shim.shared.dir>scala-shims/spark-4.1-4.2</spark.shim.shared.dir>
-        <maven.compiler.testRelease>17</maven.compiler.testRelease>
+        <spark.test.release>17</spark.test.release>
       </properties>
     </profile>
     <profile>
