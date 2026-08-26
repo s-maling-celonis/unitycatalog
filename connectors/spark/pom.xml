@@ -14,8 +14,9 @@
   <name>unitycatalog-spark</name>
 
   <properties>
-    <maven.compiler.release>17</maven.compiler.release>
-    <maven.compiler.testRelease>17</maven.compiler.testRelease>
+    <maven.compiler.release>11</maven.compiler.release>
+    <!-- Spark 4.2+ connector tests reference Java records; those profiles raise this to 17. -->
+    <maven.compiler.testRelease>11</maven.compiler.testRelease>
     <spark.published.artifactId>unitycatalog-spark${spark.artifact.suffix}_${scala.binary.version}</spark.published.artifactId>
   </properties>
 
@@ -181,6 +182,7 @@
             <configuration>
               <sources>
                 <source>${project.basedir}/src/main/${spark.shim.dir}</source>
+                <source>${project.basedir}/src/main/${spark.shim.shared.dir}</source>
               </sources>
             </configuration>
           </execution>
@@ -193,6 +195,7 @@
             <configuration>
               <sources>
                 <source>${project.basedir}/src/test/${spark.shim.dir}</source>
+                <source>${project.basedir}/src/test/${spark.shim.shared.dir}</source>
               </sources>
             </configuration>
           </execution>
@@ -219,10 +222,11 @@
         </executions>
         <configuration>
           <scalaVersion>${scala.version}</scalaVersion>
+          <!-- Overrides maven.compiler.release (11 for the Java sources here): scalac needs
+               17 so Spark 4.2 shims can see java.lang.Record. -->
+          <release>17</release>
           <args>
             <arg>-deprecation</arg>
-            <arg>-release</arg>
-            <arg>17</arg>
           </args>
         </configuration>
       </plugin>

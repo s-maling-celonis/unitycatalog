@@ -746,7 +746,9 @@ public class TableRepository {
             // view_dependencies is optional (see validateViewLike); treat an absent list as empty.
             List<DependencyDAO> depDAOs =
                 Optional.ofNullable(createTable.getViewDependencies())
-                    .map(DependencyList::getDependencies).orElse(List.of()).stream()
+                    .map(DependencyList::getDependencies)
+                    .orElse(List.of())
+                    .stream()
                     .map(dep -> DependencyDAO.from(dep, tableUUID, dependentType))
                     .toList();
             repositories

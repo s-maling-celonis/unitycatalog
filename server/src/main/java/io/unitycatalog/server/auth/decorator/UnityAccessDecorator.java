@@ -1,5 +1,9 @@
 package io.unitycatalog.server.auth.decorator;
 
+import static io.unitycatalog.server.auth.decorator.AuthorizeKeyLocator.Source.PARAM;
+import static io.unitycatalog.server.auth.decorator.AuthorizeKeyLocator.Source.PAYLOAD;
+import static io.unitycatalog.server.auth.decorator.AuthorizeKeyLocator.Source.SYSTEM;
+
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.linecorp.armeria.common.HttpData;
@@ -24,9 +28,6 @@ import io.unitycatalog.server.model.SecurableType;
 import io.unitycatalog.server.persist.Repositories;
 import io.unitycatalog.server.persist.UserRepository;
 import io.unitycatalog.server.persist.utils.ExternalLocationUtils;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.lang.reflect.Method;
@@ -37,10 +38,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
-
-import static io.unitycatalog.server.auth.decorator.AuthorizeKeyLocator.Source.PARAM;
-import static io.unitycatalog.server.auth.decorator.AuthorizeKeyLocator.Source.PAYLOAD;
-import static io.unitycatalog.server.auth.decorator.AuthorizeKeyLocator.Source.SYSTEM;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Armeria access control Decorator.
@@ -54,10 +53,10 @@ import static io.unitycatalog.server.auth.decorator.AuthorizeKeyLocator.Source.S
  *
  * <p>2. {@code @AuthorizeResourceKey} - This annotation maps a request value to a unity catalog
  * resource (catalog, schema, table, etc.) for the authorization context. The source is chosen by
- * whether the annotated method parameter also carries {@code @Param}: if present, the value is
- * read from the URL query or path; if absent, from the request body field named by
- * {@code @AuthorizeResourceKey.key()}. May be used at the method level (server-level resources
- * like METASTORE) or at the parameter level, and may be specified more than once per method.
+ * whether the annotated method parameter also carries {@code @Param}: if present, the value is read
+ * from the URL query or path; if absent, from the request body field named by
+ * {@code @AuthorizeResourceKey.key()}. May be used at the method level (server-level resources like
+ * METASTORE) or at the parameter level, and may be specified more than once per method.
  *
  * <p>3. {@code @AuthorizeKey} - Works like {@code @AuthorizeResourceKey} for source selection, but
  * for non-resource request values (operation mode, table type, flag, etc.) exposed directly as a
@@ -66,9 +65,9 @@ import static io.unitycatalog.server.auth.decorator.AuthorizeKeyLocator.Source.S
  * <p>For PAYLOAD-source locators (body-read), {@code peekData} only observes complete JSON chunks;
  * anything else (no body, non-JSON content-type, malformed JSON, trailing whitespace) silently
  * skips the authorization evaluation. The {@link #AUTH_PENDING} flag and {@link
- * AuthorizationGateConverter} close that gap: the decorator marks the request auth-pending on
- * entry to the PAYLOAD path, clears it only after authorization succeeds, and the gate converter
- * denies any body-binding where the flag is still set.
+ * AuthorizationGateConverter} close that gap: the decorator marks the request auth-pending on entry
+ * to the PAYLOAD path, clears it only after authorization succeeds, and the gate converter denies
+ * any body-binding where the flag is still set.
  */
 public class UnityAccessDecorator implements DecoratingHttpServiceFunction {
 
@@ -76,14 +75,15 @@ public class UnityAccessDecorator implements DecoratingHttpServiceFunction {
   private static final ObjectMapper MAPPER = new ObjectMapper();
 
   /**
-   * Per-request flag: {@code true} once the decorator enters the PAYLOAD path, flipped to
-   * {@code false} when the authorization evaluation completes inside the peekData callback. Read by
-   * {@link AuthorizationGateConverter} at body-binding time: if still {@code true}, authorization
-   * never ran (no body chunk arrived, content-type wasn't JSON, or JSON didn't complete) and the
-   * request must be denied.
+   * Per-request flag: {@code true} once the decorator enters the PAYLOAD path, flipped to {@code
+   * false} when the authorization evaluation completes inside the peekData callback. Read by {@link
+   * AuthorizationGateConverter} at body-binding time: if still {@code true}, authorization never
+   * ran (no body chunk arrived, content-type wasn't JSON, or JSON didn't complete) and the request
+   * must be denied.
    */
   public static final AttributeKey<Boolean> AUTH_PENDING =
       AttributeKey.valueOf(UnityAccessDecorator.class, "AUTH_PENDING");
+
   private final KeyMapper keyMapper;
   private final UserRepository userRepository;
 
@@ -138,7 +138,8 @@ public class UnityAccessDecorator implements DecoratingHttpServiceFunction {
       UUID principal,
       List<AuthorizeKeyLocator> locators,
       String expression,
-      Optional<ResponseAuthorizeFilter> filterAnnotation) throws Exception {
+      Optional<ResponseAuthorizeFilter> filterAnnotation)
+      throws Exception {
     //
     // Based on the query and payload parameters defined on the service method (that
     // have been gathered as Locators), we'll attempt to find the entity/resource that
@@ -150,30 +151,29 @@ public class UnityAccessDecorator implements DecoratingHttpServiceFunction {
     // Split up the locators by type, because we have to extract the value from the request
     // different ways for different types
 
-    List<AuthorizeKeyLocator> systemLocators = locators.stream()
-        .filter(l -> l.getSource().equals(SYSTEM))
-        .toList();
-    List<AuthorizeKeyLocator> paramLocators = locators.stream()
-        .filter(l -> l.getSource().equals(PARAM))
-        .toList();
-    List<AuthorizeKeyLocator> payloadLocators = locators.stream()
-        .filter(l -> l.getSource().equals(PAYLOAD))
-        .toList();
+    List<AuthorizeKeyLocator> systemLocators =
+        locators.stream().filter(l -> l.getSource().equals(SYSTEM)).toList();
+    List<AuthorizeKeyLocator> paramLocators =
+        locators.stream().filter(l -> l.getSource().equals(PARAM)).toList();
+    List<AuthorizeKeyLocator> payloadLocators =
+        locators.stream().filter(l -> l.getSource().equals(PAYLOAD)).toList();
 
     // Add system-type keys, just metastore for now.
     systemLocators.forEach(l -> resourceKeys.put(l.getType().get(), "metastore"));
 
     // Extract the query/path parameter values just by grabbing them from the request
-    paramLocators.forEach(l -> {
-      String value = ctx.pathParam(l.getKey()) != null
-          ? ctx.pathParam(l.getKey())
-          : ctx.queryParam(l.getKey());
-      if (l.getType().isPresent()) {
-        resourceKeys.put(l.getType().get(), value);
-      } else {
-        nonResourceValues.put(l.getVariableName(), value);
-      }
-    });
+    paramLocators.forEach(
+        l -> {
+          String value =
+              ctx.pathParam(l.getKey()) != null
+                  ? ctx.pathParam(l.getKey())
+                  : ctx.queryParam(l.getKey());
+          if (l.getType().isPresent()) {
+            resourceKeys.put(l.getType().get(), value);
+          } else {
+            nonResourceValues.put(l.getVariableName(), value);
+          }
+        });
 
     EvaluationAction evaluateAction =
         filterAnnotation
@@ -188,11 +188,8 @@ public class UnityAccessDecorator implements DecoratingHttpServiceFunction {
       // is being evaluated, via peekData()
       LOGGER.debug("Checking authorization before in peekData.");
 
-      PeekDataHandler peekDataHandler = new PeekDataHandler(
-          req.contentType(),
-          payloadLocators,
-          resourceKeys,
-          nonResourceValues);
+      PeekDataHandler peekDataHandler =
+          new PeekDataHandler(req.contentType(), payloadLocators, resourceKeys, nonResourceValues);
 
       // peekData's lambda only fires when a body chunk arrives AND processPeekData returns true
       // (JSON content-type + chunk ending in '}'). Any other path (no body, non-JSON, malformed
@@ -201,16 +198,21 @@ public class UnityAccessDecorator implements DecoratingHttpServiceFunction {
       // denies any body-binding attempt where this flag is still set.
       ctx.setAttr(AUTH_PENDING, true);
 
-      req = req.peekData(data -> {
-        // This code block is not called immediately. It is called later as part of delegate.serve()
-        LOGGER.debug("Authorization peekData invoked.");
+      req =
+          req.peekData(
+              data -> {
+                // This code block is not called immediately. It is called later as part of
+                // delegate.serve()
+                LOGGER.debug("Authorization peekData invoked.");
 
-        if (peekDataHandler.processPeekData(data)) {
-          Map<SecurableType, UUID> resourceIds = mapResourceKeys(resourceKeys, nonResourceValues);
-          evaluateAction.beforeRequest(principal, expression, resourceIds, nonResourceValues);
-          ctx.setAttr(AUTH_PENDING, false);
-        }
-      });
+                if (peekDataHandler.processPeekData(data)) {
+                  Map<SecurableType, UUID> resourceIds =
+                      mapResourceKeys(resourceKeys, nonResourceValues);
+                  evaluateAction.beforeRequest(
+                      principal, expression, resourceIds, nonResourceValues);
+                  ctx.setAttr(AUTH_PENDING, false);
+                }
+              });
     }
 
     HttpResponse response = delegate.serve(ctx, req);
@@ -276,10 +278,10 @@ public class UnityAccessDecorator implements DecoratingHttpServiceFunction {
 
     @Override
     public void beforeRequest(
-      UUID principal,
-      String expression,
-      Map<SecurableType, UUID> resourceIds,
-      Map<String, Object> nonResourceValues) {
+        UUID principal,
+        String expression,
+        Map<SecurableType, UUID> resourceIds,
+        Map<String, Object> nonResourceValues) {
       resultFilter =
           new ResultFilter(
               evaluator, principal, expression, resourceIds, nonResourceValues, keyMapper);
@@ -292,27 +294,30 @@ public class UnityAccessDecorator implements DecoratingHttpServiceFunction {
       // then stream the body through. This avoids buffering large LIST responses just to
       // check a flag that would allocate O(response size) per concurrent request.
       SplitHttpResponse split = response.split();
-      return HttpResponse.of(split.headers().thenApply(
-        headers -> {
-          if (headers.status().isSuccess()) {
-            if (resultFilter == null) {
-              split.body().abort();
-              LOGGER.error(
-                  "SECURITY VIOLATION: Method {} did not execute evaluateAction",
-                  method.getName());
-              throw new BaseException(ErrorCode.PERMISSION_DENIED, ERR_AUTH_NOT_EXECUTED);
-            }
-            if (!resultFilter.wasCalled()) {
-              split.body().abort();
-              LOGGER.error(
-                  "SECURITY VIOLATION: Method {} with @ResponseAuthorizeFilter did not call "
-                      + "applyResponseFilter(). This is a security vulnerability!",
-                  method.getName());
-              throw new BaseException(ErrorCode.PERMISSION_DENIED, ERR_AUTH_NOT_EXECUTED);
-            }
-          }
-          return HttpResponse.of(headers, split.body());
-        }));
+      return HttpResponse.of(
+          split
+              .headers()
+              .thenApply(
+                  headers -> {
+                    if (headers.status().isSuccess()) {
+                      if (resultFilter == null) {
+                        split.body().abort();
+                        LOGGER.error(
+                            "SECURITY VIOLATION: Method {} did not execute evaluateAction",
+                            method.getName());
+                        throw new BaseException(ErrorCode.PERMISSION_DENIED, ERR_AUTH_NOT_EXECUTED);
+                      }
+                      if (!resultFilter.wasCalled()) {
+                        split.body().abort();
+                        LOGGER.error(
+                            "SECURITY VIOLATION: Method {} with @ResponseAuthorizeFilter did not call "
+                                + "applyResponseFilter(). This is a security vulnerability!",
+                            method.getName());
+                        throw new BaseException(ErrorCode.PERMISSION_DENIED, ERR_AUTH_NOT_EXECUTED);
+                      }
+                    }
+                    return HttpResponse.of(headers, split.body());
+                  }));
     }
   }
 
@@ -387,9 +392,8 @@ public class UnityAccessDecorator implements DecoratingHttpServiceFunction {
     if (httpService.unwrap() instanceof SimpleDecoratingHttpService decoratingService
         && decoratingService.unwrap() instanceof AnnotatedService service) {
 
-      LOGGER.debug("serviceName = {}, methodName = {}",
-          service.serviceName(),
-          service.methodName());
+      LOGGER.debug(
+          "serviceName = {}, methodName = {}", service.serviceName(), service.methodName());
 
       Class<?> clazz = Class.forName(service.serviceName());
       List<Method> methods = findMethodsByName(clazz, service.methodName());
@@ -452,10 +456,8 @@ public class UnityAccessDecorator implements DecoratingHttpServiceFunction {
         // TODO: try to optimize this using Jackson streaming or something else.
         if (data.array()[data.array().length - 1] == '}') {
           try {
-            Map<String, Object> payload = MAPPER.readValue(
-                dataStream.toByteArray(),
-                new TypeReference<>() {
-                });
+            Map<String, Object> payload =
+                MAPPER.readValue(dataStream.toByteArray(), new TypeReference<>() {});
 
             payloadLocators.forEach(
                 l -> {

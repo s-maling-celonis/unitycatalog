@@ -238,6 +238,10 @@ In order to automatically fix Java code style issues, please use `mvn spotless:a
 Follow the instructions for [Eclipse](https://github.com/google/google-java-format#eclipse) or
 [IntelliJ](https://github.com/google/google-java-format#intellij-android-studio-and-other-jetbrains-ides) to install the **google-java-format** plugin (note the required manual actions for IntelliJ).
 
+The build pins google-java-format to the version in [`pom.xml`](./pom.xml). Newer releases format
+switch expressions and long strings differently, so an IDE plugin on a different version will fight
+`mvn spotless:check`. Indentation is therefore left to the formatter rather than Checkstyle.
+
 ### Using more recent JDKs
 
 The Maven build [requires JDK 17–24](./pom.xml) via the enforcer plugin (`[17,25)`). Spark and Hadoop modules still compile with `--release 11` / `17` for runtime compatibility. Run tests on **JDK 17**; Hadoop and CLI Delta tests fail on JDK 25+ (`Subject.getSubject` removed).

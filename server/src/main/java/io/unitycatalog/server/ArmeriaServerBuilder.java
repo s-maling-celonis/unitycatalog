@@ -27,13 +27,13 @@ import java.util.Objects;
 
 /**
  * Wraps Armeria's {@link ServerBuilder} with Unity-Catalog-aware registration. Callers register
- * each annotated service through a protocol-specific {@code annotate*} method ({@link
- * #annotateUc}, {@link #annotateAuth}, {@link #annotateScim}, {@link #annotateIceberg},
- * {@link #annotateDelta}). Those methods funnel through the single private {@link #register}, the
- * only place this class registers an annotated service, and it always installs the PAYLOAD-source
- * authorization gate in front of the body converter -- so no annotated service can reach the server
- * ungated. {@link #withSecurityDecorators} attaches caller-supplied access/auth decorators to the
- * API path prefixes, and {@link #build()} builds the server.
+ * each annotated service through a protocol-specific {@code annotate*} method ({@link #annotateUc},
+ * {@link #annotateAuth}, {@link #annotateScim}, {@link #annotateIceberg}, {@link #annotateDelta}).
+ * Those methods funnel through the single private {@link #register}, the only place this class
+ * registers an annotated service, and it always installs the PAYLOAD-source authorization gate in
+ * front of the body converter -- so no annotated service can reach the server ungated. {@link
+ * #withSecurityDecorators} attaches caller-supplied access/auth decorators to the API path
+ * prefixes, and {@link #build()} builds the server.
  *
  * <p>{@link UnityCatalogServer} bootstraps the collaborators (Hibernate, authorizer, repositories),
  * constructs the service handlers, and decides whether authorization is enabled; this class turns
@@ -61,8 +61,7 @@ public class ArmeriaServerBuilder {
         Server.builder()
             .localPort(port, SessionProtocol.HTTP)
             .serviceUnder("/docs", new DocService());
-    this.armeriaServerBuilder.service(
-        "/", (ctx, req) -> HttpResponse.of("Hello, Unity Catalog!"));
+    this.armeriaServerBuilder.service("/", (ctx, req) -> HttpResponse.of("Hello, Unity Catalog!"));
     this.basePath = basePath;
     this.controlPath = controlPath;
     this.ucMapper =
@@ -126,8 +125,7 @@ public class ArmeriaServerBuilder {
    * @param authDecorator authentication decorator; runs first at request time
    */
   ArmeriaServerBuilder withSecurityDecorators(
-      DecoratingHttpServiceFunction accessDecorator,
-      DecoratingHttpServiceFunction authDecorator) {
+      DecoratingHttpServiceFunction accessDecorator, DecoratingHttpServiceFunction authDecorator) {
     Objects.requireNonNull(accessDecorator, "accessDecorator");
     Objects.requireNonNull(authDecorator, "authDecorator");
     for (DecoratingHttpServiceFunction decorator : List.of(accessDecorator, authDecorator)) {
@@ -186,14 +184,15 @@ public class ArmeriaServerBuilder {
    * (still gated) converters.
    */
   private void register(ServiceProtocol protocol, String relativePath, Object service) {
-    List<Object> converters = switch (protocol) {
-      // Auth and UC services do not have response converter. They return HttpResponse.ofJson
-      // directly.
-      case AUTH, UC -> List.of(gatedJackson(ucMapper));
-      case SCIM -> List.of(gatedJackson(ucMapper), scimResponseConverter);
-      case ICEBERG -> List.of(gatedJackson(icebergMapper), icebergResponseConverter);
-      case DELTA -> List.of(gatedJackson(deltaMapper), deltaResponseConverter);
-    };
+    List<Object> converters =
+        switch (protocol) {
+            // Auth and UC services do not have response converter. They return HttpResponse.ofJson
+            // directly.
+          case AUTH, UC -> List.of(gatedJackson(ucMapper));
+          case SCIM -> List.of(gatedJackson(ucMapper), scimResponseConverter);
+          case ICEBERG -> List.of(gatedJackson(icebergMapper), icebergResponseConverter);
+          case DELTA -> List.of(gatedJackson(deltaMapper), deltaResponseConverter);
+        };
     armeriaServerBuilder.annotatedService(
         protocol.basePath(basePath, controlPath) + relativePath, service, converters.toArray());
   }

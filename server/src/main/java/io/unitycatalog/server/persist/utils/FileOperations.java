@@ -57,13 +57,16 @@ public class FileOperations {
   /** Delete entire directory recursively. Note that currently it does nothing for cloud FS */
   public static void deleteDirectory(NormalizedURL url) {
     switch (UriScheme.fromURI(url.toUri())) {
-      // Directory deletion for local paths is handled by SimpleLocalFileIO.
+        // Directory deletion for local paths is handled by SimpleLocalFileIO.
       case FILE, NULL -> SimpleLocalFileIO.deleteDirectory(url.toString());
-      // Currently we can NOT delete the path in cloud storage. We will update this in future
-      // when UC OSS begins using the hadoopfs libraries.
-      case S3 -> {}
-      case GS -> {}
-      case ABFS, ABFSS -> {}
+        // Currently we can NOT delete the path in cloud storage. We will update this in future
+        // when UC OSS begins using the hadoopfs libraries.
+      case S3 -> {
+      }
+      case GS -> {
+      }
+      case ABFS, ABFSS -> {
+      }
     }
   }
 
@@ -71,11 +74,14 @@ public class FileOperations {
   public static void createStorageLocationDir(NormalizedURL url) {
     switch (UriScheme.fromURI(url.toUri())) {
       case FILE, NULL -> createLocalDirectory(url);
-      // Currently we can NOT create the directory in cloud storage. We will update this in future
-      // when UC OSS begins using the hadoopfs libraries.
-      case S3 -> {}
-      case GS -> {}
-      case ABFS, ABFSS -> {}
+        // Currently we can NOT create the directory in cloud storage. We will update this in future
+        // when UC OSS begins using the hadoopfs libraries.
+      case S3 -> {
+      }
+      case GS -> {
+      }
+      case ABFS, ABFSS -> {
+      }
     }
   }
 
@@ -100,11 +106,12 @@ public class FileOperations {
   // TODO: Cache fileIOs
   public FileIO getFileIO(NormalizedURL path) {
     return switch (UriScheme.fromURI(path.toUri())) {
-      // Local paths are served by SimpleLocalFileIO (backed by java.nio + iceberg-core). We
-      // deliberately do NOT route these through ResolvingFileIO: it resolves the file:// scheme to
-      // Iceberg's HadoopFileIO, which requires hadoop-client-runtime on the classpath. The server
-      // only depends on hadoop-client-api, and SimpleLocalFileIO covers the local read and
-      // directory operations we need without that heavy runtime dependency.
+        // Local paths are served by SimpleLocalFileIO (backed by java.nio + iceberg-core). We
+        // deliberately do NOT route these through ResolvingFileIO: it resolves the file:// scheme
+        // to
+        // Iceberg's HadoopFileIO, which requires hadoop-client-runtime on the classpath. The server
+        // only depends on hadoop-client-api, and SimpleLocalFileIO covers the local read and
+        // directory operations we need without that heavy runtime dependency.
       case FILE, NULL -> new SimpleLocalFileIO();
       case S3, GS, ABFS, ABFSS -> {
         ResolvingFileIO fileio = new ResolvingFileIO();
@@ -145,8 +152,7 @@ public class FileOperations {
       // scheme, so fail loudly rather than silently returning an empty (credential-less) config
       // that would later surface as an opaque access-denied error.
       throw new BaseException(
-          ErrorCode.INTERNAL,
-          "No recognized storage credential was vended for location: " + path);
+          ErrorCode.INTERNAL, "No recognized storage credential was vended for location: " + path);
     }
   }
 

@@ -3,10 +3,18 @@ package io.unitycatalog.server.service;
 import static io.unitycatalog.server.model.SecurableType.CREDENTIAL;
 import static io.unitycatalog.server.model.SecurableType.METASTORE;
 
+import com.linecorp.armeria.common.HttpResponse;
+import com.linecorp.armeria.common.HttpStatus;
+import com.linecorp.armeria.server.annotation.Delete;
+import com.linecorp.armeria.server.annotation.ExceptionHandler;
+import com.linecorp.armeria.server.annotation.Get;
+import com.linecorp.armeria.server.annotation.Param;
+import com.linecorp.armeria.server.annotation.Patch;
+import com.linecorp.armeria.server.annotation.Post;
 import io.unitycatalog.server.auth.UnityCatalogAuthorizer;
 import io.unitycatalog.server.auth.annotation.AuthorizeExpression;
-import io.unitycatalog.server.auth.annotation.ResponseAuthorizeFilter;
 import io.unitycatalog.server.auth.annotation.AuthorizeResourceKey;
+import io.unitycatalog.server.auth.annotation.ResponseAuthorizeFilter;
 import io.unitycatalog.server.exception.GlobalExceptionHandler;
 import io.unitycatalog.server.model.CreateCredentialRequest;
 import io.unitycatalog.server.model.CredentialInfo;
@@ -19,14 +27,6 @@ import io.unitycatalog.server.persist.Repositories;
 import io.unitycatalog.server.utils.ServerProperties;
 import java.util.Optional;
 import java.util.UUID;
-import com.linecorp.armeria.common.HttpResponse;
-import com.linecorp.armeria.common.HttpStatus;
-import com.linecorp.armeria.server.annotation.ExceptionHandler;
-import com.linecorp.armeria.server.annotation.Param;
-import com.linecorp.armeria.server.annotation.Post;
-import com.linecorp.armeria.server.annotation.Get;
-import com.linecorp.armeria.server.annotation.Delete;
-import com.linecorp.armeria.server.annotation.Patch;
 import lombok.SneakyThrows;
 
 /**
@@ -66,7 +66,8 @@ public class CredentialService extends AuthorizedService {
     return HttpResponse.ofJson(credentialInfo);
   }
 
-  private static final String LIST_AND_GET_AUTH_EXPRESSION = """
+  private static final String LIST_AND_GET_AUTH_EXPRESSION =
+      """
       #authorize(#principal, #metastore, OWNER) ||
       #authorizeAny(#principal, #credential, OWNER, CREATE_EXTERNAL_LOCATION)
       """;
@@ -92,7 +93,8 @@ public class CredentialService extends AuthorizedService {
   }
 
   @Patch("/{name}")
-  @AuthorizeExpression("""
+  @AuthorizeExpression(
+      """
       #authorize(#principal, #metastore, OWNER) ||
       #authorize(#principal, #credential, OWNER)
       """)
@@ -104,7 +106,8 @@ public class CredentialService extends AuthorizedService {
   }
 
   @Delete("/{name}")
-  @AuthorizeExpression("""
+  @AuthorizeExpression(
+      """
       #authorize(#principal, #metastore, OWNER) ||
       #authorize(#principal, #credential, OWNER)
       """)
@@ -112,10 +115,8 @@ public class CredentialService extends AuthorizedService {
   public HttpResponse deleteCredential(
       @Param("name") @AuthorizeResourceKey(CREDENTIAL) String name,
       @Param("force") Optional<Boolean> force) {
-    UUID deletedCredentialId =
-        credentialRepository.deleteCredential(name, force.orElse(false));
+    UUID deletedCredentialId = credentialRepository.deleteCredential(name, force.orElse(false));
     removeAuthorizations(deletedCredentialId.toString());
     return HttpResponse.of(HttpStatus.OK);
   }
-
 }

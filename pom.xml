@@ -69,7 +69,10 @@
     <spark.version>4.1.0</spark.version>
     <spark.short.version>4.1</spark.short.version>
     <spark.artifact.suffix>_4.1</spark.artifact.suffix>
-    <spark.shim.dir>scala-shims/spark-4.0-4.1</spark.shim.dir>
+    <!-- Shim dirs mirror project/spark-versions.json: one version-specific dir plus one
+         dir shared with the adjacent Spark line. -->
+    <spark.shim.dir>scala-shims/spark-4.1</spark.shim.dir>
+    <spark.shim.shared.dir>scala-shims/spark-4.1-4.2</spark.shim.shared.dir>
     <delta.version>4.3.1</delta.version>
     <hadoop.version>3.4.2</hadoop.version>
     <iceberg.version>1.11.0</iceberg.version>
@@ -370,8 +373,17 @@
           <version>${spotless.version}</version>
           <configuration>
             <java>
+              <!-- Oldest google-java-format Spotless will run on JVM 17. Newer lines reformat
+                   more of the tree for no rule benefit; sbt's 1.7 could not parse text blocks
+                   or switch expressions and silently skipped those files. -->
+              <!-- Spotless' googleJavaFormat step does not touch imports, but the formatter's
+                   own CLI (and sbt-java-formatter before it) sorts and prunes them. -->
+              <removeUnusedImports/>
+              <importOrder>
+                <order>\#,</order>
+              </importOrder>
               <googleJavaFormat>
-                <version>1.25.2</version>
+                <version>1.10.0</version>
                 <style>GOOGLE</style>
               </googleJavaFormat>
               <includes>
@@ -506,7 +518,8 @@
         <spark.version>4.0.0</spark.version>
         <spark.short.version>4.0</spark.short.version>
         <spark.artifact.suffix>_4.0</spark.artifact.suffix>
-        <spark.shim.dir>scala-shims/spark-4.0-4.1</spark.shim.dir>
+        <spark.shim.dir>scala-shims/spark-4.0</spark.shim.dir>
+        <spark.shim.shared.dir>scala-shims/spark-4.0-4.1</spark.shim.shared.dir>
         <maven.compiler.testRelease>11</maven.compiler.testRelease>
       </properties>
     </profile>
@@ -522,7 +535,8 @@
         <spark.version>4.0.0</spark.version>
         <spark.short.version>4.0</spark.short.version>
         <spark.artifact.suffix>_4.0</spark.artifact.suffix>
-        <spark.shim.dir>scala-shims/spark-4.0-4.1</spark.shim.dir>
+        <spark.shim.dir>scala-shims/spark-4.0</spark.shim.dir>
+        <spark.shim.shared.dir>scala-shims/spark-4.0-4.1</spark.shim.shared.dir>
         <maven.compiler.testRelease>11</maven.compiler.testRelease>
       </properties>
     </profile>
@@ -538,7 +552,8 @@
         <spark.version>4.1.0</spark.version>
         <spark.short.version>4.1</spark.short.version>
         <spark.artifact.suffix>_4.1</spark.artifact.suffix>
-        <spark.shim.dir>scala-shims/spark-4.0-4.1</spark.shim.dir>
+        <spark.shim.dir>scala-shims/spark-4.1</spark.shim.dir>
+        <spark.shim.shared.dir>scala-shims/spark-4.1-4.2</spark.shim.shared.dir>
         <maven.compiler.testRelease>11</maven.compiler.testRelease>
       </properties>
     </profile>
@@ -554,7 +569,8 @@
         <spark.version>4.1.0</spark.version>
         <spark.short.version>4.1</spark.short.version>
         <spark.artifact.suffix>_4.1</spark.artifact.suffix>
-        <spark.shim.dir>scala-shims/spark-4.0-4.1</spark.shim.dir>
+        <spark.shim.dir>scala-shims/spark-4.1</spark.shim.dir>
+        <spark.shim.shared.dir>scala-shims/spark-4.1-4.2</spark.shim.shared.dir>
         <maven.compiler.testRelease>11</maven.compiler.testRelease>
       </properties>
     </profile>
@@ -571,6 +587,7 @@
         <spark.short.version>4.2</spark.short.version>
         <spark.artifact.suffix>_4.2</spark.artifact.suffix>
         <spark.shim.dir>scala-shims/spark-4.2</spark.shim.dir>
+        <spark.shim.shared.dir>scala-shims/spark-4.1-4.2</spark.shim.shared.dir>
         <maven.compiler.testRelease>17</maven.compiler.testRelease>
       </properties>
     </profile>
@@ -587,6 +604,7 @@
         <spark.short.version>4.2</spark.short.version>
         <spark.artifact.suffix>_4.2</spark.artifact.suffix>
         <spark.shim.dir>scala-shims/spark-4.2</spark.shim.dir>
+        <spark.shim.shared.dir>scala-shims/spark-4.1-4.2</spark.shim.shared.dir>
         <maven.compiler.testRelease>17</maven.compiler.testRelease>
       </properties>
     </profile>

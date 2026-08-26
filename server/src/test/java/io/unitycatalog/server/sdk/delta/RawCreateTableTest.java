@@ -32,9 +32,9 @@ import org.junit.jupiter.api.Test;
  *
  * <p>The auto-generated {@code unitycatalog-client} can't construct certain malformed payloads --
  * its DTOs reject them at compile time -- but a non-SDK client (Rust, Kernel) is not bound by the
- * SDK's typed shape. This test posts hand-crafted JSON straight at the endpoint to pin server-
- * side validation that the SDK tests cannot reach. Sister to {@link SdkCreateTableTest}, which
- * covers everything reachable through the typed client.
+ * SDK's typed shape. This test posts hand-crafted JSON straight at the endpoint to pin server- side
+ * validation that the SDK tests cannot reach. Sister to {@link SdkCreateTableTest}, which covers
+ * everything reachable through the typed client.
  */
 public class RawCreateTableTest extends BaseCRUDTest {
 
@@ -315,7 +315,7 @@ public class RawCreateTableTest extends BaseCRUDTest {
           "metadata": {}
         }""",
         "Duplicate field name (case-insensitive) in columns.fields[0].type.element-type"
-          + ".fields[1]: x");
+            + ".fields[1]: x");
   }
 
   // ---------- helpers ----------
@@ -325,8 +325,8 @@ public class RawCreateTableTest extends BaseCRUDTest {
    * columnJson} (or no fields at all when {@code columnJson} is empty), and assert the server
    * rejects it with HTTP 400 and the exact {@code expectedMessage} in {@code error.message}. The
    * surrounding request body is a full UC-managed shape (location/table-type/protocol/properties)
-   * bound to the given staging response, so cases that pass the column
-   * gates land on a request the rest of the server would normally accept.
+   * bound to the given staging response, so cases that pass the column gates land on a request the
+   * rest of the server would normally accept.
    */
   @SneakyThrows
   private void assertRejected(
@@ -336,8 +336,8 @@ public class RawCreateTableTest extends BaseCRUDTest {
   }
 
   /**
-   * Like {@link #assertRejected} but matches a substring of {@code error.message} -- used when
-   * the response message comes from Jackson + Armeria framework wrapping (e.g. a deserialization
+   * Like {@link #assertRejected} but matches a substring of {@code error.message} -- used when the
+   * response message comes from Jackson + Armeria framework wrapping (e.g. a deserialization
    * mismatch) and contains source-location / reference-chain noise we don't want to pin.
    */
   @SneakyThrows
@@ -395,8 +395,7 @@ public class RawCreateTableTest extends BaseCRUDTest {
             .path(CREATE_TABLE_PATH)
             .contentType(MediaType.JSON)
             .build();
-    AggregatedHttpResponse resp =
-        client.execute(headers, HttpData.ofUtf8(body)).aggregate().join();
+    AggregatedHttpResponse resp = client.execute(headers, HttpData.ofUtf8(body)).aggregate().join();
 
     String content = resp.contentUtf8();
     assertThat(resp.status().code()).as("body: %s", content).isEqualTo(400);
@@ -408,8 +407,8 @@ public class RawCreateTableTest extends BaseCRUDTest {
   /**
    * Posts a createTable request whose {@code columns.fields} contains {@code columnJson} and
    * asserts the envelope (HTTP 400, {@code error.code} 400, {@code error.type}
-   * "InvalidParameterValueException"). Returns {@code error} so the caller can additionally
-   * assert on {@code message}.
+   * "InvalidParameterValueException"). Returns {@code error} so the caller can additionally assert
+   * on {@code message}.
    */
   @SneakyThrows
   private JsonNode postAndAssertRejected(DeltaStagingTableResponse staging, String columnJson) {
@@ -454,8 +453,7 @@ public class RawCreateTableTest extends BaseCRUDTest {
             .path(CREATE_TABLE_PATH)
             .contentType(MediaType.JSON)
             .build();
-    AggregatedHttpResponse resp =
-        client.execute(headers, HttpData.ofUtf8(body)).aggregate().join();
+    AggregatedHttpResponse resp = client.execute(headers, HttpData.ofUtf8(body)).aggregate().join();
 
     String content = resp.contentUtf8();
     assertThat(resp.status().code()).as("body: %s", content).isEqualTo(400);
