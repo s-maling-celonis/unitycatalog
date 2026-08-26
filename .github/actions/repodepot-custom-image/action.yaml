@@ -172,6 +172,7 @@ runs:
         set -euo pipefail
 
         final_name="$(mvn -q -f "$PROJECT_PATH/pom.xml" -DforceStdout help:evaluate -Dexpression=project.build.finalName)"
+        project_version="$(mvn -q -f "$PROJECT_PATH/pom.xml" -DforceStdout help:evaluate -Dexpression=project.version)"
         jar_file="$PROJECT_PATH/target/${final_name}.jar"
         if [ ! -f "$jar_file" ]; then
           echo "Jar not found: $jar_file" >&2
@@ -187,12 +188,19 @@ runs:
           mvn -q -f "$PROJECT_PATH/pom.xml" flatten:flatten -Dflatten.updatePomFile=false
           src_pom="$PROJECT_PATH/.flattened-pom.xml"
         fi
+        if [ ! -f "$src_pom" ]; then
+          echo "Publish POM not found: $src_pom" >&2
+          exit 1
+        fi
 
         pom_file="$PROJECT_PATH/target/github-packages.pom"
         cp "$src_pom" "$pom_file"
         # GitHub Packages coordinate is cloud.celonis; source POMs stay io.unitycatalog.
         sed -i 's#<groupId>io.unitycatalog</groupId>#<groupId>cloud.celonis</groupId>#g' "$pom_file"
-        sed -i "0,/<version>/{s|<version>[^<]*</version>|<version>${REPO_DEPOT_VERSION}</version>|}" "$pom_file"
+        # sbt set ThisBuild / version before makePom, so UC inter-module deps used the
+        # Repo Depot tag. Flatten still emits the SNAPSHOT; rewrite every copy of it.
+        version_pattern="${project_version//./\\.}"
+        sed -i "s|<version>${version_pattern}</version>|<version>${REPO_DEPOT_VERSION}</version>|g" "$pom_file"
 
         echo "Publishing ${jar_file} with ${pom_file} at version ${REPO_DEPOT_VERSION}"
         mvn deploy:deploy-file -e \
