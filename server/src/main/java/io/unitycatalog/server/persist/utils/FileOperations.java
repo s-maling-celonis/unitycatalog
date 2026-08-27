@@ -8,6 +8,7 @@ import io.unitycatalog.server.model.GcpOauthToken;
 import io.unitycatalog.server.model.TemporaryCredentials;
 import io.unitycatalog.server.service.credential.CredentialContext;
 import io.unitycatalog.server.service.credential.StorageCredentialVendor;
+import io.unitycatalog.server.service.credential.aws.S3StorageConfig;
 import io.unitycatalog.server.service.credential.azure.ADLSLocationUtils;
 import io.unitycatalog.server.utils.NormalizedURL;
 import io.unitycatalog.server.utils.ServerProperties;
@@ -47,11 +48,19 @@ public class FileOperations {
             .collect(Collectors.toMap(Map.Entry::getKey, e -> e.getValue().getRegion()));
     this.s3BucketEndpointMap =
         serverProperties.getS3Configurations().entrySet().stream()
-            .filter(
-                entry ->
-                    entry.getValue().getEndpointUrl() != null
-                        && !entry.getValue().getEndpointUrl().isEmpty())
-            .collect(Collectors.toMap(Map.Entry::getKey, e -> e.getValue().getEndpointUrl()));
+            .map(
+                entry -> {
+                  S3StorageConfig config = entry.getValue();
+                  String s3Endpoint = config.getS3EndpointUrl();
+                  if (s3Endpoint == null || s3Endpoint.isEmpty()) {
+                    s3Endpoint = config.getEndpointUrl();
+                  }
+                  return s3Endpoint == null || s3Endpoint.isEmpty()
+                      ? null
+                      : Map.entry(entry.getKey(), s3Endpoint);
+                })
+            .filter(java.util.Objects::nonNull)
+            .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
   }
 
   /** Delete entire directory recursively. Note that currently it does nothing for cloud FS */
@@ -146,7 +155,7 @@ public class FileOperations {
     } else if (cred.getGcpOauthToken() != null) {
       return getGCSConfig(cred.getGcpOauthToken(), cred.getExpirationTime());
     } else if (cred.getAwsTempCredentials() != null) {
-      return getS3Config(path, cred.getAwsTempCredentials());
+      return getS3Config(path, cred.getAwsTempCredentials(), cred.getEndpointUrl());
     } else {
       // Cloud vend returned no recognized credential type. This should not happen for a cloud
       // scheme, so fail loudly rather than silently returning an empty (credential-less) config
@@ -177,7 +186,8 @@ public class FileOperations {
     }
   }
 
-  private Map<String, String> getS3Config(NormalizedURL path, AwsCredentials awsCredentials) {
+  private Map<String, String> getS3Config(
+      NormalizedURL path, AwsCredentials awsCredentials, String vendedEndpointUrl) {
     // TODO: if region isn't configured, use HEAD bucket to figure out
     String s3Region = s3BucketRegionMap.get(path.getStorageBase());
     if (s3Region == null) {
@@ -196,7 +206,10 @@ public class FileOperations {
     }
     config.put(AwsClientProperties.CLIENT_REGION, s3Region);
     String endpointUrl = s3BucketEndpointMap.get(path.getStorageBase());
-    if (endpointUrl != null) {
+    if (endpointUrl == null || endpointUrl.isEmpty()) {
+      endpointUrl = vendedEndpointUrl;
+    }
+    if (endpointUrl != null && !endpointUrl.isEmpty()) {
       // Iceberg S3FileIO honours s3.endpoint; path-style is required for MinIO-style stores.
       config.put(S3FileIOProperties.ENDPOINT, endpointUrl);
       config.put(S3FileIOProperties.PATH_STYLE_ACCESS, "true");

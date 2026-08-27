@@ -190,31 +190,88 @@ account behind it — prefer one account (or key) per trust boundary.
 This path coexists with normal IAM-role credentials on the same server: a credential carries either
 `aws_iam_role` (vended through STS) or `aws_s3_access_key` (vended from server configuration).
 
-## Endpoint URL
+## Endpoint URLs
+
+S3-compatible stores often expose separate routes for STS (AssumeRole) and S3 data access. Unity
+Catalog supports both through distinct configuration keys. The legacy `aws.endpointUrl` property
+remains as a fallback when the explicit keys are unset.
+
+### Global configuration (recommended)
+
+Use this path when credentials are vended through storage credentials and external locations:
+
+```ini
+# Region used for signing and STS calls
+aws.region=us-east-1
+
+# STS endpoint for server-side AssumeRole calls
+aws.stsEndpointUrl=https://mcg.example.com/sts
+
+# S3 data endpoint returned as endpoint_url with vended temporary credentials
+aws.s3EndpointUrl=https://mcg.example.com/s3
+
+# Deprecated fallback applied to both STS and S3 when the explicit keys above are unset
+# aws.endpointUrl=https://legacy.example.com
+```
+
+Precedence:
+
+- **STS client:** `aws.stsEndpointUrl` → `aws.endpointUrl` → AWS SDK default
+- **S3 endpoint returned to clients:** `aws.s3EndpointUrl` → `aws.endpointUrl` → absent
+
+When static access keys and IAM-role credentials coexist on one server, leave global endpoints
+unset unless every store shares the same routes; otherwise configure endpoints on the client
+(`fs.s3a.endpoint` for the Hadoop connector).
+
+### Legacy per-bucket configuration
+
+Indexed `s3.*` entries still support separate STS and S3 endpoints when different legacy buckets
+target different backends:
+
+```ini
+s3.bucketPath.0=s3://some-bucket
+s3.region.0=us-east-1
+s3.awsRoleArn.0=arn:aws:iam::123456789012:role/storage-role
+s3.endpointUrl.0=https://mcg.example.com/s3
+s3.stsEndpointUrl.0=https://mcg.example.com/sts
+```
+
+For each index, STS uses `s3.stsEndpointUrl.N` → `s3.endpointUrl.N`. The S3 data endpoint is
+`s3.endpointUrl.N`.
+
+### Static credential endpoint behaviour
 
 A static credential carries no endpoint of its own, so the `endpoint_url` returned alongside vended
 credentials comes from the general S3 configuration: first the per-bucket entry matching the storage
-base (`s3.bucketPath.N` / `s3.endpointUrl.N`), otherwise `aws.endpointUrl`.
+base (`s3.bucketPath.N` / `s3.endpointUrl.N`), otherwise `aws.s3EndpointUrl`, otherwise
+`aws.endpointUrl`.
 
-Both have caveats here. A per-bucket entry is only registered when it supplies `s3.bucketPath.N`
-plus either `s3.region.N` and `s3.awsRoleArn.N`, or `s3.accessKey.N`, `s3.secretKey.N` and
-`s3.sessionToken.N` — so it cannot be used to declare an endpoint on its own without also putting a
-key back into `server.properties`. And `aws.endpointUrl` is server-wide: it is returned with *every*
-vended credential, and it also overrides the endpoint of the master role's STS client.
+Both per-bucket caveats still apply. A per-bucket entry is only registered when it supplies
+`s3.bucketPath.N` plus either `s3.region.N` and `s3.awsRoleArn.N`, or `s3.accessKey.N`,
+`s3.secretKey.N` and `s3.sessionToken.N` — so it cannot declare an endpoint on its own without also
+putting a key back into `server.properties`.
 
-So set `aws.endpointUrl` when the server talks to a single S3-compatible store. When static access
-keys and IAM-role credentials coexist on one server, leave it unset and configure the endpoint on
-the client instead (`fs.s3a.endpoint` for the Hadoop connector) — otherwise the S3-compatible
-endpoint is handed out for the AWS locations too, and the master role's AssumeRole calls are pointed
-at a store that does not implement STS.
+### Session policy S3 actions
 
-Vended STS session policies include KMS permissions (`kms:Decrypt` / `kms:GenerateDataKey*`) scoped
-by `kms:ViaService` so SSE-KMS buckets work on AWS. Encryption-context ARNs are not included: they
-duplicate every S3 resource and on long managed-table paths (especially GovCloud `arn:aws-us-gov:`)
-they overflow the STS packed-policy limit. S3 resource statements already constrain which objects
-the session can touch. `kms:ViaService` is rejected by S3-compatible STS (MinIO: `invalid condition
-key`), so the whole KMS statement is omitted when `aws.endpointUrl` / `s3.endpointUrl.N` is not an
-AWS STS host.
+Vended STS session policies use explicit S3 actions (`s3:GetObject`, `s3:PutObject`,
+`s3:DeleteObject`, multipart helpers, and `s3:ListBucket` with `s3:prefix` conditions). Partial
+action wildcards such as `s3:GetO*` are not emitted.
+
+KMS permissions (`kms:Decrypt` / `kms:GenerateDataKey*`) scoped by `kms:ViaService` are included for
+AWS STS endpoints so SSE-KMS buckets work on AWS. Encryption-context ARNs are omitted to stay within
+STS packed-policy limits on long paths. The KMS statement is omitted entirely when the configured STS
+endpoint is not an AWS STS host (MinIO reports `invalid condition key` for `kms:ViaService`).
+
+### S3 location requirements
+
+On create and update, Unity Catalog rejects new S3 locations that:
+
+- use a non-lowercase or non-DNS-compatible bucket name, or contain underscores in the bucket name
+- omit a path prefix (bucket-root URLs such as `s3://bucket` are not accepted)
+- contain `*`, `?`, or `$` in the path prefix
+
+Existing locations stored before these rules were introduced remain readable; validation applies only
+to new and updated locations.
 
 ## Security considerations
 

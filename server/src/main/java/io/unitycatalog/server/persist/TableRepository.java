@@ -38,6 +38,7 @@ import io.unitycatalog.server.utils.ColumnUtils;
 import io.unitycatalog.server.utils.Constants;
 import io.unitycatalog.server.utils.IdentityUtils;
 import io.unitycatalog.server.utils.NormalizedURL;
+import io.unitycatalog.server.utils.S3LocationValidator;
 import io.unitycatalog.server.utils.ServerProperties;
 import io.unitycatalog.server.utils.ValidationUtils;
 import java.util.ArrayList;
@@ -660,6 +661,7 @@ public class TableRepository {
           NormalizedURL storageLocation;
           if (tableType == TableType.EXTERNAL) {
             storageLocation = NormalizedURL.from(createTable.getStorageLocation());
+            S3LocationValidator.validateCreateOrUpdate(storageLocation);
             ValidationUtils.checkArgument(
                 !storageLocation.isCloudStorageRoot(),
                 "External table storage location must include a non-empty path prefix: %s",
@@ -668,6 +670,7 @@ public class TableRepository {
             tableUUID = UUID.randomUUID();
           } else if (tableType == TableType.MANAGED) {
             storageLocation = NormalizedURL.from(createTable.getStorageLocation());
+            S3LocationValidator.validateCreateOrUpdate(storageLocation);
             serverProperties.checkManagedTableEnabled();
             if (createTable.getDataSourceFormat() != DataSourceFormat.DELTA) {
               throw new BaseException(

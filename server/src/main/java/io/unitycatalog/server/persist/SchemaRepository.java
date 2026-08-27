@@ -27,6 +27,7 @@ import io.unitycatalog.server.persist.utils.TransactionManager;
 import io.unitycatalog.server.utils.Constants;
 import io.unitycatalog.server.utils.IdentityUtils;
 import io.unitycatalog.server.utils.NormalizedURL;
+import io.unitycatalog.server.utils.S3LocationValidator;
 import io.unitycatalog.server.utils.ValidationUtils;
 import java.util.ArrayList;
 import java.util.Date;
@@ -75,6 +76,7 @@ public class SchemaRepository {
                   .properties(createSchema.getProperties());
           NormalizedURL storageRoot = NormalizedURL.from(createSchema.getStorageRoot());
           if (storageRoot != null) {
+            S3LocationValidator.validateCreateOrUpdate(storageRoot);
             // storageRoot, if set, is already authorized as a valid external location by
             // SchemaService.
             ExternalLocationUtils.validateNotSameOrUnderManagedStoragePrefix(storageRoot);

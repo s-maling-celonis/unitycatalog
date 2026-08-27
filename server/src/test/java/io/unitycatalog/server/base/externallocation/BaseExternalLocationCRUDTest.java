@@ -200,6 +200,39 @@ public abstract class BaseExternalLocationCRUDTest extends BaseCRUDTest {
   }
 
   @Test
+  public void testExternalLocationRejectsInvalidS3Urls() {
+    assertApiException(
+        () ->
+            externalLocationOperations.createExternalLocation(
+                new CreateExternalLocation()
+                    .name(EXTERNAL_LOCATION_NAME + "_invalid_bucket")
+                    .url("s3://my_bucket/path")
+                    .credentialName(CREDENTIAL_NAME)),
+        ErrorCode.INVALID_ARGUMENT,
+        "must not contain underscores");
+
+    assertApiException(
+        () ->
+            externalLocationOperations.createExternalLocation(
+                new CreateExternalLocation()
+                    .name(EXTERNAL_LOCATION_NAME + "_invalid_wildcard")
+                    .url("s3://my-bucket/tenant-a*")
+                    .credentialName(CREDENTIAL_NAME)),
+        ErrorCode.INVALID_ARGUMENT,
+        "wildcard characters");
+
+    assertApiException(
+        () ->
+            externalLocationOperations.createExternalLocation(
+                new CreateExternalLocation()
+                    .name(EXTERNAL_LOCATION_NAME + "_invalid_root")
+                    .url("s3://my-bucket")
+                    .credentialName(CREDENTIAL_NAME)),
+        ErrorCode.INVALID_ARGUMENT,
+        "non-empty path prefix");
+  }
+
+  @Test
   public void testExternalLocationUrlOverlapPrevention() throws ApiException {
     final String errorMessageCreateWithOverlap =
         "Cannot accept an external location that duplicates"
@@ -246,7 +279,7 @@ public abstract class BaseExternalLocationCRUDTest extends BaseCRUDTest {
 
     // Test 7: Update bucket2 location to use bucket1 with overlapping URL would fail.
     UpdateExternalLocation updateBucket2Location =
-        new UpdateExternalLocation().url("s3://bucket1/");
+        new UpdateExternalLocation().url("s3://bucket1/path");
     assertApiException(
         () ->
             externalLocationOperations.updateExternalLocation(

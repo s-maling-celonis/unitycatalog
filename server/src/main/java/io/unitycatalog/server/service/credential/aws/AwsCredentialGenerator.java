@@ -1,5 +1,7 @@
 package io.unitycatalog.server.service.credential.aws;
 
+import io.unitycatalog.server.exception.BaseException;
+import io.unitycatalog.server.exception.ErrorCode;
 import io.unitycatalog.server.model.AwsIamRoleResponse;
 import io.unitycatalog.server.persist.dao.CredentialDAO;
 import io.unitycatalog.server.service.credential.CredentialContext;
@@ -19,6 +21,7 @@ import software.amazon.awssdk.services.sts.StsClient;
 import software.amazon.awssdk.services.sts.StsClientBuilder;
 import software.amazon.awssdk.services.sts.model.AssumeRoleRequest;
 import software.amazon.awssdk.services.sts.model.Credentials;
+import software.amazon.awssdk.services.sts.model.StsException;
 
 /**
  * Generates credentials based on the provided {@link CredentialContext}.
@@ -105,14 +108,25 @@ public interface AwsCredentialGenerator {
       }
 
       StsClientBuilder stsBuilder = builder.region(region).credentialsProvider(credentialsProvider);
-      if (config.getEndpointUrl() != null && !config.getEndpointUrl().isEmpty()) {
-        stsBuilder.endpointOverride(URI.create(config.getEndpointUrl()));
+      String stsEndpointUrl = effectiveStsEndpoint(config);
+      if (stsEndpointUrl != null) {
+        stsBuilder.endpointOverride(URI.create(stsEndpointUrl));
       }
       this.stsClient = stsBuilder.build();
       this.staticAwsRoleArn = config.getAwsRoleArn();
       this.includeKmsPermissions =
-          AwsPolicyGenerator.stsSupportsKmsPolicyConditions(config.getEndpointUrl());
+          AwsPolicyGenerator.stsSupportsKmsPolicyConditions(stsEndpointUrl);
       this.awsRegion = region.id();
+    }
+
+    private static String effectiveStsEndpoint(S3StorageConfig config) {
+      if (config.getStsEndpointUrl() != null && !config.getStsEndpointUrl().isEmpty()) {
+        return config.getStsEndpointUrl();
+      }
+      if (config.getEndpointUrl() != null && !config.getEndpointUrl().isEmpty()) {
+        return config.getEndpointUrl();
+      }
+      return null;
     }
 
     @Override
@@ -138,7 +152,25 @@ public interface AwsCredentialGenerator {
               .durationSeconds((int) Duration.ofHours(1).toSeconds());
       externalId.ifPresent(roleRequestBuilder::externalId);
 
-      return stsClient.assumeRole(roleRequestBuilder.build()).credentials();
+      try {
+        return stsClient.assumeRole(roleRequestBuilder.build()).credentials();
+      } catch (StsException e) {
+        throw translateStsException(e);
+      }
+    }
+
+    private static BaseException translateStsException(StsException e) {
+      String errorCode =
+          e.awsErrorDetails() != null ? e.awsErrorDetails().errorCode() : null;
+      String message = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+      if ("ValidationError".equals(errorCode) || "MalformedPolicyDocument".equals(errorCode)) {
+        return new BaseException(
+            ErrorCode.INVALID_ARGUMENT,
+            "STS rejected the generated session policy: " + message,
+            e);
+      }
+      return new BaseException(
+          ErrorCode.FAILED_PRECONDITION, "Failed to assume storage role via STS: " + message, e);
     }
   }
 }

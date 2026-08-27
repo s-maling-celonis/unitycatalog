@@ -160,7 +160,8 @@ public class CloudCredentialVendorTest {
     assertThatThrownBy(
             () ->
                 vendCredential("s3://storageBase/abc", Set.of(CredentialContext.Privilege.SELECT)))
-        .isInstanceOf(StsException.class);
+        .isInstanceOf(BaseException.class)
+        .hasMessageContaining("Failed to assume storage role via STS");
   }
 
   @Test
@@ -460,7 +461,236 @@ public class CloudCredentialVendorTest {
       assertThat(capturedRequest.policy())
           .doesNotContain("kms:ViaService")
           .doesNotContain("kms:EncryptionContext")
-          .contains("s3:GetO*");
+          .contains("s3:GetObject");
+    }
+  }
+
+  @Test
+  public void testSeparateStsAndS3Endpoints() {
+    final String STS_ENDPOINT = "https://mcg.example.com/sts";
+    final String S3_ENDPOINT = "https://mcg.example.com/s3";
+    final String ACCESS_KEY = "accessKey";
+    final String SECRET_KEY = "secretKey";
+    final String SESSION_TOKEN = "sessionToken";
+
+    when(serverProperties.getS3Configurations())
+        .thenReturn(
+            Map.of(
+                NormalizedURL.from("s3://storagebase"),
+                S3StorageConfig.builder()
+                    .accessKey(ACCESS_KEY)
+                    .secretKey(SECRET_KEY)
+                    .sessionToken(SESSION_TOKEN)
+                    .stsEndpointUrl(STS_ENDPOINT)
+                    .s3EndpointUrl(S3_ENDPOINT)
+                    .build()));
+    AwsCredentialVendor awsCredentialVendor = new AwsCredentialVendor(serverProperties);
+    credentialsOperations = new CloudCredentialVendor(awsCredentialVendor, null, null);
+
+    TemporaryCredentials credentials =
+        vendCredential("s3://storagebase/abc", Set.of(CredentialContext.Privilege.SELECT));
+
+    assertThat(credentials.getEndpointUrl()).isEqualTo(S3_ENDPOINT);
+  }
+
+  @Test
+  public void testExplicitEndpointPropertiesTakePrecedenceOverLegacy() {
+    reset(externalLocationUtils);
+    final String LEGACY = "http://legacy:9000";
+    final String STS_ENDPOINT = "https://mcg.example.com/sts";
+    final String S3_ENDPOINT = "https://mcg.example.com/s3";
+
+    when(serverProperties.getS3Configurations()).thenReturn(Map.of());
+    doReturn(
+            S3StorageConfig.builder()
+                .endpointUrl(LEGACY)
+                .stsEndpointUrl(STS_ENDPOINT)
+                .s3EndpointUrl(S3_ENDPOINT)
+                .build())
+        .when(serverProperties)
+        .getS3MasterRoleConfiguration();
+
+    AwsCredentialVendor vendor = new AwsCredentialVendor(serverProperties);
+    assertThat(vendor.resolveS3EndpointUrl(
+            CredentialContext.create(
+                NormalizedURL.from("s3://my-bucket/path"),
+                Set.of(CredentialContext.Privilege.SELECT),
+                Optional.empty())))
+        .contains(S3_ENDPOINT);
+  }
+
+  @Test
+  public void testStsValidationErrorIsSurfacedAsInvalidArgument() {
+    final String CREDENTIAL_ROLE_ARN = "arn:aws:iam::123456789012:role/external-location-role";
+    final String S3_PATH = "s3://my-bucket/path/to/data";
+
+    CredentialDAO credentialDAO =
+        CredentialDAO.from(
+            new CreateCredentialRequest()
+                .name("test-credential")
+                .purpose(CredentialPurpose.STORAGE)
+                .awsIamRole(new AwsIamRoleRequest().roleArn(CREDENTIAL_ROLE_ARN)),
+            "test-user");
+
+    reset(externalLocationUtils);
+    doReturn(Optional.of(credentialDAO))
+        .when(externalLocationUtils)
+        .getExternalLocationCredentialDaoForPath(any());
+
+    when(serverProperties.getS3Configurations()).thenReturn(Map.of());
+    doReturn(S3StorageConfig.builder().build())
+        .when(serverProperties)
+        .getS3MasterRoleConfiguration();
+
+    StsClient mockStsClient = Mockito.mock(StsClient.class);
+    when(mockStsClient.assumeRole(any(AssumeRoleRequest.class)))
+        .thenThrow(
+            StsException.builder()
+                .message("Policy exceeds maximum size")
+                .awsErrorDetails(
+                    software.amazon.awssdk.awscore.exception.AwsErrorDetails.builder()
+                        .errorCode("ValidationError")
+                        .build())
+                .build());
+
+    StsClientBuilder mockBuilder = Mockito.mock(StsClientBuilder.class);
+    when(mockBuilder.region(any())).thenReturn(mockBuilder);
+    when(mockBuilder.credentialsProvider(any())).thenReturn(mockBuilder);
+    when(mockBuilder.build()).thenReturn(mockStsClient);
+
+    try (MockedStatic<StsClient> mockedStsClient = Mockito.mockStatic(StsClient.class)) {
+      mockedStsClient.when(StsClient::builder).thenReturn(mockBuilder);
+
+      AwsCredentialVendor awsCredentialVendor = new AwsCredentialVendor(serverProperties);
+      credentialsOperations = new CloudCredentialVendor(awsCredentialVendor, null, null);
+
+      assertThatThrownBy(
+              () -> vendCredential(S3_PATH, Set.of(CredentialContext.Privilege.SELECT)))
+          .isInstanceOf(BaseException.class)
+          .hasMessageContaining("STS rejected the generated session policy")
+          .extracting(exception -> ((BaseException) exception).getErrorCode())
+          .isEqualTo(ErrorCode.INVALID_ARGUMENT);
+    }
+  }
+
+  @Test
+  public void testStsMalformedPolicyDocumentIsSurfacedAsInvalidArgument() {
+    final String CREDENTIAL_ROLE_ARN = "arn:aws:iam::123456789012:role/external-location-role";
+    final String S3_PATH = "s3://my-bucket/path/to/data";
+
+    CredentialDAO credentialDAO =
+        CredentialDAO.from(
+            new CreateCredentialRequest()
+                .name("test-credential-malformed")
+                .purpose(CredentialPurpose.STORAGE)
+                .awsIamRole(new AwsIamRoleRequest().roleArn(CREDENTIAL_ROLE_ARN)),
+            "test-user");
+
+    reset(externalLocationUtils);
+    doReturn(Optional.of(credentialDAO))
+        .when(externalLocationUtils)
+        .getExternalLocationCredentialDaoForPath(any());
+
+    when(serverProperties.getS3Configurations()).thenReturn(Map.of());
+    doReturn(S3StorageConfig.builder().build())
+        .when(serverProperties)
+        .getS3MasterRoleConfiguration();
+
+    StsClient mockStsClient = Mockito.mock(StsClient.class);
+    when(mockStsClient.assumeRole(any(AssumeRoleRequest.class)))
+        .thenThrow(
+            StsException.builder()
+                .message("Policy document is malformed")
+                .awsErrorDetails(
+                    software.amazon.awssdk.awscore.exception.AwsErrorDetails.builder()
+                        .errorCode("MalformedPolicyDocument")
+                        .build())
+                .build());
+
+    StsClientBuilder mockBuilder = Mockito.mock(StsClientBuilder.class);
+    when(mockBuilder.region(any())).thenReturn(mockBuilder);
+    when(mockBuilder.credentialsProvider(any())).thenReturn(mockBuilder);
+    when(mockBuilder.build()).thenReturn(mockStsClient);
+
+    try (MockedStatic<StsClient> mockedStsClient = Mockito.mockStatic(StsClient.class)) {
+      mockedStsClient.when(StsClient::builder).thenReturn(mockBuilder);
+
+      AwsCredentialVendor awsCredentialVendor = new AwsCredentialVendor(serverProperties);
+      credentialsOperations = new CloudCredentialVendor(awsCredentialVendor, null, null);
+
+      assertThatThrownBy(
+              () -> vendCredential(S3_PATH, Set.of(CredentialContext.Privilege.SELECT)))
+          .isInstanceOf(BaseException.class)
+          .hasMessageContaining("STS rejected the generated session policy")
+          .hasMessageContaining("Policy document is malformed")
+          .extracting(exception -> ((BaseException) exception).getErrorCode())
+          .isEqualTo(ErrorCode.INVALID_ARGUMENT);
+    }
+  }
+
+  @Test
+  public void testMinioStsUsesStsEndpointForKmsDetectionAndSeparateS3Endpoint() {
+    final String CREDENTIAL_ROLE_ARN = "arn:aws:iam::123456789012:role/external-location-role";
+    final String S3_PATH = "s3://my-bucket/path/to/data";
+    final String STS_ENDPOINT = "http://minio:9000/sts";
+    final String S3_ENDPOINT = "http://minio:9000/s3";
+
+    CredentialDAO credentialDAO =
+        CredentialDAO.from(
+            new CreateCredentialRequest()
+                .name("test-credential")
+                .purpose(CredentialPurpose.STORAGE)
+                .awsIamRole(new AwsIamRoleRequest().roleArn(CREDENTIAL_ROLE_ARN)),
+            "test-user");
+
+    reset(externalLocationUtils);
+    doReturn(Optional.of(credentialDAO))
+        .when(externalLocationUtils)
+        .getExternalLocationCredentialDaoForPath(any());
+
+    when(serverProperties.getS3Configurations()).thenReturn(Map.of());
+    doReturn(
+            S3StorageConfig.builder()
+                .endpointUrl("http://legacy:9000")
+                .stsEndpointUrl(STS_ENDPOINT)
+                .s3EndpointUrl(S3_ENDPOINT)
+                .build())
+        .when(serverProperties)
+        .getS3MasterRoleConfiguration();
+
+    StsClient mockStsClient = Mockito.mock(StsClient.class);
+    ArgumentCaptor<AssumeRoleRequest> requestCaptor =
+        ArgumentCaptor.forClass(AssumeRoleRequest.class);
+    ArgumentCaptor<java.net.URI> endpointCaptor = ArgumentCaptor.forClass(java.net.URI.class);
+    Credentials stsCredentials =
+        Credentials.builder()
+            .accessKeyId("vendedAccessKey")
+            .secretAccessKey("vendedSecretKey")
+            .sessionToken("vendedSessionToken")
+            .build();
+    when(mockStsClient.assumeRole(requestCaptor.capture()))
+        .thenReturn(AssumeRoleResponse.builder().credentials(stsCredentials).build());
+
+    StsClientBuilder mockBuilder = Mockito.mock(StsClientBuilder.class);
+    when(mockBuilder.region(any())).thenReturn(mockBuilder);
+    when(mockBuilder.credentialsProvider(any())).thenReturn(mockBuilder);
+    when(mockBuilder.endpointOverride(endpointCaptor.capture())).thenReturn(mockBuilder);
+    when(mockBuilder.build()).thenReturn(mockStsClient);
+
+    try (MockedStatic<StsClient> mockedStsClient = Mockito.mockStatic(StsClient.class)) {
+      mockedStsClient.when(StsClient::builder).thenReturn(mockBuilder);
+
+      AwsCredentialVendor awsCredentialVendor = new AwsCredentialVendor(serverProperties);
+      credentialsOperations = new CloudCredentialVendor(awsCredentialVendor, null, null);
+
+      TemporaryCredentials credentials =
+          vendCredential(S3_PATH, Set.of(CredentialContext.Privilege.SELECT));
+
+      assertThat(endpointCaptor.getValue()).hasToString(STS_ENDPOINT);
+      assertThat(credentials.getEndpointUrl()).isEqualTo(S3_ENDPOINT);
+      assertThat(requestCaptor.getValue().policy())
+          .doesNotContain("kms:ViaService")
+          .contains("s3:GetObject");
     }
   }
 
