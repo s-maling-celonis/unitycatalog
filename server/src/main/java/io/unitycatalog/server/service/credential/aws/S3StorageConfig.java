@@ -16,6 +16,7 @@ public class S3StorageConfig {
   private final String sessionToken;
   /** @deprecated Use {@link #stsEndpointUrl} and {@link #s3EndpointUrl}. */
   @Deprecated private final String endpointUrl;
+
   private final String stsEndpointUrl;
   private final String s3EndpointUrl;
   private final String credentialGenerator;

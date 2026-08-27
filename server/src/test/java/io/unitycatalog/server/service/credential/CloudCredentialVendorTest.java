@@ -511,11 +511,12 @@ public class CloudCredentialVendorTest {
         .getS3MasterRoleConfiguration();
 
     AwsCredentialVendor vendor = new AwsCredentialVendor(serverProperties);
-    assertThat(vendor.resolveS3EndpointUrl(
-            CredentialContext.create(
-                NormalizedURL.from("s3://my-bucket/path"),
-                Set.of(CredentialContext.Privilege.SELECT),
-                Optional.empty())))
+    assertThat(
+            vendor.resolveS3EndpointUrl(
+                CredentialContext.create(
+                    NormalizedURL.from("s3://my-bucket/path"),
+                    Set.of(CredentialContext.Privilege.SELECT),
+                    Optional.empty())))
         .contains(S3_ENDPOINT);
   }
 
@@ -564,8 +565,7 @@ public class CloudCredentialVendorTest {
       AwsCredentialVendor awsCredentialVendor = new AwsCredentialVendor(serverProperties);
       credentialsOperations = new CloudCredentialVendor(awsCredentialVendor, null, null);
 
-      assertThatThrownBy(
-              () -> vendCredential(S3_PATH, Set.of(CredentialContext.Privilege.SELECT)))
+      assertThatThrownBy(() -> vendCredential(S3_PATH, Set.of(CredentialContext.Privilege.SELECT)))
           .isInstanceOf(BaseException.class)
           .hasMessageContaining("STS rejected the generated session policy")
           .extracting(exception -> ((BaseException) exception).getErrorCode())
@@ -618,8 +618,7 @@ public class CloudCredentialVendorTest {
       AwsCredentialVendor awsCredentialVendor = new AwsCredentialVendor(serverProperties);
       credentialsOperations = new CloudCredentialVendor(awsCredentialVendor, null, null);
 
-      assertThatThrownBy(
-              () -> vendCredential(S3_PATH, Set.of(CredentialContext.Privilege.SELECT)))
+      assertThatThrownBy(() -> vendCredential(S3_PATH, Set.of(CredentialContext.Privilege.SELECT)))
           .isInstanceOf(BaseException.class)
           .hasMessageContaining("STS rejected the generated session policy")
           .hasMessageContaining("Policy document is malformed")

@@ -67,7 +67,6 @@ public class S3LocationValidatorTest {
 
   @Test
   public void existingInvalidLocationsCanStillBeNormalizedForRead() {
-    assertThatCode(() -> NormalizedURL.from("s3://My_Bucket/wild*card"))
-        .doesNotThrowAnyException();
+    assertThatCode(() -> NormalizedURL.from("s3://My_Bucket/wild*card")).doesNotThrowAnyException();
   }
 }

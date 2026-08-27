@@ -160,14 +160,11 @@ public interface AwsCredentialGenerator {
     }
 
     private static BaseException translateStsException(StsException e) {
-      String errorCode =
-          e.awsErrorDetails() != null ? e.awsErrorDetails().errorCode() : null;
+      String errorCode = e.awsErrorDetails() != null ? e.awsErrorDetails().errorCode() : null;
       String message = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
       if ("ValidationError".equals(errorCode) || "MalformedPolicyDocument".equals(errorCode)) {
         return new BaseException(
-            ErrorCode.INVALID_ARGUMENT,
-            "STS rejected the generated session policy: " + message,
-            e);
+            ErrorCode.INVALID_ARGUMENT, "STS rejected the generated session policy: " + message, e);
       }
       return new BaseException(
           ErrorCode.FAILED_PRECONDITION, "Failed to assume storage role via STS: " + message, e);

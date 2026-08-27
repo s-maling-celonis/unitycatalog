@@ -32,7 +32,7 @@ public abstract class BaseCredentialCRUDTest extends BaseCRUDTest {
   private static final String DUMMY_ROLE_ARN = "arn:aws:iam::123456789012:role/role-name";
   private static final String NEW_ROLE_ARN = "arn:aws:iam::987654321098:role/new-role-name";
   private static final String EXTERNAL_LOCATION_NAME = "uc_testexternallocation";
-  private static final String URL = "s3://unitycatalog-test";
+  private static final String URL = "s3://unitycatalog-test/path";
   protected CredentialOperations credentialOperations;
   protected ExternalLocationOperations externalLocationOperations;
 
