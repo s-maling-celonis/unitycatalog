@@ -68,26 +68,25 @@
       <groupId>com.fasterxml.jackson.core</groupId>
       <artifactId>jackson-databind</artifactId>
       <version>${jackson.spark.version}</version>
+      <scope>provided</scope>
     </dependency>
     <dependency>
       <groupId>com.fasterxml.jackson.module</groupId>
       <artifactId>jackson-module-scala_${scala.binary.version}</artifactId>
       <version>${jackson.spark.version}</version>
-    </dependency>
-    <dependency>
-      <groupId>com.fasterxml.jackson.core</groupId>
-      <artifactId>jackson-annotations</artifactId>
-      <version>${jackson.spark.version}</version>
+      <scope>provided</scope>
     </dependency>
     <dependency>
       <groupId>com.fasterxml.jackson.core</groupId>
       <artifactId>jackson-core</artifactId>
-      <version>2.19.2</version>
+      <version>${jackson.spark.version}</version>
+      <scope>provided</scope>
     </dependency>
     <dependency>
       <groupId>com.fasterxml.jackson.dataformat</groupId>
       <artifactId>jackson-dataformat-xml</artifactId>
       <version>${jackson.spark.version}</version>
+      <scope>provided</scope>
     </dependency>
     <dependency>
       <groupId>org.antlr</groupId>
