@@ -35,10 +35,11 @@ import org.junit.jupiter.params.provider.EnumSource;
  * delta.`s3://bucket/dir`}), without a pre-registered external table.
  *
  * <p>Unlike the other Spark integration tests, these register {@code UCSparkSessionExtensions} (the
- * home of the analyzer hint resolution rule), and use the {@link S3CredentialTestFileSystem} fake
- * filesystem to assert the vended credentials reach S3A. The test principal is the metastore owner,
- * so path authorization passes and credentials fall back to the per-bucket server config ({@code
- * accessKey0}/... for {@code s3://test-bucket0}) configured in {@link
+ * home of the early analyzer rule and Hive parser fallback), and use the {@link
+ * S3CredentialTestFileSystem} fake filesystem to assert the vended credentials reach S3A. The test
+ * principal is the metastore owner, so path authorization passes and credentials fall back to the
+ * per-bucket server config ({@code accessKey0}/... for {@code s3://test-bucket0}) configured in
+ * {@link
  * BaseSparkIntegrationTest#setUpProperties()}.
  */
 public class PathCredentialReadWriteTest extends BaseSparkIntegrationTest {
@@ -131,6 +132,25 @@ public class PathCredentialReadWriteTest extends BaseSparkIntegrationTest {
       builder = configureUcCatalog(builder, catalog);
     }
     return builder.getOrCreate();
+  }
+
+  private SparkSession createHivePathCredSession(String catalog) {
+    SparkSession.Builder builder =
+        configureUcCatalogWithPathCredOptions(
+            SparkSession.builder()
+                .appName("hive-path-credential-test")
+                .master("local[*]")
+                .config("spark.sql.shuffle.partitions", "4")
+                .config("spark.sql.catalogImplementation", "hive")
+                .config("spark.sql.extensions", "io.unitycatalog.spark.UCSparkSessionExtensions"),
+            catalog,
+            false,
+            false,
+            true);
+    return builder
+        .config("spark.hadoop.fs.s3.impl", S3CredentialTestFileSystem.class.getName())
+        .config("spark.hadoop.fs.s3a.impl", S3CredentialTestFileSystem.S3a.class.getName())
+        .getOrCreate();
   }
 
   /**
@@ -262,7 +282,7 @@ public class PathCredentialReadWriteTest extends BaseSparkIntegrationTest {
         .anyMatch(msg -> msg != null && msg.contains(substring));
   }
 
-  /** Applies the analyzer path-credential rule to a parsed plan (parser is side-effect free). */
+  /** Reapplies the idempotent path-credential rule to a parsed plan. */
   private LogicalPlan injectPathCredentials(LogicalPlan plan) {
     return injectPathCredentials(plan, true);
   }
@@ -341,11 +361,10 @@ public class PathCredentialReadWriteTest extends BaseSparkIntegrationTest {
    *
    * <p>Cloud storage: writes a bare {@code delta.`s3://...`} path table (CREATE TABLE AS SELECT,
    * then INSERT OVERWRITE) and reads it back with vended credentials — the Delta analog of {@link
-   * #testWriteAndReadBarePath()}. Plan inspection uses the resolution-batch form of the rule so the
-   * read target stays an {@code UnresolvedRelation}.
+   * #testWriteAndReadBarePath()}.
    */
   @Test
-  public void testWriteAndReadBareDeltaPath() throws IOException, ParseException {
+  public void testWriteAndReadBareDeltaPath() throws IOException {
     session = createDeltaSparkCatalogSession(CATALOG_NAME, false);
     sql("SET CATALOG %s", CATALOG_NAME);
 
@@ -362,22 +381,33 @@ public class PathCredentialReadWriteTest extends BaseSparkIntegrationTest {
     assertThat(overwritten).hasSize(1);
     assertThat(overwritten.get(0).getInt(0)).isEqualTo(2);
     assertThat(overwritten.get(0).getString(1)).isEqualTo("b");
-
-    LogicalPlan readPlan =
-        injectPathCredentials(
-            session
-                .sessionState()
-                .sqlParser()
-                .parsePlan(String.format("SELECT * FROM delta.`%s`", s3Location)),
-            false);
-    UnresolvedRelation relation = findBareCloudPathRelation(readPlan);
-    assertThat(relation).isNotNull();
-    assertThat(relation.options().get("fs.s3a.access.key")).isEqualTo("accessKey0");
   }
 
   /**
-   * {@code SparkSession.sql(text, args)} must still bind parameters when the UC analyzer extension
-   * is registered. Uses a UC-only session (no Delta extension).
+   * Spark 4.1's HiveSessionStateBuilder (used by Hive Thrift Server) omits extension-provided hint
+   * rules. The parser fallback must therefore attach credentials before ResolveSQLOnFile probes the
+   * path. Reapplying the analyzer rule remains a no-op.
+   */
+  @Test
+  public void testParserFallbackInjectsCredentialsBeforeHiveResolution()
+      throws IOException, ParseException {
+    session = createHivePathCredSession(SPARK_CATALOG);
+    String location = bucketPath("hive_parser_fallback");
+
+    LogicalPlan parsed =
+        session
+            .sessionState()
+            .sqlParser()
+            .parsePlan(String.format("SELECT * FROM parquet.`%s`", location));
+    UnresolvedRelation relation = findBareCloudPathRelation(parsed);
+    assertThat(relation).isNotNull();
+    assertThat(relation.options().get("fs.s3a.access.key")).isEqualTo("accessKey0");
+    assertThat(injectPathCredentials(parsed).fastEquals(parsed)).isTrue();
+  }
+
+  /**
+   * {@code SparkSession.sql(text, args)} must still bind parameters through the UC parser
+   * extension. Uses a UC-only session (no Delta extension).
    */
   @Test
   public void testPositionalSqlParameters() {
@@ -750,4 +780,5 @@ public class PathCredentialReadWriteTest extends BaseSparkIntegrationTest {
     assertThatThrownBy(() -> assertCountSubquerySucceeds(location))
         .satisfies(e -> assertCauseChainContainsMessage(e, "accessKey0"));
   }
+
 }

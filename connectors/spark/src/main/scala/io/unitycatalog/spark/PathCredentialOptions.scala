@@ -21,7 +21,8 @@ private[spark] object PathCredentialOptions {
 
   /**
    * Merges vended credential entries into `options`. When `includeOptionPrefix` is true, also
-   * writes `option.<key>` duplicates — Delta catalog and path resolution expect both forms.
+   * writes `option.<key>` duplicates — Spark's SQL-on-file resolution and Delta path resolution
+   * expect the prefixed form when carrying filesystem options through their table abstractions.
    */
   def mergeCredentialOptions(
       options: CaseInsensitiveStringMap,

@@ -58,8 +58,10 @@ import scala.collection.JavaConverters._
  * '''Ordering''': `ResolveSQLOnFile` lists the path (for schema inference) as soon as it resolves
  * the relation, and it is ordered ahead of rules injected via `injectResolutionRule`. This rule is
  * therefore registered by [[UCSparkSessionExtensions]] as a hint resolution rule, whose batch runs
- * ahead of the analyzer's Resolution batch. A second registration via `injectResolutionRule`
- * patches Delta nodes after Delta's own rewrite. The parser stays side-effect free.
+ * ahead of the analyzer's Resolution batch. Spark 4.1's `HiveSessionStateBuilder`, used by Hive
+ * Thrift Server, does not add extension-provided hint rules to its analyzer; the UC parser wrapper
+ * applies this rule as an idempotent early fallback for that path. A second registration via
+ * `injectResolutionRule` patches Delta nodes after Delta's own rewrite.
  *
  * '''Idempotence''': the analyzer runs its batches to a fixed point, so this rule is applied
  * repeatedly to the same plan. Nodes that already had a lookup for this URI — a successful vend
@@ -147,12 +149,8 @@ case class ResolvePathCredentials(
     val conf = optionsAfterLookup(
       path,
       uc.vendPathCredentialConfWithFallback(spark, path))
-    if (DeltaPathCredentialSupport.isDeltaPathRelation(relation)) {
-      relation.copy(
-        options = PathCredentialOptions.mergeCredentialOptions(relation.options, conf))
-    } else {
-      relation.copy(options = mergeOptions(relation.options, conf))
-    }
+    relation.copy(
+      options = PathCredentialOptions.mergeCredentialOptions(relation.options, conf))
   }
 
   private def injectAndMaybeResolveDelta(
@@ -326,14 +324,5 @@ object ResolvePathCredentials {
       location: String,
       conf: java.util.Map[String, String]): java.util.Map[String, String] = {
     if (!conf.isEmpty) conf else UCSingleCatalog.pathCredentialSkipProps(location)
-  }
-
-  /** Merges vended `fs.*` credential entries into an existing relation option map. */
-  private def mergeOptions(
-      options: CaseInsensitiveStringMap,
-      credentialConf: java.util.Map[String, String]): CaseInsensitiveStringMap = {
-    val merged = new java.util.HashMap[String, String](options.asCaseSensitiveMap())
-    merged.putAll(credentialConf)
-    new CaseInsensitiveStringMap(merged)
   }
 }

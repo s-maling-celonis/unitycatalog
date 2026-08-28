@@ -28,9 +28,10 @@ import org.apache.spark.sql.catalyst.parser.extensions.UCSparkSqlExtensionsParse
  * [[ResolvePathCredentials]] is registered as a hint resolution rule rather than only a resolution
  * rule so it runs before `ResolveSQLOnFile` lists the path for schema inference. For `delta.`path``
  * the same hint-batch pass early-resolves the relation with options intact. A resolution-batch
- * pass then patches Delta-specific nodes if Delta rewrote the tree without those options. View DDL
- * continues to use the parser extension so it can be routed to REST before Spark rejects catalogs
- * without `ViewCatalog`.
+ * pass then patches Delta-specific nodes if Delta rewrote the tree without those options. The
+ * parser also applies the idempotent rule as a fallback for Spark's Hive analyzer, which omits
+ * extension-provided hint rules and is used by Hive Thrift Server. View DDL uses the same parser
+ * extension so it can be routed to REST before Spark rejects catalogs without `ViewCatalog`.
  */
 class UCSparkSessionExtensions
     extends (SparkSessionExtensions => Unit)
