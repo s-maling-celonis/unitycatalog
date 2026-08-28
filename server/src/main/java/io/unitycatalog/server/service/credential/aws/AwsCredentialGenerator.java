@@ -1,7 +1,5 @@
 package io.unitycatalog.server.service.credential.aws;
 
-import io.unitycatalog.server.exception.BaseException;
-import io.unitycatalog.server.exception.ErrorCode;
 import io.unitycatalog.server.model.AwsIamRoleResponse;
 import io.unitycatalog.server.persist.dao.CredentialDAO;
 import io.unitycatalog.server.service.credential.CredentialContext;
@@ -21,7 +19,6 @@ import software.amazon.awssdk.services.sts.StsClient;
 import software.amazon.awssdk.services.sts.StsClientBuilder;
 import software.amazon.awssdk.services.sts.model.AssumeRoleRequest;
 import software.amazon.awssdk.services.sts.model.Credentials;
-import software.amazon.awssdk.services.sts.model.StsException;
 
 /**
  * Generates credentials based on the provided {@link CredentialContext}.
@@ -152,22 +149,7 @@ public interface AwsCredentialGenerator {
               .durationSeconds((int) Duration.ofHours(1).toSeconds());
       externalId.ifPresent(roleRequestBuilder::externalId);
 
-      try {
-        return stsClient.assumeRole(roleRequestBuilder.build()).credentials();
-      } catch (StsException e) {
-        throw translateStsException(e);
-      }
-    }
-
-    private static BaseException translateStsException(StsException e) {
-      String errorCode = e.awsErrorDetails() != null ? e.awsErrorDetails().errorCode() : null;
-      String message = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
-      if ("ValidationError".equals(errorCode) || "MalformedPolicyDocument".equals(errorCode)) {
-        return new BaseException(
-            ErrorCode.INVALID_ARGUMENT, "STS rejected the generated session policy: " + message, e);
-      }
-      return new BaseException(
-          ErrorCode.FAILED_PRECONDITION, "Failed to assume storage role via STS: " + message, e);
+      return stsClient.assumeRole(roleRequestBuilder.build()).credentials();
     }
   }
 }

@@ -15,7 +15,6 @@ import io.unitycatalog.server.persist.utils.PagedListingHelper;
 import io.unitycatalog.server.persist.utils.TransactionManager;
 import io.unitycatalog.server.utils.IdentityUtils;
 import io.unitycatalog.server.utils.NormalizedURL;
-import io.unitycatalog.server.utils.S3LocationValidator;
 import io.unitycatalog.server.utils.ValidationUtils;
 import java.util.ArrayList;
 import java.util.Date;
@@ -75,7 +74,6 @@ public class ExternalLocationRepository {
           }
 
           NormalizedURL url = NormalizedURL.from(createExternalLocation.getUrl());
-          S3LocationValidator.validateCreateOrUpdate(url);
           ExternalLocationUtils.validateNotSameOrUnderManagedStoragePrefix(url);
           validateUrlNotUsedByAnyExternalLocation(session, url, Optional.empty());
 
@@ -178,7 +176,6 @@ public class ExternalLocationRepository {
           }
           if (updateExternalLocation.getUrl() != null) {
             NormalizedURL url = NormalizedURL.from(updateExternalLocation.getUrl());
-            S3LocationValidator.validateCreateOrUpdate(url);
             existingLocation.setUrl(url.toString());
             validateUrlNotUsedByAnyExternalLocation(
                 session, url, Optional.of(existingLocation.getId()));

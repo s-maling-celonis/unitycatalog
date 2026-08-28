@@ -262,17 +262,6 @@ AWS STS endpoints so SSE-KMS buckets work on AWS. Encryption-context ARNs are om
 STS packed-policy limits on long paths. The KMS statement is omitted entirely when the configured STS
 endpoint is not an AWS STS host (MinIO reports `invalid condition key` for `kms:ViaService`).
 
-### S3 location requirements
-
-On create and update, Unity Catalog rejects new S3 locations that:
-
-- use a non-lowercase or non-DNS-compatible bucket name, or contain underscores in the bucket name
-- omit a path prefix (bucket-root URLs such as `s3://bucket` are not accepted)
-- contain `*`, `?`, or `$` in the path prefix
-
-Existing locations stored before these rules were introduced remain readable; validation applies only
-to new and updated locations.
-
 ## Security considerations
 
 ### What a vended static credential is

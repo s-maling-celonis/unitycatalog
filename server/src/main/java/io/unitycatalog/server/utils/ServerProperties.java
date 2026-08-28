@@ -102,8 +102,7 @@ public class ServerProperties {
     @Override
     public void validate(String key, String value) {
       try {
-        NormalizedURL normalized = NormalizedURL.from(value);
-        S3LocationValidator.validateCreateOrUpdate(normalized);
+        NormalizedURL.from(value);
       } catch (Exception e) {
         throw new BaseException(
             ErrorCode.INVALID_ARGUMENT,

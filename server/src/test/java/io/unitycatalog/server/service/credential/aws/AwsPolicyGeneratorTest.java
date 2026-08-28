@@ -56,8 +56,6 @@ public class AwsPolicyGeneratorTest {
 
   @Test
   public void testWildcardPathDoesNotProduceBucketWidePolicy() throws Exception {
-    // Policy generation still escapes wildcards for grandfathered locations already stored in
-    // metadata. New S3 locations containing *, ?, or $ are rejected by S3LocationValidator.
     String bucket = "victim-bucket";
     String policy =
         AwsPolicyGenerator.generatePolicy(
@@ -89,7 +87,6 @@ public class AwsPolicyGeneratorTest {
   })
   public void testPolicyEscapesIamSpecialCharacters(String encodedPath, String expectedPath)
       throws Exception {
-    // Exercised for legacy stored paths; S3LocationValidator rejects these on create/update.
     String bucket = "victim-bucket";
     String policy =
         AwsPolicyGenerator.generatePolicy(

@@ -160,8 +160,7 @@ public class CloudCredentialVendorTest {
     assertThatThrownBy(
             () ->
                 vendCredential("s3://storageBase/abc", Set.of(CredentialContext.Privilege.SELECT)))
-        .isInstanceOf(BaseException.class)
-        .hasMessageContaining("Failed to assume storage role via STS");
+        .isInstanceOf(StsException.class);
   }
 
   @Test
@@ -518,113 +517,6 @@ public class CloudCredentialVendorTest {
                     Set.of(CredentialContext.Privilege.SELECT),
                     Optional.empty())))
         .contains(S3_ENDPOINT);
-  }
-
-  @Test
-  public void testStsValidationErrorIsSurfacedAsInvalidArgument() {
-    final String CREDENTIAL_ROLE_ARN = "arn:aws:iam::123456789012:role/external-location-role";
-    final String S3_PATH = "s3://my-bucket/path/to/data";
-
-    CredentialDAO credentialDAO =
-        CredentialDAO.from(
-            new CreateCredentialRequest()
-                .name("test-credential")
-                .purpose(CredentialPurpose.STORAGE)
-                .awsIamRole(new AwsIamRoleRequest().roleArn(CREDENTIAL_ROLE_ARN)),
-            "test-user");
-
-    reset(externalLocationUtils);
-    doReturn(Optional.of(credentialDAO))
-        .when(externalLocationUtils)
-        .getExternalLocationCredentialDaoForPath(any());
-
-    when(serverProperties.getS3Configurations()).thenReturn(Map.of());
-    doReturn(S3StorageConfig.builder().build())
-        .when(serverProperties)
-        .getS3MasterRoleConfiguration();
-
-    StsClient mockStsClient = Mockito.mock(StsClient.class);
-    when(mockStsClient.assumeRole(any(AssumeRoleRequest.class)))
-        .thenThrow(
-            StsException.builder()
-                .message("Policy exceeds maximum size")
-                .awsErrorDetails(
-                    software.amazon.awssdk.awscore.exception.AwsErrorDetails.builder()
-                        .errorCode("ValidationError")
-                        .build())
-                .build());
-
-    StsClientBuilder mockBuilder = Mockito.mock(StsClientBuilder.class);
-    when(mockBuilder.region(any())).thenReturn(mockBuilder);
-    when(mockBuilder.credentialsProvider(any())).thenReturn(mockBuilder);
-    when(mockBuilder.build()).thenReturn(mockStsClient);
-
-    try (MockedStatic<StsClient> mockedStsClient = Mockito.mockStatic(StsClient.class)) {
-      mockedStsClient.when(StsClient::builder).thenReturn(mockBuilder);
-
-      AwsCredentialVendor awsCredentialVendor = new AwsCredentialVendor(serverProperties);
-      credentialsOperations = new CloudCredentialVendor(awsCredentialVendor, null, null);
-
-      assertThatThrownBy(() -> vendCredential(S3_PATH, Set.of(CredentialContext.Privilege.SELECT)))
-          .isInstanceOf(BaseException.class)
-          .hasMessageContaining("STS rejected the generated session policy")
-          .extracting(exception -> ((BaseException) exception).getErrorCode())
-          .isEqualTo(ErrorCode.INVALID_ARGUMENT);
-    }
-  }
-
-  @Test
-  public void testStsMalformedPolicyDocumentIsSurfacedAsInvalidArgument() {
-    final String CREDENTIAL_ROLE_ARN = "arn:aws:iam::123456789012:role/external-location-role";
-    final String S3_PATH = "s3://my-bucket/path/to/data";
-
-    CredentialDAO credentialDAO =
-        CredentialDAO.from(
-            new CreateCredentialRequest()
-                .name("test-credential-malformed")
-                .purpose(CredentialPurpose.STORAGE)
-                .awsIamRole(new AwsIamRoleRequest().roleArn(CREDENTIAL_ROLE_ARN)),
-            "test-user");
-
-    reset(externalLocationUtils);
-    doReturn(Optional.of(credentialDAO))
-        .when(externalLocationUtils)
-        .getExternalLocationCredentialDaoForPath(any());
-
-    when(serverProperties.getS3Configurations()).thenReturn(Map.of());
-    doReturn(S3StorageConfig.builder().build())
-        .when(serverProperties)
-        .getS3MasterRoleConfiguration();
-
-    StsClient mockStsClient = Mockito.mock(StsClient.class);
-    when(mockStsClient.assumeRole(any(AssumeRoleRequest.class)))
-        .thenThrow(
-            StsException.builder()
-                .message("Policy document is malformed")
-                .awsErrorDetails(
-                    software.amazon.awssdk.awscore.exception.AwsErrorDetails.builder()
-                        .errorCode("MalformedPolicyDocument")
-                        .build())
-                .build());
-
-    StsClientBuilder mockBuilder = Mockito.mock(StsClientBuilder.class);
-    when(mockBuilder.region(any())).thenReturn(mockBuilder);
-    when(mockBuilder.credentialsProvider(any())).thenReturn(mockBuilder);
-    when(mockBuilder.build()).thenReturn(mockStsClient);
-
-    try (MockedStatic<StsClient> mockedStsClient = Mockito.mockStatic(StsClient.class)) {
-      mockedStsClient.when(StsClient::builder).thenReturn(mockBuilder);
-
-      AwsCredentialVendor awsCredentialVendor = new AwsCredentialVendor(serverProperties);
-      credentialsOperations = new CloudCredentialVendor(awsCredentialVendor, null, null);
-
-      assertThatThrownBy(() -> vendCredential(S3_PATH, Set.of(CredentialContext.Privilege.SELECT)))
-          .isInstanceOf(BaseException.class)
-          .hasMessageContaining("STS rejected the generated session policy")
-          .hasMessageContaining("Policy document is malformed")
-          .extracting(exception -> ((BaseException) exception).getErrorCode())
-          .isEqualTo(ErrorCode.INVALID_ARGUMENT);
-    }
   }
 
   @Test

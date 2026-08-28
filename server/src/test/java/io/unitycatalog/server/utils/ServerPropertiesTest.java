@@ -410,16 +410,6 @@ public class ServerPropertiesTest {
   }
 
   @Test
-  public void testStorageRootRejectsInvalidS3Location() {
-    testInvalidProperty(
-        Property.MODEL_STORAGE_ROOT,
-        "s3://my_bucket/path",
-        "Invalid storage path",
-        "storage-root.models",
-        "must not contain underscores");
-  }
-
-  @Test
   public void testResolveS3StaticAccessKeyConfigurationWhenUnconfigured() {
     Properties props = new Properties();
     props.setProperty("s3.static.secretKey.AKIA_A", "secretA");
