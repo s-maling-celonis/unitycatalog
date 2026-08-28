@@ -23,7 +23,7 @@
 
 ## Validation
 
-- `build/sbt generate` completed twice; second run clean: `<yes/no>`
+- `mvn generate-sources` completed twice; second run clean: `<yes/no>`
 - Targeted tests: `<commands and results>`
 - Full tests: `<commands and results, or reason not run>`
 - Workflow file-set comparison reviewed: `<yes/no>`
