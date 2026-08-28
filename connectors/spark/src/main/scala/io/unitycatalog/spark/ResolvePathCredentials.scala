@@ -6,8 +6,17 @@ import io.unitycatalog.hadoop.internal.UCHadoopConfConstants
 
 import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.catalyst.analysis.UnresolvedRelation
-import org.apache.spark.sql.catalyst.plans.logical.{InsertIntoDir, InsertIntoStatement, LogicalPlan}
+import org.apache.spark.sql.catalyst.analysis.{UnresolvedIdentifier, UnresolvedRelation}
+import org.apache.spark.sql.catalyst.plans.logical.{
+  CreateTable,
+  CreateTableAsSelect,
+  InsertIntoDir,
+  InsertIntoStatement,
+  LogicalPlan,
+  ReplaceTableAsSelect,
+  TableSpec,
+  TableSpecBase
+}
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.connector.catalog.CatalogNotFoundException
 import org.apache.spark.sql.internal.SQLConf
@@ -17,7 +26,10 @@ import scala.collection.JavaConverters._
 
 /**
  * Injects Unity Catalog path credentials for cloud storage paths referenced directly in a query
- * (e.g. ``SELECT * FROM parquet.`s3://bucket/dir` `` or
+ * (e.g. ``SELECT * FROM parquet.`s3://bucket/dir` ``,
+ * ``SELECT * FROM delta.`s3://bucket/dir` ``,
+ * ``CREATE TABLE delta.`s3://bucket/dir` USING delta AS SELECT ...``,
+ * ``INSERT OVERWRITE delta.`s3://bucket/dir` SELECT ...``, or
  * ``INSERT OVERWRITE DIRECTORY 's3://bucket/dir' USING parquet ...``).
  *
  * Such path-based relations are resolved by Spark's built-in `ResolveSQLOnFile`, which bypasses
@@ -30,21 +42,30 @@ import scala.collection.JavaConverters._
  * attaches the resulting `fs.*` Hadoop options to the relation or write target. For bare
  * `format.`path`` relations, read vs write is ambiguous at analysis time, so credentials use
  * [[UCSingleCatalog.vendPathCredentialConfWithFallback]] (PATH_READ_WRITE with PATH_READ fallback,
- * mirroring loadTable). `INSERT OVERWRITE DIRECTORY` always requests [[PathOperation.PATH_READ_WRITE]].
+ * mirroring loadTable). `INSERT OVERWRITE DIRECTORY` and Delta path-table DDL/DML
+ * (`CREATE TABLE delta.`path``, `INSERT OVERWRITE delta.`path``) always request
+ * [[PathOperation.PATH_READ_WRITE]].
  * Spark folds these per-relation options into the Hadoop
  * configuration used to open the filesystem, so the credential-scoped filesystem + vended-token
  * provider pick them up — the same mechanism catalog tables use via
  * [[UCSingleCatalog.setCredentialProps]].
  *
+ * Delta path tables may rewrite bare-path relations during analysis without copying those options
+ * into `DeltaLog`. [[DeltaPathCredentialSupport]] early-resolves credentialed `delta.`path``
+ * relations (preserving options) and re-injects on Delta-specific plan nodes if Delta already
+ * rewrote the tree.
+ *
  * '''Ordering''': `ResolveSQLOnFile` lists the path (for schema inference) as soon as it resolves
  * the relation, and it is ordered ahead of rules injected via `injectResolutionRule`. This rule is
  * therefore registered by [[UCSparkSessionExtensions]] as a hint resolution rule, whose batch runs
- * ahead of the analyzer's Resolution batch. The parser stays side-effect free.
+ * ahead of the analyzer's Resolution batch. A second registration via `injectResolutionRule`
+ * patches Delta nodes after Delta's own rewrite. The parser stays side-effect free.
  *
  * '''Idempotence''': the analyzer runs its batches to a fixed point, so this rule is applied
  * repeatedly to the same plan. Nodes that already had a lookup for this URI — a successful vend
  * (`credentials.type=path` and `fs.unitycatalog.path`) or skip markers after an allowed miss —
- * are left untouched. Ambient `fs.s3a.*` (or other cloud) keys do not skip vending.
+ * are left untouched. Ambient `fs.s3a.*` (or other cloud) keys do not skip vending. Delta's
+ * duplicated `option.fs.*` entries carry the same UC path identity.
  *
  * The rule is a no-op unless the session's current catalog is a [[UCSingleCatalog]]. It can be
  * disabled with `spark.sql.catalog.<catalog>.vendPathCredentials.enabled=false`.
@@ -56,11 +77,13 @@ import scala.collection.JavaConverters._
  * `credentials.type=path`, so later analyzer iterations do not re-issue the failing RPCs and
  * Hadoop does not treat the job conf as a path-cred scope.
  *
- * Bare `delta.`path`` cloud relations are excluded: Delta's analysis path does not propagate
- * relation options into `DeltaLog`, so vended credentials would not reach execution and can
- * interfere with ambient credentials. Delta bare-path support is tracked separately.
+ * `INSERT OVERWRITE DIRECTORY ... USING delta` is not a Delta path-table write: Spark requires a
+ * `FileFormat` for directory overwrite, and `DeltaDataSource` is not one. The parquet write analog
+ * is `CREATE TABLE delta.`path`` / `INSERT OVERWRITE delta.`path``.
  */
-case class ResolvePathCredentials(spark: SparkSession) extends Rule[LogicalPlan] {
+case class ResolvePathCredentials(
+    spark: SparkSession,
+    resolveDeltaPathRelations: Boolean = true) extends Rule[LogicalPlan] {
 
   import ResolvePathCredentials._
 
@@ -69,22 +92,33 @@ case class ResolvePathCredentials(spark: SparkSession) extends Rule[LogicalPlan]
       case None => plan
       case Some(uc) if !uc.vendPathCredentialsEnabled => plan
       case Some(uc) =>
-        plan.resolveOperators {
+        val withCore = plan.resolveOperators {
           // Bare `format`.`<cloud path>` — used for reads and in query FROM clauses.
           case u: UnresolvedRelation if isEligibleBarePathRelation(u) =>
-            injectUnresolvedRelationCredentials(u, uc)
+            injectAndMaybeResolveDelta(u, uc)
 
           // `InsertIntoStatement.table` is not a tree child (only `query` is), so the generic
           // `UnresolvedRelation` case above never visits bare-path INSERT targets such as
-          // INSERT INTO parquet.`s3://...`. On Spark 4.0–4.2, executed INSERT INTO on a bare path
-          // still fails at analysis (TABLE_OR_VIEW_NOT_FOUND); this branch is kept for future
-          // Spark versions.
+          // INSERT INTO parquet.`s3://...` or INSERT OVERWRITE delta.`s3://...`.
+          // Parquet INSERT INTO still fails at analysis on Spark 4.0–4.2
+          // (TABLE_OR_VIEW_NOT_FOUND). Delta path tables are early-resolved to
+          // DataSourceV2Relation so V2 overwrite/append can run.
           case i: InsertIntoStatement =>
             i.table match {
               case u: UnresolvedRelation if isEligibleBarePathRelation(u) =>
-                i.copy(table = injectUnresolvedRelationCredentials(u, uc))
+                i.copy(table = injectAndMaybeResolveDelta(u, uc))
               case _ => i
             }
+
+          // CREATE TABLE delta.`<cloud path>` USING delta [AS SELECT ...]
+          case c: CreateTableAsSelect if isEligibleDeltaPathDdl(c.name, c.tableSpec, c.writeOptions) =>
+            injectCreateTableAsSelectCredentials(c, uc)
+
+          case c: ReplaceTableAsSelect if isEligibleDeltaPathDdl(c.name, c.tableSpec, c.writeOptions) =>
+            injectReplaceTableAsSelectCredentials(c, uc)
+
+          case c: CreateTable if isEligibleDeltaPathDdl(c.name, c.tableSpec, Map.empty) =>
+            injectCreateTableCredentials(c, uc)
 
           // Write: INSERT OVERWRITE DIRECTORY '<cloud path>' USING <format> ...
           case i: InsertIntoDir
@@ -102,6 +136,7 @@ case class ResolvePathCredentials(spark: SparkSession) extends Rule[LogicalPlan]
             i.copy(storage =
               i.storage.copy(properties = i.storage.properties ++ conf.asScala))
         }
+        DeltaPathCredentialSupport.apply(withCore, spark, uc, isCloudPath)
     }
   }
 
@@ -112,7 +147,62 @@ case class ResolvePathCredentials(spark: SparkSession) extends Rule[LogicalPlan]
     val conf = optionsAfterLookup(
       path,
       uc.vendPathCredentialConfWithFallback(spark, path))
-    if (conf.isEmpty) relation else relation.copy(options = mergeOptions(relation.options, conf))
+    if (DeltaPathCredentialSupport.isDeltaPathRelation(relation)) {
+      relation.copy(
+        options = PathCredentialOptions.mergeCredentialOptions(relation.options, conf))
+    } else {
+      relation.copy(options = mergeOptions(relation.options, conf))
+    }
+  }
+
+  private def injectAndMaybeResolveDelta(
+      relation: UnresolvedRelation,
+      uc: UCSingleCatalog): LogicalPlan = {
+    val injected = injectUnresolvedRelationCredentials(relation, uc)
+    if (resolveDeltaPathRelations &&
+      DeltaPathCredentialSupport.isDeltaPathRelation(injected) &&
+      hasSuccessfulUcPathCredentials(
+        injected.options.asCaseSensitiveMap().asScala,
+        injected.multipartIdentifier.last)) {
+      DeltaPathCredentialSupport.tryResolveDeltaPathRelation(injected, spark)
+        .getOrElse(injected)
+    } else {
+      injected
+    }
+  }
+
+  private def injectCreateTableAsSelectCredentials(
+      create: CreateTableAsSelect,
+      uc: UCSingleCatalog): CreateTableAsSelect = {
+    val path = deltaCloudPathFromName(create.name).get
+    val conf = optionsAfterLookup(
+      path,
+      uc.vendPathCredentialConfOrEmpty(spark, path, PathOperation.PATH_READ_WRITE))
+    create.copy(
+      writeOptions = mergeWriteOptions(create.writeOptions, conf),
+      tableSpec = mergeTableSpecCredentials(create.tableSpec, conf))
+  }
+
+  private def injectReplaceTableAsSelectCredentials(
+      replace: ReplaceTableAsSelect,
+      uc: UCSingleCatalog): ReplaceTableAsSelect = {
+    val path = deltaCloudPathFromName(replace.name).get
+    val conf = optionsAfterLookup(
+      path,
+      uc.vendPathCredentialConfOrEmpty(spark, path, PathOperation.PATH_READ_WRITE))
+    replace.copy(
+      writeOptions = mergeWriteOptions(replace.writeOptions, conf),
+      tableSpec = mergeTableSpecCredentials(replace.tableSpec, conf))
+  }
+
+  private def injectCreateTableCredentials(
+      create: CreateTable,
+      uc: UCSingleCatalog): CreateTable = {
+    val path = deltaCloudPathFromName(create.name).get
+    val conf = optionsAfterLookup(
+      path,
+      uc.vendPathCredentialConfOrEmpty(spark, path, PathOperation.PATH_READ_WRITE))
+    create.copy(tableSpec = mergeTableSpecCredentials(create.tableSpec, conf))
   }
 
   private def currentUcCatalog: Option[UCSingleCatalog] = {
@@ -138,19 +228,31 @@ object ResolvePathCredentials {
   /** True for bare `format.`cloud-path`` relations that should receive UC path credentials. */
   private def isEligibleBarePathRelation(relation: UnresolvedRelation): Boolean = {
     relation.multipartIdentifier.length == 2 &&
-    !isDeltaProvider(Some(relation.multipartIdentifier.head)) &&
     isCloudPath(relation.multipartIdentifier.last) &&
     !hasUcPathCredentials(
       relation.options.asCaseSensitiveMap().asScala,
       relation.multipartIdentifier.last)
   }
 
-  /**
-   * True when this node already had a path-credential lookup for `location`. A successful vend
-   * carries `credentials.type=path` and `fs.unitycatalog.path`. An allowed miss carries only the
-   * vending skip markers (not a Hadoop {@code PathCredId}). Ambient `fs.s3a.*` keys do not count.
-   */
-  private def hasUcPathCredentials(
+  /** True when this node already had either a successful vend or an allowed miss for this path. */
+  private[spark] def hasUcPathCredentials(
+      options: scala.collection.Map[String, String],
+      location: String): Boolean = {
+    val byLowerKey = options.collect {
+      case (k, v) if k != null => k.toLowerCase -> v
+    }
+    hasSuccessfulUcPathCredentials(byLowerKey, location) || {
+      val attempted =
+        byLowerKey
+          .get(UCHadoopConfConstants.UC_PATH_VENDING_ATTEMPTED_KEY)
+          .exists(_.equalsIgnoreCase(UCHadoopConfConstants.UC_PATH_VENDING_ATTEMPTED_VALUE))
+      val skipLocation = byLowerKey.get(UCHadoopConfConstants.UC_PATH_VENDING_LOCATION_KEY)
+      attempted && skipLocation.exists(pathsMatch(_, location))
+    }
+  }
+
+  /** True when this node carries successfully vended UC credentials for this path. */
+  private[spark] def hasSuccessfulUcPathCredentials(
       options: scala.collection.Map[String, String],
       location: String): Boolean = {
     val byLowerKey = options.collect {
@@ -158,28 +260,59 @@ object ResolvePathCredentials {
     }
     val credType = byLowerKey.getOrElse(UCHadoopConfConstants.UC_CREDENTIALS_TYPE_KEY, "")
     val storedPath = byLowerKey.get(UCHadoopConfConstants.UC_PATH_KEY)
-    val successfulVend =
-      credType.equalsIgnoreCase(UCHadoopConfConstants.UC_CREDENTIALS_TYPE_PATH_VALUE) &&
-        storedPath.exists(pathsMatch(_, location))
-    val attempted =
-      byLowerKey
-        .get(UCHadoopConfConstants.UC_PATH_VENDING_ATTEMPTED_KEY)
-        .exists(_.equalsIgnoreCase(UCHadoopConfConstants.UC_PATH_VENDING_ATTEMPTED_VALUE))
-    val skipLocation = byLowerKey.get(UCHadoopConfConstants.UC_PATH_VENDING_LOCATION_KEY)
-    successfulVend || (attempted && skipLocation.exists(pathsMatch(_, location)))
+    credType.equalsIgnoreCase(UCHadoopConfConstants.UC_CREDENTIALS_TYPE_PATH_VALUE) &&
+      storedPath.exists(pathsMatch(_, location))
   }
 
-  /** True when stored identity path is this location or the UC API canonical form of it. */
-  private def pathsMatch(stored: String, location: String): Boolean = {
+  private def pathsMatch(stored: String, location: String): Boolean =
     stored == location || stored == UCSingleCatalog.pathForCredentialApi(location)._1
+
+  /** True for `CREATE/REPLACE TABLE delta.`cloud-path`` DDL that still needs credentials. */
+  private def isEligibleDeltaPathDdl(
+      name: LogicalPlan,
+      spec: TableSpecBase,
+      writeOptions: scala.collection.Map[String, String]): Boolean =
+    isDeltaProvider(spec.provider) &&
+      deltaCloudPathFromName(name).exists { path =>
+        !hasUcPathCredentials(writeOptions, path) &&
+          !hasTableSpecPathCredentials(spec, path)
+      }
+
+  private def deltaCloudPathFromName(name: LogicalPlan): Option[String] = name match {
+    case u: UnresolvedRelation if DeltaPathCredentialSupport.isDeltaPathRelation(u) =>
+      Some(u.multipartIdentifier.last).filter(isCloudPath)
+    case u: UnresolvedIdentifier if u.nameParts.length == 2 &&
+        u.nameParts.head.equalsIgnoreCase("delta") &&
+        isCloudPath(u.nameParts.last) =>
+      Some(u.nameParts.last)
+    case _ => None
   }
 
-  /**
-   * True when `pathStr` is an absolute URI whose scheme [[UCCredentialHadoopConfs]] can vend
-   * credentials for. Same scheme set as name-based table resolution (including `s3a://`). UC API
-   * lookup still rewrites `s3a://` to `s3://` in [[UCSingleCatalog.vendPathCredentialConf]].
-   */
-  private def isCloudPath(pathStr: String): Boolean = {
+  private def hasTableSpecPathCredentials(spec: TableSpecBase, path: String): Boolean = spec match {
+    case t: TableSpec =>
+      hasUcPathCredentials(t.options, path) || hasUcPathCredentials(t.properties, path)
+    case _ =>
+      hasUcPathCredentials(spec.properties, path)
+  }
+
+  private def mergeWriteOptions(
+      existing: Map[String, String],
+      creds: java.util.Map[String, String]): Map[String, String] = {
+    val merged = new java.util.HashMap[String, String](existing.asJava)
+    PathCredentialOptions.putAllCredentialEntries(merged, creds)
+    merged.asScala.toMap
+  }
+
+  private def mergeTableSpecCredentials(
+      spec: TableSpecBase,
+      creds: java.util.Map[String, String]): TableSpecBase = spec match {
+    case t: TableSpec =>
+      t.copy(options = mergeWriteOptions(t.options, creds))
+    case other => other
+  }
+
+  /** True when `pathStr` is an absolute URI whose scheme is one UC can vend credentials for. */
+  private[spark] def isCloudPath(pathStr: String): Boolean = {
     val scheme = try {
       new Path(pathStr).toUri.getScheme
     } catch {
@@ -188,18 +321,11 @@ object ResolvePathCredentials {
     UCCredentialHadoopConfs.isSupportedScheme(scheme)
   }
 
-  /**
-   * Successful vending already includes path identity. An allowed miss returns empty secrets;
-   * stamp skip markers so [[hasUcPathCredentials]] skips this node on the next analyzer pass.
-   */
-  private def optionsAfterLookup(
+  /** Stamps allowed misses so later analyzer passes do not re-issue the vending request. */
+  private[spark] def optionsAfterLookup(
       location: String,
       conf: java.util.Map[String, String]): java.util.Map[String, String] = {
-    if (!conf.isEmpty) {
-      conf
-    } else {
-      UCSingleCatalog.pathCredentialSkipProps(location)
-    }
+    if (!conf.isEmpty) conf else UCSingleCatalog.pathCredentialSkipProps(location)
   }
 
   /** Merges vended `fs.*` credential entries into an existing relation option map. */

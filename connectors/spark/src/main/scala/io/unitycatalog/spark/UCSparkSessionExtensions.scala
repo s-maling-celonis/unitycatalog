@@ -25,9 +25,12 @@ import org.apache.spark.sql.catalyst.parser.extensions.UCSparkSqlExtensionsParse
 /**
  * Spark session extensions for UC view DDL routing and bare cloud-path credential vending.
  *
- * [[ResolvePathCredentials]] is registered as a hint resolution rule so it runs before
- * `ResolveSQLOnFile` lists the path for schema inference. View DDL continues to use the parser
- * extension so it can be routed to REST before Spark rejects catalogs without `ViewCatalog`.
+ * [[ResolvePathCredentials]] is registered as a hint resolution rule rather than only a resolution
+ * rule so it runs before `ResolveSQLOnFile` lists the path for schema inference. For `delta.`path``
+ * the same hint-batch pass early-resolves the relation with options intact. A resolution-batch
+ * pass then patches Delta-specific nodes if Delta rewrote the tree without those options. View DDL
+ * continues to use the parser extension so it can be routed to REST before Spark rejects catalogs
+ * without `ViewCatalog`.
  */
 class UCSparkSessionExtensions
     extends (SparkSessionExtensions => Unit)
@@ -37,7 +40,12 @@ class UCSparkSessionExtensions
     extensions.injectParser { case (spark, parser) =>
       new UCSparkSqlExtensionsParser(spark, parser)
     }
-    extensions.injectHintResolutionRule(ResolvePathCredentials(_))
+    extensions.injectHintResolutionRule { spark =>
+      ResolvePathCredentials(spark, resolveDeltaPathRelations = true)
+    }
+    extensions.injectResolutionRule { spark =>
+      ResolvePathCredentials(spark, resolveDeltaPathRelations = false)
+    }
     injectViewRules(extensions)
   }
 }
