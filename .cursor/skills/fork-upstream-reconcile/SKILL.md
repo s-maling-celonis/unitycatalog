@@ -245,7 +245,7 @@ Keep the group → old SHAs → new SHA mapping for the PR.
 
 Run all validation inside the `-after` worktree:
 
-1. Run `build/sbt generate`, commit legitimate generated changes, and run it
+1. Run `mvn generate-sources`, commit legitimate generated changes, and run it
    again to prove the second run is clean.
 2. Compile and run targeted tests for changed modules.
 3. Run the full suite when practical.
