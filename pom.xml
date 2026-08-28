@@ -88,7 +88,7 @@
     <junit.version>5.10.3</junit.version>
     <mockito.version>5.20.0</mockito.version>
     <lombok.version>1.18.42</lombok.version>
-    <armeria.version>1.28.4</armeria.version>
+    <armeria.version>1.41.0</armeria.version>
     <httpclient.version>4.5.14</httpclient.version>
     <openapi.jackson.nullable.version>0.2.11</openapi.jackson.nullable.version>
     <python.package.version>0.7.0.dev0</python.package.version>
