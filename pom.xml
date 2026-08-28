@@ -79,16 +79,16 @@
     <delta.version>4.3.1</delta.version>
     <hadoop.version>3.4.2</hadoop.version>
     <iceberg.version>1.11.0</iceberg.version>
-    <jackson.version>2.17.0</jackson.version>
+    <jackson.version>2.18.9</jackson.version>
     <jackson.spark.version>2.15.0</jackson.spark.version>
-    <log4j.version>2.25.3</log4j.version>
+    <log4j.version>2.25.5</log4j.version>
     <slf4j.version>2.0.13</slf4j.version>
     <junit.version>5.10.3</junit.version>
     <mockito.version>5.20.0</mockito.version>
     <lombok.version>1.18.42</lombok.version>
     <armeria.version>1.28.4</armeria.version>
     <httpclient.version>4.5.14</httpclient.version>
-    <openapi.jackson.nullable.version>0.2.6</openapi.jackson.nullable.version>
+    <openapi.jackson.nullable.version>0.2.11</openapi.jackson.nullable.version>
     <python.package.version>0.7.0.dev0</python.package.version>
     <checkstyle.version>9.3</checkstyle.version>
     <checkstyle.config>${maven.multiModuleProjectDirectory}/dev/checkstyle-config.xml</checkstyle.config>
