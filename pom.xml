@@ -83,6 +83,7 @@
     <iceberg.version>1.11.0</iceberg.version>
     <jackson.version>2.18.9</jackson.version>
     <jackson.spark.version>2.21.2</jackson.spark.version>
+    <jackson.spark.annotations.version>2.21</jackson.spark.annotations.version>
     <log4j.version>2.25.5</log4j.version>
     <slf4j.version>2.0.13</slf4j.version>
     <junit.version>5.10.3</junit.version>
@@ -527,6 +528,7 @@
         <spark.shim.shared.dir>scala-shims/spark-4.0-4.1</spark.shim.shared.dir>
         <spark.test.release>11</spark.test.release>
         <jackson.spark.version>2.18.2</jackson.spark.version>
+        <jackson.spark.annotations.version>2.18.2</jackson.spark.annotations.version>
       </properties>
     </profile>
     <profile>
@@ -545,6 +547,7 @@
         <spark.shim.shared.dir>scala-shims/spark-4.0-4.1</spark.shim.shared.dir>
         <spark.test.release>11</spark.test.release>
         <jackson.spark.version>2.18.2</jackson.spark.version>
+        <jackson.spark.annotations.version>2.18.2</jackson.spark.annotations.version>
       </properties>
     </profile>
     <profile>
@@ -563,6 +566,7 @@
         <spark.shim.shared.dir>scala-shims/spark-4.1-4.2</spark.shim.shared.dir>
         <spark.test.release>11</spark.test.release>
         <jackson.spark.version>2.21.2</jackson.spark.version>
+        <jackson.spark.annotations.version>2.21</jackson.spark.annotations.version>
       </properties>
     </profile>
     <profile>
@@ -581,6 +585,7 @@
         <spark.shim.shared.dir>scala-shims/spark-4.1-4.2</spark.shim.shared.dir>
         <spark.test.release>11</spark.test.release>
         <jackson.spark.version>2.21.2</jackson.spark.version>
+        <jackson.spark.annotations.version>2.21</jackson.spark.annotations.version>
       </properties>
     </profile>
     <profile>
@@ -599,6 +604,7 @@
         <spark.shim.shared.dir>scala-shims/spark-4.1-4.2</spark.shim.shared.dir>
         <spark.test.release>11</spark.test.release>
         <jackson.spark.version>2.21.2</jackson.spark.version>
+        <jackson.spark.annotations.version>2.21</jackson.spark.annotations.version>
       </properties>
     </profile>
     <profile>
@@ -618,6 +624,7 @@
         <spark.test.release>17</spark.test.release>
         <delta.spark.artifactId>delta-spark_${scala.binary.version}</delta.spark.artifactId>
         <jackson.spark.version>2.21.2</jackson.spark.version>
+        <jackson.spark.annotations.version>2.21</jackson.spark.annotations.version>
       </properties>
     </profile>
     <profile>
@@ -637,6 +644,7 @@
         <spark.test.release>17</spark.test.release>
         <delta.spark.artifactId>delta-spark_${scala.binary.version}</delta.spark.artifactId>
         <jackson.spark.version>2.21.2</jackson.spark.version>
+        <jackson.spark.annotations.version>2.21</jackson.spark.annotations.version>
       </properties>
     </profile>
     <profile>
