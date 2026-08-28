@@ -141,7 +141,7 @@ public class PathCredentialReadWriteTest extends BaseSparkIntegrationTest {
                 .appName("hive-path-credential-test")
                 .master("local[*]")
                 .config("spark.sql.shuffle.partitions", "4")
-                .config("spark.sql.catalogImplementation", "hive")
+                .enableHiveSupport()
                 .config("spark.sql.extensions", "io.unitycatalog.spark.UCSparkSessionExtensions"),
             catalog,
             false,

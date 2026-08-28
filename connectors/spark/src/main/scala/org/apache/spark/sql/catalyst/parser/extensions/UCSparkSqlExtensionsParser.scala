@@ -26,6 +26,7 @@ import org.apache.spark.sql.catalyst.{FunctionIdentifier, TableIdentifier}
 import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.catalyst.parser.ParserInterface
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
+import org.apache.spark.sql.internal.StaticSQLConf
 import org.apache.spark.sql.types.{DataType, StructType}
 
 class UCSparkSqlExtensionsParser(spark: SparkSession, delegate: ParserInterface)
@@ -42,7 +43,7 @@ class UCSparkSqlExtensionsParser(spark: SparkSession, delegate: ParserInterface)
   // therefore needs this early fallback before ResolveSQLOnFile probes a cloud path. The rule is
   // idempotent, but keep parser-time catalog I/O out of sessions whose analyzer runs hint rules.
   protected def applyParserExtensions(plan: LogicalPlan): LogicalPlan =
-    if (spark.conf.get("spark.sql.catalogImplementation") == "hive") {
+    if (spark.sessionState.conf.getConf(StaticSQLConf.CATALOG_IMPLEMENTATION) == "hive") {
       ResolvePathCredentials(spark).apply(applyUcExtensions(plan))
     } else {
       applyUcExtensions(plan)
