@@ -23,6 +23,7 @@ import org.apache.spark.sql.catalyst.analysis.UnresolvedRelation;
 import org.apache.spark.sql.catalyst.parser.ParseException;
 import org.apache.spark.sql.catalyst.plans.logical.InsertIntoStatement;
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan;
+import org.apache.spark.sql.connector.catalog.TableCatalog;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -38,8 +39,7 @@ import org.junit.jupiter.params.provider.EnumSource;
  * home of the early analyzer rule and Hive parser fallback), and use the {@link
  * S3CredentialTestFileSystem} fake filesystem to assert the vended credentials reach S3A. The test
  * principal is the metastore owner, so path authorization passes and credentials fall back to the
- * per-bucket server config ({@code accessKey0}/... for {@code s3://test-bucket0}) configured in
- * {@link
+ * per-bucket server config ({@code accessKey0} for {@code s3://test-bucket0}) from {@link
  * BaseSparkIntegrationTest#setUpProperties()}.
  */
 public class PathCredentialReadWriteTest extends BaseSparkIntegrationTest {
@@ -135,12 +135,20 @@ public class PathCredentialReadWriteTest extends BaseSparkIntegrationTest {
   }
 
   private SparkSession createHivePathCredSession(String catalog) {
+    File hiveHome = new File(dataDir, "hive-home");
+    File warehouse = new File(hiveHome, "warehouse");
+    File metastore = new File(hiveHome, "metastore_db");
     SparkSession.Builder builder =
         configureUcCatalogWithPathCredOptions(
             SparkSession.builder()
                 .appName("hive-path-credential-test")
                 .master("local[*]")
                 .config("spark.sql.shuffle.partitions", "4")
+                .config("spark.sql.warehouse.dir", warehouse.getAbsolutePath())
+                .config(
+                    "spark.hadoop.javax.jdo.option.ConnectionURL",
+                    "jdbc:derby:;databaseName=" + metastore.getAbsolutePath() + ";create=true")
+                .config("spark.hadoop.hive.metastore.warehouse.dir", warehouse.getAbsolutePath())
                 .enableHiveSupport()
                 .config("spark.sql.extensions", "io.unitycatalog.spark.UCSparkSessionExtensions"),
             catalog,
@@ -385,14 +393,15 @@ public class PathCredentialReadWriteTest extends BaseSparkIntegrationTest {
 
   /**
    * Spark 4.1's HiveSessionStateBuilder (used by Hive Thrift Server) omits extension-provided hint
-   * rules. The parser fallback must therefore attach credentials before ResolveSQLOnFile probes the
-   * path. Reapplying the analyzer rule remains a no-op.
+   * rules. The parser fallback must therefore attach credentials, including {@code option.fs.*}
+   * copies, before ResolveSQLOnFile probes the path. Reapplying the analyzer rule remains a no-op.
    */
   @Test
   public void testParserFallbackInjectsCredentialsBeforeHiveResolution()
       throws IOException, ParseException {
     session = createHivePathCredSession(SPARK_CATALOG);
     String location = bucketPath("hive_parser_fallback");
+    writeBareParquetSample(location);
 
     LogicalPlan parsed =
         session
@@ -402,7 +411,10 @@ public class PathCredentialReadWriteTest extends BaseSparkIntegrationTest {
     UnresolvedRelation relation = findBareCloudPathRelation(parsed);
     assertThat(relation).isNotNull();
     assertThat(relation.options().get("fs.s3a.access.key")).isEqualTo("accessKey0");
+    assertThat(relation.options().get(TableCatalog.OPTION_PREFIX + "fs.s3a.access.key"))
+        .isEqualTo("accessKey0");
     assertThat(injectPathCredentials(parsed).fastEquals(parsed)).isTrue();
+    assertCountSubquerySucceeds(location);
   }
 
   /**
@@ -780,5 +792,4 @@ public class PathCredentialReadWriteTest extends BaseSparkIntegrationTest {
     assertThatThrownBy(() -> assertCountSubquerySucceeds(location))
         .satisfies(e -> assertCauseChainContainsMessage(e, "accessKey0"));
   }
-
 }
