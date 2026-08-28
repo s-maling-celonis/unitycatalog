@@ -82,9 +82,6 @@
     <hadoop.version>3.4.2</hadoop.version>
     <iceberg.version>1.11.0</iceberg.version>
     <jackson.version>2.18.9</jackson.version>
-    <!-- Match Spark's fasterxml.jackson.version for the default Spark line (4.1.3).
-         Profiles override this so the connector does not force Jackson 2.15 leftover
-         from Spark 3.5 onto Spark 4.x. -->
     <jackson.spark.version>2.21.2</jackson.spark.version>
     <log4j.version>2.25.5</log4j.version>
     <slf4j.version>2.0.13</slf4j.version>
