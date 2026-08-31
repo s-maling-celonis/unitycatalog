@@ -1,6 +1,6 @@
 package io.unitycatalog.server.auth.decorator;
 
-import io.unitycatalog.control.model.User;
+import io.unitycatalog.server.control.model.User;
 import io.unitycatalog.server.auth.UnityCatalogAuthorizer;
 import io.unitycatalog.server.exception.BaseException;
 import io.unitycatalog.server.persist.MetastoreRepository;

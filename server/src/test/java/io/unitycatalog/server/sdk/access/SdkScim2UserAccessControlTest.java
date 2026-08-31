@@ -5,8 +5,8 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import io.unitycatalog.control.ApiException;
 import io.unitycatalog.control.api.UsersApi;
-import io.unitycatalog.control.model.UserResource;
-import io.unitycatalog.control.model.UserResourceList;
+import io.unitycatalog.server.control.model.UserResource;
+import io.unitycatalog.server.control.model.UserResourceList;
 import io.unitycatalog.server.base.ServerConfig;
 import lombok.SneakyThrows;
 import org.junit.jupiter.api.BeforeEach;
