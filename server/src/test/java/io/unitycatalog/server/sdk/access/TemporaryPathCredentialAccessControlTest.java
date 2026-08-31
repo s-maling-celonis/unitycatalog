@@ -6,7 +6,7 @@ import static io.unitycatalog.client.model.PathOperation.PATH_READ_WRITE;
 import static io.unitycatalog.server.utils.TestUtils.CATALOG_NAME;
 import static io.unitycatalog.server.utils.TestUtils.SCHEMA_FULL_NAME;
 import static io.unitycatalog.server.utils.TestUtils.TEST_AWS_MASTER_ROLE_ARN;
-import static io.unitycatalog.server.utils.TestUtils.assertPermissionDenied;
+import static io.unitycatalog.server.utils.TestUtils.assertApiException;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doReturn;
@@ -39,6 +39,7 @@ import io.unitycatalog.client.model.TemporaryCredentials;
 import io.unitycatalog.client.model.VolumeInfo;
 import io.unitycatalog.client.model.VolumeType;
 import io.unitycatalog.server.base.ServerConfig;
+import io.unitycatalog.server.exception.ErrorCode;
 import io.unitycatalog.server.persist.model.Privileges;
 import io.unitycatalog.server.service.credential.CloudCredentialVendor;
 import io.unitycatalog.server.service.credential.CredentialContext;
@@ -364,7 +365,10 @@ public class TemporaryPathCredentialAccessControlTest extends SdkAccessControlBa
       TemporaryCredentialsApi api, String url, PathOperation operation) {
     GenerateTemporaryPathCredential request =
         new GenerateTemporaryPathCredential().url(url).operation(operation);
-    assertPermissionDenied(() -> api.generateTemporaryPathCredentials(request));
+    assertApiException(
+        () -> api.generateTemporaryPathCredentials(request),
+        ErrorCode.PERMISSION_DENIED,
+        "PERMISSION_DENIED");
   }
 
   private void assertValidTemporaryCredentials(TemporaryCredentials credentials) {

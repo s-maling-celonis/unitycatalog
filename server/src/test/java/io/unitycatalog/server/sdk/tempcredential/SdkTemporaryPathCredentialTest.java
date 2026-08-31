@@ -1,9 +1,14 @@
 package io.unitycatalog.server.sdk.tempcredential;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.unitycatalog.client.ApiException;
 import io.unitycatalog.client.api.TemporaryCredentialsApi;
+import io.unitycatalog.client.model.AwsS3AccessKeyRequest;
+import io.unitycatalog.client.model.CreateCredentialRequest;
+import io.unitycatalog.client.model.CreateExternalLocation;
+import io.unitycatalog.client.model.CredentialPurpose;
 import io.unitycatalog.client.model.GenerateTemporaryPathCredential;
 import io.unitycatalog.client.model.PathOperation;
 import io.unitycatalog.client.model.TemporaryCredentials;
@@ -79,5 +84,41 @@ public class SdkTemporaryPathCredentialTest extends BaseCRUDTestWithMockCredenti
                     .operation(PathOperation.PATH_READ_WRITE)),
         ErrorCode.FAILED_PRECONDITION,
         "S3 bucket configuration not found");
+  }
+
+  @Test
+  public void testGenerateStaticAwsCredentialsForS3AccessKey() throws ApiException {
+    final String staticCredName = "static_aws_credential";
+    final String staticLocName = "static_external_location";
+    final String staticLocPath = "s3://static-external-location/data";
+    final String accessKeyId = "staticAccessKey";
+
+    credentialsApi.createCredential(
+        new CreateCredentialRequest()
+            .name(staticCredName)
+            .purpose(CredentialPurpose.STORAGE)
+            .awsS3AccessKey(new AwsS3AccessKeyRequest().accessKeyId(accessKeyId)));
+    externalLocationsApi.createExternalLocation(
+        new CreateExternalLocation()
+            .name(staticLocName)
+            .url(staticLocPath)
+            .credentialName(staticCredName));
+
+    TemporaryCredentials temporaryCredentials =
+        temporaryCredentialsApi.generateTemporaryPathCredentials(
+            new GenerateTemporaryPathCredential()
+                .url(staticLocPath + "/table1")
+                .operation(PathOperation.PATH_READ));
+
+    assertThat(temporaryCredentials.getAwsTempCredentials().getAccessKeyId())
+        .isEqualTo(accessKeyId);
+    assertThat(temporaryCredentials.getAwsTempCredentials().getSecretAccessKey())
+        .isEqualTo("staticSecretKey");
+    assertThat(temporaryCredentials.getAwsTempCredentials().getSessionToken()).isNull();
+    assertThat(temporaryCredentials.getExpirationTime()).isGreaterThan(System.currentTimeMillis());
+
+    // GET must never expose a secret (only access key id is stored on the credential).
+    assertThat(credentialsApi.getCredential(staticCredName).getAwsS3AccessKey().getAccessKeyId())
+        .isEqualTo(accessKeyId);
   }
 }

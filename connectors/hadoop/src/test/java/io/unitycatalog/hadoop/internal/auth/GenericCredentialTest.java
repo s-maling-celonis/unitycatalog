@@ -23,6 +23,10 @@ class GenericCredentialTest {
             new AwsCredential("ak", "sk", "st", 1L, "s3://bucket/t"),
             new AwsCredential("ak", "sk", "st", 1L, "s3://bucket/t")),
         Arguments.of(
+            "AWS credentials without session token",
+            new AwsCredential("ak", "sk", null, 1L, "s3://bucket/t"),
+            new AwsCredential("ak", "sk", "", 1L, "s3://bucket/t")),
+        Arguments.of(
             "Azure credentials",
             new AzureCredential("sas", 1L, "abfs://container/t"),
             new AzureCredential("sas", 1L, "abfs://container/t")),
@@ -55,6 +59,10 @@ class GenericCredentialTest {
             "different AWS session token",
             new AwsCredential("ak", "sk", "st", 1L, "s3://bucket/t"),
             new AwsCredential("ak", "sk", "st2", 1L, "s3://bucket/t")),
+        Arguments.of(
+            "AWS session token vs none",
+            new AwsCredential("ak", "sk", "st", 1L, "s3://bucket/t"),
+            new AwsCredential("ak", "sk", null, 1L, "s3://bucket/t")),
         Arguments.of(
             "different AWS expiration",
             new AwsCredential("ak", "sk", "st", 1L, "s3://bucket/t"),

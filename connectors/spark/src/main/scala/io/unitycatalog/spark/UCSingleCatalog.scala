@@ -19,6 +19,7 @@ import io.unitycatalog.client.retry.JitterDelayRetryPolicy
 import io.unitycatalog.client.{ApiClient, ApiException}
 import io.unitycatalog.hadoop.UCCredentialHadoopConfs
 import io.unitycatalog.hadoop.UCCredentialHadoopConfs.{PathOperation, TableOperation}
+import io.unitycatalog.hadoop.internal.UCHadoopConfConstants
 import io.unitycatalog.spark.auth.AuthConfigUtils
 import io.unitycatalog.spark.compat.SparkCatalogCompatibility
 import io.unitycatalog.spark.utils.OptionsUtil
@@ -49,6 +50,7 @@ class UCSingleCatalog
   private[this] var tokenProvider: TokenProvider = null
   private[this] var renewCredEnabled: Boolean = false
   private[this] var credScopedFsEnabled: Boolean = true
+  private[spark] var vendPathCredentialsEnabled: Boolean = OptionsUtil.DEFAULT_VEND_PATH_CREDENTIALS_ENABLED
   private[this] var apiClient: ApiClient = null;
   private[this] var tablesApi: TablesApi = null
 
@@ -90,6 +92,8 @@ class UCSingleCatalog
       OptionsUtil.RENEW_CREDENTIAL_ENABLED, OptionsUtil.DEFAULT_RENEW_CREDENTIAL_ENABLED)
     credScopedFsEnabled = options.getBoolean(
       OptionsUtil.CRED_SCOPED_FS_ENABLED, OptionsUtil.DEFAULT_CRED_SCOPED_FS_ENABLED)
+    vendPathCredentialsEnabled = options.getBoolean(
+      OptionsUtil.VEND_PATH_CREDENTIALS_ENABLED, OptionsUtil.DEFAULT_VEND_PATH_CREDENTIALS_ENABLED)
     val serverSidePlanningEnabled = options.getBoolean(
       OptionsUtil.SERVER_SIDE_PLANNING_ENABLED, OptionsUtil.DEFAULT_SERVER_SIDE_PLANNING_ENABLED)
     deltaRestApiEnabled = options.getBoolean(
@@ -196,11 +200,38 @@ class UCSingleCatalog
 
   override def listTables(namespace: Array[String]): Array[Identifier] = delegate.listTables(namespace)
 
-  override def loadTable(ident: Identifier): Table = delegate.loadTable(ident)
+  override def loadTable(ident: Identifier): Table = {
+    requireAddressableTableNameOrDeltaPath(ident)
+    delegate.loadTable(ident)
+  }
 
-  override def loadTable(ident: Identifier, version:  String): Table = delegate.loadTable(ident, version)
+  override def loadTable(ident: Identifier, version: String): Table = {
+    requireAddressableTableNameOrDeltaPath(ident)
+    delegate.loadTable(ident, version)
+  }
 
-  override def loadTable(ident: Identifier, timestamp:  Long): Table = delegate.loadTable(ident, timestamp)
+  override def loadTable(ident: Identifier, timestamp: Long): Table = {
+    requireAddressableTableNameOrDeltaPath(ident)
+    delegate.loadTable(ident, timestamp)
+  }
+
+  /**
+   * Prevents non-Delta path identifiers (for example, `parquet`.`s3://bucket/path`) from reaching
+   * catalog delegates that interpret them as Unity Catalog table names. Reporting these identifiers
+   * as missing lets Spark's SQL-on-file resolution handle them instead. Delta paths remain delegated
+   * because DeltaCatalog resolves those directly.
+   */
+  private def requireAddressableTableNameOrDeltaPath(ident: Identifier): Unit = {
+    val isDeltaPath =
+      ident.namespace().length == 1 && ident.namespace()(0).equalsIgnoreCase("delta")
+    val isAddressableTableName =
+      ident.namespace().length == 1 &&
+        !ident.namespace()(0).contains("/") &&
+        !ident.name().contains("/")
+    if (!isAddressableTableName && !isDeltaPath) {
+      throw new NoSuchTableException(ident)
+    }
+  }
 
   override def tableExists(ident: Identifier): Boolean = {
     delegate.tableExists(ident)
@@ -418,6 +449,75 @@ class UCSingleCatalog
     newProps
   }
 
+  /**
+   * Vends UC path credentials for a bare storage `location` and returns the resulting Hadoop
+   * `fs.*` configuration entries (credential-scoped filesystem impl, initial vended credentials,
+   * and the `fs.unitycatalog.*` keys that arm lazy renewal).
+   *
+   * This mirrors [[prepareExternalTableProperties]] but targets a path referenced directly in a
+   * query (e.g. `parquet.`s3://bucket/dir``), which never flows through `loadTable`/`createTable`.
+   * Used by [[ResolvePathCredentials]] to inject credentials as relation/table options so S3A can
+   * access the path without a pre-registered external table. Returns an empty map for schemes the
+   * credential builder does not recognize (e.g. local paths), so callers can no-op safely.
+   */
+  private[spark] def vendPathCredentialConf(
+      spark: SparkSession,
+      location: String,
+      operation: PathOperation): util.Map[String, String] = {
+    val (apiLocation, scheme) = UCSingleCatalog.pathForCredentialApi(location)
+    if (scheme == null) return util.Collections.emptyMap[String, String]()
+    UCCredentialHadoopConfs
+      .builder(uri.toString, scheme)
+      .addAppVersions(ApiClientFactory.appEngineVersions())
+      .tokenProvider(tokenProvider)
+      .apiClient(apiClient)
+      .enableCredentialRenewal(renewCredEnabled)
+      .enableCredentialScopedFs(credScopedFsEnabled)
+      .hadoopConf(UCSingleCatalog.sessionHadoopConf(spark))
+      .buildForPath(apiLocation, operation)
+  }
+
+  /**
+   * Vends path credentials for a path and operation, returning an empty map when UC cannot vend
+   * (path not managed, insufficient permission, etc.) so callers can fall back to ambient Hadoop
+   * credentials already configured on the Spark session.
+   */
+  private[spark] def vendPathCredentialConfOrEmpty(
+      spark: SparkSession,
+      location: String,
+      operation: PathOperation): util.Map[String, String] = {
+    try {
+      vendPathCredentialConf(spark, location, operation)
+    } catch {
+      case e: ApiException if UCSingleCatalog.isAmbientPathCredentialFailure(e) =>
+        logDebug(
+          s"Path credential vending failed for $location ($operation): ${e.getMessage}")
+        util.Collections.emptyMap[String, String]()
+      case e: ApiException =>
+        logWarning(
+          s"Path credential vending failed for $location ($operation) with HTTP ${e.getCode}: ${e.getMessage}")
+        throw e
+    }
+  }
+
+  /**
+   * Vends path credentials when read vs write is unknown at analysis time (e.g. bare
+   * `parquet.`s3://...`` in SELECT or INSERT INTO). Tries PATH_READ_WRITE first,
+   * falls back to PATH_READ, then to an empty map for ambient credentials — same ambiguity
+   * handling as loadTable.
+   */
+  private[spark] def vendPathCredentialConfWithFallback(
+      spark: SparkSession,
+      location: String): util.Map[String, String] = {
+    val readWrite = vendPathCredentialConfOrEmpty(spark, location, PathOperation.PATH_READ_WRITE)
+    if (!readWrite.isEmpty) {
+      readWrite
+    } else {
+      logDebug(s"PATH_READ_WRITE unavailable for $location, trying PATH_READ")
+      vendPathCredentialConfOrEmpty(spark, location, PathOperation.PATH_READ)
+    }
+  }
+
   override def createTable(ident: Identifier, schema: StructType, partitions: Array[Transform], properties: util.Map[String, String]): Table = {
     throw new AssertionError("deprecated `createTable` should not be called")
   }
@@ -609,6 +709,68 @@ object UCSingleCatalog {
   val DELTA_CATALOG_LOADED = ThreadLocal.withInitial[Boolean](() => false)
 
   /**
+   * UC external locations and the temporary path-credentials API use canonical lowercase
+   * `s3://` URLs on the server. Hadoop clients may reference the same storage as `s3a://`
+   * (any casing); rewrite to `s3://` for credential lookup only and lowercase other schemes.
+   */
+  private[spark] def pathForCredentialApi(location: String): (String, String) = {
+    val scheme = new Path(location).toUri.getScheme
+    if (scheme == null) {
+      (location, null)
+    } else {
+      val canonicalScheme =
+        if (scheme.equalsIgnoreCase("s3a")) "s3" else scheme.toLowerCase
+      val apiLocation = location.replaceFirst(
+        s"(?i)^${java.util.regex.Pattern.quote(scheme)}://",
+        s"$canonicalScheme://")
+      (apiLocation, canonicalScheme)
+    }
+  }
+
+  /**
+   * Skip markers after an allowed vending miss so [[ResolvePathCredentials]] does not re-issue
+   * RPCs on later analyzer passes. Intentionally not {@code credentials.type=path} /
+   * {@code fs.unitycatalog.path}: those keys are a Hadoop {@code PathCredId} and require a
+   * credential context id.
+   */
+  private[spark] def pathCredentialSkipProps(
+      location: String): util.Map[String, String] = {
+    val (apiLocation, scheme) = pathForCredentialApi(location)
+    if (scheme == null) {
+      util.Collections.emptyMap[String, String]()
+    } else {
+      val props = new util.HashMap[String, String]()
+      props.put(
+        UCHadoopConfConstants.UC_PATH_VENDING_ATTEMPTED_KEY,
+        UCHadoopConfConstants.UC_PATH_VENDING_ATTEMPTED_VALUE)
+      props.put(UCHadoopConfConstants.UC_PATH_VENDING_LOCATION_KEY, apiLocation)
+      props
+    }
+  }
+
+  /**
+   * HTTP statuses that mean the path is not usable via UC (unmanaged / no permission) and may
+   * fall back to ambient Hadoop credentials. 400 covers OSS {@code FAILED_PRECONDITION} when no
+   * external location or bucket config covers the path.
+   */
+  private[spark] def isAmbientPathCredentialFailure(e: ApiException): Boolean = {
+    val code = e.getCode
+    code == 400 || code == 403 || code == 404
+  }
+
+  /**
+   * Allowed miss → empty map for ambient fallback; anything else is rethrown (caller logs).
+   */
+  private[spark] def emptyIfAmbientPathCredentialFailure(
+      e: ApiException): util.Map[String, String] = {
+    if (isAmbientPathCredentialFailure(e)) {
+      util.Collections.emptyMap[String, String]()
+    } else {
+      throw e
+    }
+  }
+
+  /**
    * Returns the current session's Hadoop configuration, blended with any session-scoped
    * SQLConf overrides (this is what Spark SQL itself uses; see SPARK-23514).
    *
@@ -619,21 +781,18 @@ object UCSingleCatalog {
    * directly via {@code SparkSession.Builder.config("fs.<scheme>.impl", ...)} or {@code SET}
    * commands, not only those prefixed with {@code spark.hadoop.}.
    */
+  def sessionHadoopConf(spark: SparkSession): Configuration =
+    spark.sessionState.newHadoopConf()
+
   def sessionHadoopConf(): Configuration = {
     SparkSession.getActiveSession
-      .map(_.sessionState.newHadoopConf())
+      .map(sessionHadoopConf(_))
       .getOrElse(new Configuration())
   }
 
   def setCredentialProps(props: util.HashMap[String, String],
                          credentialProps: util.Map[String, String]): Unit = {
-    props.putAll(credentialProps)
-    // TODO: Delta requires the options to be set twice in the properties, with and without the
-    //       `option.` prefix. We should revisit this in Delta.
-    val prefix = TableCatalog.OPTION_PREFIX
-    props.putAll(credentialProps.map {
-      case (k, v) => (prefix + k, v)
-    }.asJava)
+    PathCredentialOptions.putAllCredentialEntries(props, credentialProps)
   }
 
   def requireProviderSpecified(
@@ -690,6 +849,22 @@ object UCSingleCatalog {
   def fullTableNameForApi(catalogName: String, ident: Identifier): String = {
     checkUnsupportedNestedNamespace(ident.namespace())
     Seq(catalogName, ident.namespace()(0), ident.name()).mkString(".")
+  }
+
+  /**
+   * True when `ident` can be expressed as the dotted `catalog.schema.table` string UC identifies
+   * tables by. Cloud paths (including extensionless ones like `s3://bucket/dir/part`) carry `/`
+   * in the table name and can never denote a UC table row.
+   *
+   * Spark asks the current catalog to load every relation before falling back to path-based
+   * resolution, so `SELECT * FROM parquet.`s3://bucket/dir/part`` arrives here as schema
+   * `parquet` with the path as the table name. Callers treat these as absent, which lets Spark
+   * carry on to `ResolveSQLOnFile` -- see [[UCProxy.getUCTableLike]].
+   */
+  def isAddressableTableName(ident: Identifier): Boolean = {
+    ident.namespace().length == 1 &&
+      !ident.namespace()(0).contains("/") &&
+      !ident.name().contains("/")
   }
 
 }
@@ -754,7 +929,12 @@ private[spark] class UCProxy(
   // exception. `loadTable` re-raises `NoSuchTableException` on `None` (Spark's resolver expects
   // that); the passive-filter paths (`dropTable`, `dropView`) and `loadView` map `None` to their
   // own not-found result.
+  //
+  // Names UC cannot address answer `None` without an RPC. UC rejects them with 400, which Spark's
+  // resolver does not absorb the way it absorbs a not-found, so asking would surface a name Spark
+  // is merely probing (a bare `parquet.`s3://...`` path) as a query failure.
   private[spark] def getUCTableLike(ident: Identifier): Option[UCTableInfo] = {
+    if (!UCSingleCatalog.isAddressableTableName(ident)) return None
     val fullName = UCSingleCatalog.fullTableNameForApi(this.name, ident)
     try {
       Some(tablesApi.getTable(
@@ -916,14 +1096,8 @@ private[spark] class UCProxy(
     createTable.setColumns(columns)
     createTable.setDataSourceFormat(convertDatasourceFormat(format))
     // Do not send the V2 table properties as they are made part of the `createTable` already.
-    // Also strip the vended filesystem credential properties (fs.* and their option.-prefixed
-    // duplicates, e.g. fs.s3a.session.token): they are session-scoped Hadoop configs injected by
-    // UCSingleCatalog for the local write path, not table metadata, and must never be persisted
-    // in the catalog.
-    val propertiesToServer = properties.view
-      .filterKeys(!UCTableProperties.V2_TABLE_PROPERTIES.contains(_))
-      .filterKeys(k => !k.startsWith("fs.") && !k.startsWith(TableCatalog.OPTION_PREFIX + "fs."))
-      .toMap
+    val propertiesToServer =
+      properties.view.filterKeys(!UCTableProperties.V2_TABLE_PROPERTIES.contains(_)).toMap
     createTable.setProperties(propertiesToServer)
     try {
       tablesApi.createTable(createTable)
