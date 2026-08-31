@@ -234,6 +234,23 @@ Replay each approved group in original dependency/topological order as one
 squashed commit. Its message must list all replaced SHAs and PRs. If a new
 semantic conflict appears, return to Step 5.
 
+Before accepting a replay group, compare its complete old and new change
+surfaces. Obtain the old PR's changed-file list from GitHub or diff each old
+merge commit against its first parent, then compare it with the new squashed
+commit:
+
+```bash
+git diff --name-only "$OLD_SHA^1" "$OLD_SHA" | sort > /tmp/group-old-paths
+git diff --name-only "$NEW_SHA^1" "$NEW_SHA" | sort > /tmp/group-new-paths
+comm -23 /tmp/group-old-paths /tmp/group-new-paths
+```
+
+Every omitted path needs a line-item explanation: already upstream, superseded,
+or deliberately dropped. Inspect the diff hunks as well as the file list;
+partial replays can preserve runtime code while silently dropping API/CLI
+integration, configuration examples, generated documentation, or tests. Run
+the feature's original focused tests before declaring the group complete.
+
 Check and fix formatting throughout the rebuild, not only at final validation.
 After replaying or adapting each group, run the formatter for every affected
 module (currently `mvn spotless:apply`), review and include only formatting

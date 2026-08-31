@@ -417,4 +417,19 @@ public class ServerPropertiesTest {
               assertThat(config.getSessionToken()).isEqualTo("tokenB");
             });
   }
+
+  @Test
+  public void testResolveS3StaticAccessKeyConfigurationWhenUnconfigured() {
+    Properties props = new Properties();
+    props.setProperty("s3.static.secretKey.AKIA_A", "secretA");
+    props.setProperty("s3.static.sessionToken.AKIA_TOKEN_ONLY", "tokenOnly");
+    props.setProperty("s3.static.secretKey.AKIA_BLANK", "");
+    ServerProperties serverProperties = new ServerProperties(props);
+
+    assertThat(serverProperties.resolveS3StaticAccessKeyConfiguration("AKIA_UNKNOWN")).isEmpty();
+    assertThat(serverProperties.resolveS3StaticAccessKeyConfiguration(null)).isEmpty();
+    assertThat(serverProperties.resolveS3StaticAccessKeyConfiguration(" ")).isEmpty();
+    assertThat(serverProperties.resolveS3StaticAccessKeyConfiguration("AKIA_TOKEN_ONLY")).isEmpty();
+    assertThat(serverProperties.resolveS3StaticAccessKeyConfiguration("AKIA_BLANK")).isEmpty();
+  }
 }
