@@ -328,11 +328,15 @@ Run all validation inside the `-after` worktree:
        README.md docs integration-tests tests server/src/test
    ! rg -n 'cd /?ui|bun (install|run)|yarn (install|start)' \
        README.md docs/quickstart.md docs/usage/ui.md .pre-commit-config.yaml
+   ! rg -n 'clients/python|python-client-postbuild' \
+       pom.xml dev/maven .pre-commit-config.yaml
    ```
 
    References under an explicit upstream-UI disclaimer may remain in detailed
    upstream UI documentation, but the fork's quickstart and active hooks must
-   not require deleted sources.
+   not require deleted sources. RepoDepot's delivered workflow is generated;
+   remove obsolete service-specific ignores from `.github/repodepot-config.yaml`
+   and let RepoDepot regenerate the workflow instead of editing it by hand.
 
 Repository-specific traps to verify:
 
