@@ -247,10 +247,19 @@ approved additions/removals. A `disabled_` filename does not disable a GitHub
 workflow.
 
 When restoring Celonis-only files onto the upstream tree, derive the path list
-from a tree comparison instead of writing it by hand. Hand-written lists miss
-files that sit outside the directories you edited, in particular build-output
-paths kept tracked by `.gitignore` negation rules. Step 8 gates this, but
-recovering there costs a rebuild of the landing commit.
+mechanically rather than writing it by hand:
+
+```bash
+comm -23 <(git ls-tree -r --name-only "$BEFORE_SHA" | sort) \
+         <(git ls-tree -r --name-only "$UP_SHA" | sort)
+```
+
+Every path this prints belongs to exactly one replay group or to an explicit
+drop decision; work the list to zero rather than reconstructing it from the
+group diffs. Hand-written lists miss files that sit outside the directories you
+edited, in particular build-output paths kept tracked by `.gitignore` negation
+rules. Step 8 gates this, but recovering there costs a rebuild of the landing
+commit.
 
 Keep the group → old SHAs → new SHA mapping for the PR.
 
