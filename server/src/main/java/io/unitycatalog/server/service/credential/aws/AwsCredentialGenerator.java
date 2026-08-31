@@ -3,6 +3,7 @@ package io.unitycatalog.server.service.credential.aws;
 import io.unitycatalog.server.model.AwsIamRoleResponse;
 import io.unitycatalog.server.persist.dao.CredentialDAO;
 import io.unitycatalog.server.service.credential.CredentialContext;
+import java.net.URI;
 import java.time.Duration;
 import java.util.Optional;
 import java.util.UUID;
@@ -88,15 +89,25 @@ public interface AwsCredentialGenerator {
         credentialsProvider = DefaultCredentialsProvider.create();
       }
 
-      this.stsClient = builder.region(region).credentialsProvider(credentialsProvider).build();
+      StsClientBuilder stsBuilder = builder.region(region).credentialsProvider(credentialsProvider);
+      String stsEndpointUrl = effectiveStsEndpoint(config);
+      if (stsEndpointUrl != null) {
+        stsBuilder.endpointOverride(URI.create(stsEndpointUrl));
+      }
+      this.stsClient = stsBuilder.build();
       this.staticAwsRoleArn = config.getAwsRoleArn();
       this.awsRegion = region;
       this.includeKmsPermissions =
-          AwsPolicyGenerator.stsSupportsKmsPolicyConditions(effectiveStsEndpoint(config));
+          AwsPolicyGenerator.stsSupportsKmsPolicyConditions(stsEndpointUrl);
     }
 
     private static String effectiveStsEndpoint(S3StorageConfig config) {
-      // Endpoint fields are wired in the S3-compatible storage commit (group B+S).
+      if (config.getStsEndpointUrl() != null && !config.getStsEndpointUrl().isEmpty()) {
+        return config.getStsEndpointUrl();
+      }
+      if (config.getEndpointUrl() != null && !config.getEndpointUrl().isEmpty()) {
+        return config.getEndpointUrl();
+      }
       return null;
     }
 
