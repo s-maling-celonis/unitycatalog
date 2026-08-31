@@ -9,7 +9,7 @@ import static io.unitycatalog.server.model.SecurableType.TABLE;
 import com.linecorp.armeria.common.HttpResponse;
 import com.linecorp.armeria.common.HttpStatus;
 import com.linecorp.armeria.server.annotation.Delete;
-import com.linecorp.armeria.server.annotation.ExceptionHandler;
+import com.linecorp.armeria.server.annotation.ExceptionHandlerFunction;
 import com.linecorp.armeria.server.annotation.Get;
 import com.linecorp.armeria.server.annotation.Head;
 import com.linecorp.armeria.server.annotation.Param;
@@ -44,6 +44,7 @@ import io.unitycatalog.server.persist.StagingTableRepository;
 import io.unitycatalog.server.persist.TableRepository;
 import io.unitycatalog.server.persist.dao.TableInfoDAO;
 import io.unitycatalog.server.service.AuthorizedService;
+import io.unitycatalog.server.service.RegisteredService;
 import io.unitycatalog.server.service.credential.CredentialContext;
 import io.unitycatalog.server.service.credential.StorageCredentialVendor;
 import io.unitycatalog.server.utils.NormalizedURL;
@@ -57,9 +58,11 @@ import java.util.UUID;
  *
  * <p>Enables Delta clients (e.g., Delta Spark, Delta Kernel) to create, read, write, and manage
  * managed and external Delta tables.
+ *
+ * <p>Its own protocol, with its own body mapper and the error format Delta clients expect, so it
+ * implements {@link RegisteredService} directly rather than the unrelated UC REST interface.
  */
-@ExceptionHandler(DeltaApiExceptionHandler.class)
-public class DeltaApiService extends AuthorizedService {
+public class DeltaApiService extends AuthorizedService implements RegisteredService {
 
   private static final List<String> ENDPOINTS =
       List.of(
@@ -81,6 +84,11 @@ public class DeltaApiService extends AuthorizedService {
   private final TableRepository tableRepository;
   private final StagingTableRepository stagingTableRepository;
   private final StorageCredentialVendor storageCredentialVendor;
+
+  @Override
+  public ExceptionHandlerFunction exceptionHandler() {
+    return DeltaApiExceptionHandler.INSTANCE;
+  }
 
   public DeltaApiService(
       UnityCatalogAuthorizer authorizer,
@@ -362,8 +370,8 @@ public class DeltaApiService extends AuthorizedService {
   private static Set<CredentialContext.Privilege> toPrivileges(DeltaCredentialOperation operation) {
     return switch (operation) {
       case READ -> Set.of(CredentialContext.Privilege.SELECT);
-      case READ_WRITE -> Set.of(
-          CredentialContext.Privilege.SELECT, CredentialContext.Privilege.UPDATE);
+      case READ_WRITE ->
+          Set.of(CredentialContext.Privilege.SELECT, CredentialContext.Privilege.UPDATE);
     };
   }
 }

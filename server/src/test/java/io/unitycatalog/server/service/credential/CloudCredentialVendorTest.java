@@ -8,6 +8,7 @@ import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.unitycatalog.server.exception.BaseException;
 import io.unitycatalog.server.exception.ErrorCode;
 import io.unitycatalog.server.model.AwsCredentials;
@@ -86,31 +87,6 @@ public class CloudCredentialVendorTest {
   }
 
   @Test
-  public void testGenerateS3TemporaryCredentialsIncludeEndpointUrl() {
-    final String ACCESS_KEY = "accessKey";
-    final String SECRET_KEY = "secretKey";
-    final String SESSION_TOKEN = "sessionToken";
-    final String ENDPOINT_URL = "http://localhost:9000";
-    when(serverProperties.getS3Configurations())
-        .thenReturn(
-            Map.of(
-                NormalizedURL.from("s3://storageBase"),
-                S3StorageConfig.builder()
-                    .accessKey(ACCESS_KEY)
-                    .secretKey(SECRET_KEY)
-                    .sessionToken(SESSION_TOKEN)
-                    .endpointUrl(ENDPOINT_URL)
-                    .build()));
-    AwsCredentialVendor awsCredentialVendor = new AwsCredentialVendor(serverProperties);
-    credentialsOperations = new CloudCredentialVendor(awsCredentialVendor, null, null);
-
-    TemporaryCredentials s3TemporaryCredentials =
-        vendCredential("s3://storageBase/abc", Set.of(CredentialContext.Privilege.SELECT));
-
-    assertThat(s3TemporaryCredentials.getEndpointUrl()).isEqualTo(ENDPOINT_URL);
-  }
-
-  @Test
   public void testGenerateS3TemporaryCredentials() {
     final String ACCESS_KEY = "accessKey";
     final String SECRET_KEY = "secretKey";
@@ -161,6 +137,35 @@ public class CloudCredentialVendorTest {
             () ->
                 vendCredential("s3://storageBase/abc", Set.of(CredentialContext.Privilege.SELECT)))
         .isInstanceOf(StsException.class);
+  }
+
+  @Test
+  public void testGenerateS3TemporaryCredentialsIncludeEndpointUrl() {
+    final String ACCESS_KEY = "accessKey";
+    final String SECRET_KEY = "secretKey";
+    final String SESSION_TOKEN = "sessionToken";
+    final String ENDPOINT_URL = "http://localhost:9000";
+    when(serverProperties.getS3Configurations())
+        .thenReturn(
+            Map.of(
+                NormalizedURL.from("s3://storageBase"),
+                S3StorageConfig.builder()
+                    .accessKey(ACCESS_KEY)
+                    .secretKey(SECRET_KEY)
+                    .sessionToken(SESSION_TOKEN)
+                    .endpointUrl(ENDPOINT_URL)
+                    .build()));
+    AwsCredentialVendor awsCredentialVendor = new AwsCredentialVendor(serverProperties);
+    credentialsOperations = new CloudCredentialVendor(awsCredentialVendor, null, null);
+    TemporaryCredentials s3TemporaryCredentials =
+        vendCredential("s3://storageBase/abc", Set.of(CredentialContext.Privilege.SELECT));
+    assertThat(s3TemporaryCredentials.getAwsTempCredentials())
+        .isEqualTo(
+            new AwsCredentials()
+                .accessKeyId(ACCESS_KEY)
+                .secretAccessKey(SECRET_KEY)
+                .sessionToken(SESSION_TOKEN));
+    assertThat(s3TemporaryCredentials.getEndpointUrl()).isEqualTo(ENDPOINT_URL);
   }
 
   @Test
@@ -347,12 +352,11 @@ public class CloudCredentialVendorTest {
       AssumeRoleRequest capturedRequest = requestCaptor.getValue();
       assertThat(capturedRequest.roleArn()).isEqualTo(CREDENTIAL_ROLE_ARN);
       assertThat(capturedRequest.externalId()).isEqualTo(expectedExternalId);
-      assertThat(capturedRequest.policy()).contains("kms:ViaService");
     }
   }
 
   @Test
-  public void testGovCloudMasterRegionUsesAwsUsGovS3ArnsInSessionPolicy() {
+  public void testGovCloudRoleArnUsesAwsUsGovS3ArnsInSessionPolicy() throws Exception {
     final String CREDENTIAL_ROLE_ARN =
         "arn:aws-us-gov:iam::123456789012:role/external-location-role";
     final String S3_PATH = "s3://gov-bucket/path/to/data";
@@ -371,7 +375,8 @@ public class CloudCredentialVendorTest {
         .getExternalLocationCredentialDaoForPath(any());
 
     when(serverProperties.getS3Configurations()).thenReturn(Map.of());
-    doReturn(S3StorageConfig.builder().region("us-gov-west-1").build())
+    // Master region intentionally commercial: the assumed role ARN must still select aws-us-gov.
+    doReturn(S3StorageConfig.builder().region("us-east-1").build())
         .when(serverProperties)
         .getS3MasterRoleConfiguration();
 
@@ -404,6 +409,12 @@ public class CloudCredentialVendorTest {
       assertThat(capturedRequest.policy())
           .contains("arn:aws-us-gov:s3:::gov-bucket")
           .doesNotContain("arn:aws:s3:::gov-bucket");
+      assertThat(
+              new ObjectMapper()
+                  .readTree(capturedRequest.policy())
+                  .findPath("kms:ViaService")
+                  .asText())
+          .isEqualTo("s3.*.amazonaws.com");
     }
   }
 
@@ -460,7 +471,7 @@ public class CloudCredentialVendorTest {
       assertThat(capturedRequest.policy())
           .doesNotContain("kms:ViaService")
           .doesNotContain("kms:EncryptionContext")
-          .contains("s3:GetObject");
+          .contains("s3:GetO*");
     }
   }
 
@@ -581,7 +592,7 @@ public class CloudCredentialVendorTest {
       assertThat(credentials.getEndpointUrl()).isEqualTo(S3_ENDPOINT);
       assertThat(requestCaptor.getValue().policy())
           .doesNotContain("kms:ViaService")
-          .contains("s3:GetObject");
+          .contains("s3:GetO*");
     }
   }
 
@@ -618,41 +629,40 @@ public class CloudCredentialVendorTest {
 
   @Test
   public void testVendStaticCredentialsByAccessKeyId() {
-    final String ACCESS_KEY_ID = "AKIA_MATCH";
-    final String SECRET_KEY = "matchedSecret";
+    final String accessKeyId = "AKIA_MATCH";
+    final String secretKey = "matchedSecret";
 
-    mockS3AccessKeyCredential(ACCESS_KEY_ID);
-    when(serverProperties.resolveS3StaticAccessKeyConfiguration(ACCESS_KEY_ID))
+    mockS3AccessKeyCredential(accessKeyId);
+    when(serverProperties.resolveS3StaticAccessKeyConfiguration(accessKeyId))
         .thenReturn(
             Optional.of(
-                S3StorageConfig.builder().accessKey(ACCESS_KEY_ID).secretKey(SECRET_KEY).build()));
+                S3StorageConfig.builder().accessKey(accessKeyId).secretKey(secretKey).build()));
     when(serverProperties.getS3StaticCredentialTtl()).thenReturn(Duration.ofHours(1));
     useStaticAwsCredentialVendor();
 
     TemporaryCredentials credentials =
         vendCredential(STATIC_S3_PATH, Set.of(CredentialContext.Privilege.SELECT));
 
-    assertThat(credentials.getAwsTempCredentials().getAccessKeyId()).isEqualTo(ACCESS_KEY_ID);
-    assertThat(credentials.getAwsTempCredentials().getSecretAccessKey()).isEqualTo(SECRET_KEY);
-    // Stores without STS do not issue a session token.
+    assertThat(credentials.getAwsTempCredentials().getAccessKeyId()).isEqualTo(accessKeyId);
+    assertThat(credentials.getAwsTempCredentials().getSecretAccessKey()).isEqualTo(secretKey);
     assertThat(credentials.getAwsTempCredentials().getSessionToken()).isNull();
     assertThat(credentials.getExpirationTime()).isGreaterThan(System.currentTimeMillis());
   }
 
   @Test
   public void testVendStaticCredentialsIncludesConfiguredSessionToken() {
-    final String ACCESS_KEY_ID = "AKIA_WITH_TOKEN";
-    final String SECRET_KEY = "matchedSecret";
-    final String SESSION_TOKEN = "configuredSessionToken";
+    final String accessKeyId = "AKIA_WITH_TOKEN";
+    final String secretKey = "matchedSecret";
+    final String sessionToken = "configuredSessionToken";
 
-    mockS3AccessKeyCredential(ACCESS_KEY_ID);
-    when(serverProperties.resolveS3StaticAccessKeyConfiguration(ACCESS_KEY_ID))
+    mockS3AccessKeyCredential(accessKeyId);
+    when(serverProperties.resolveS3StaticAccessKeyConfiguration(accessKeyId))
         .thenReturn(
             Optional.of(
                 S3StorageConfig.builder()
-                    .accessKey(ACCESS_KEY_ID)
-                    .secretKey(SECRET_KEY)
-                    .sessionToken(SESSION_TOKEN)
+                    .accessKey(accessKeyId)
+                    .secretKey(secretKey)
+                    .sessionToken(sessionToken)
                     .build()));
     when(serverProperties.getS3StaticCredentialTtl()).thenReturn(Duration.ofHours(1));
     useStaticAwsCredentialVendor();
@@ -660,22 +670,22 @@ public class CloudCredentialVendorTest {
     TemporaryCredentials credentials =
         vendCredential(STATIC_S3_PATH, Set.of(CredentialContext.Privilege.SELECT));
 
-    assertThat(credentials.getAwsTempCredentials().getAccessKeyId()).isEqualTo(ACCESS_KEY_ID);
-    assertThat(credentials.getAwsTempCredentials().getSecretAccessKey()).isEqualTo(SECRET_KEY);
-    assertThat(credentials.getAwsTempCredentials().getSessionToken()).isEqualTo(SESSION_TOKEN);
+    assertThat(credentials.getAwsTempCredentials().getAccessKeyId()).isEqualTo(accessKeyId);
+    assertThat(credentials.getAwsTempCredentials().getSecretAccessKey()).isEqualTo(secretKey);
+    assertThat(credentials.getAwsTempCredentials().getSessionToken()).isEqualTo(sessionToken);
   }
 
   @Test
   public void testVendStaticCredentialsStampsConfiguredTtl() {
-    final String ACCESS_KEY_ID = "AKIA_TTL";
-    final Duration TTL = Duration.ofMinutes(7);
+    final String accessKeyId = "AKIA_TTL";
+    final Duration ttl = Duration.ofMinutes(7);
 
-    mockS3AccessKeyCredential(ACCESS_KEY_ID);
-    when(serverProperties.resolveS3StaticAccessKeyConfiguration(ACCESS_KEY_ID))
+    mockS3AccessKeyCredential(accessKeyId);
+    when(serverProperties.resolveS3StaticAccessKeyConfiguration(accessKeyId))
         .thenReturn(
             Optional.of(
-                S3StorageConfig.builder().accessKey(ACCESS_KEY_ID).secretKey("secret").build()));
-    when(serverProperties.getS3StaticCredentialTtl()).thenReturn(TTL);
+                S3StorageConfig.builder().accessKey(accessKeyId).secretKey("secret").build()));
+    when(serverProperties.getS3StaticCredentialTtl()).thenReturn(ttl);
     useStaticAwsCredentialVendor();
 
     long before = System.currentTimeMillis();
@@ -683,17 +693,16 @@ public class CloudCredentialVendorTest {
         vendCredential(STATIC_S3_PATH, Set.of(CredentialContext.Privilege.SELECT));
     long after = System.currentTimeMillis();
 
-    // The soft expiry is stamped as now + the configured TTL, not a hardcoded lifetime.
     assertThat(credentials.getExpirationTime())
-        .isBetween(before + TTL.toMillis(), after + TTL.toMillis());
+        .isBetween(before + ttl.toMillis(), after + ttl.toMillis());
   }
 
   @Test
   public void testVendStaticCredentialsFailsWhenNotConfigured() {
-    final String ACCESS_KEY_ID = "AKIA_UNKNOWN";
+    final String accessKeyId = "AKIA_UNKNOWN";
 
-    mockS3AccessKeyCredential(ACCESS_KEY_ID);
-    when(serverProperties.resolveS3StaticAccessKeyConfiguration(ACCESS_KEY_ID))
+    mockS3AccessKeyCredential(accessKeyId);
+    when(serverProperties.resolveS3StaticAccessKeyConfiguration(accessKeyId))
         .thenReturn(Optional.empty());
     useStaticAwsCredentialVendor();
 
@@ -701,14 +710,13 @@ public class CloudCredentialVendorTest {
             () -> vendCredential(STATIC_S3_PATH, Set.of(CredentialContext.Privilege.SELECT)))
         .isInstanceOf(BaseException.class)
         .hasMessageContaining("No static S3 secret configured for access key id")
-        .hasMessageContaining("s3.static.secretKey." + ACCESS_KEY_ID)
+        .hasMessageContaining("s3.static.secretKey." + accessKeyId)
         .extracting(exception -> ((BaseException) exception).getErrorCode())
         .isEqualTo(ErrorCode.FAILED_PRECONDITION);
   }
 
   @Test
   public void testVendStaticCredentialsFailsWhenCredentialHasNoAccessKeyId() {
-    // Rejected by the API on create/update, so only reachable through a hand-edited row.
     mockS3AccessKeyCredential("");
     useStaticAwsCredentialVendor();
 

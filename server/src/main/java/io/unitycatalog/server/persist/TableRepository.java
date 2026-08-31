@@ -79,6 +79,13 @@ public class TableRepository {
    */
   public record TableStorageLocationInfo(NormalizedURL url, TableType tableType) {}
 
+  /** Detached catalog state needed to load or commit an Iceberg metadata file. */
+  public record IcebergTableState(
+      UUID tableId,
+      DataSourceFormat dataSourceFormat,
+      String metadataLocation,
+      String storageLocation) {}
+
   /**
    * Retrieves the storage location for a table or staging table by its ID, plus the table type.
    * Staging tables are counted as Managed tables too. First attempts to find a regular table with
@@ -118,7 +125,7 @@ public class TableRepository {
               "Neither table nor staging table found with id: " + tableId);
         },
         "Failed to get storage location of table or staging table",
-        /* readOnly = */ true);
+        /* readOnly= */ true);
   }
 
   /**
@@ -137,7 +144,7 @@ public class TableRepository {
           return NormalizedURL.from(dao.getUrl());
         },
         "Failed to get storage location of table " + catalog + "." + schema + "." + table,
-        /* readOnly = */ true);
+        /* readOnly= */ true);
   }
 
   /**
@@ -152,7 +159,7 @@ public class TableRepository {
         sessionFactory,
         session -> findTableOrThrow(session, catalog, schema, table),
         "Failed to find table " + catalog + "." + schema + "." + table,
-        /* readOnly = */ true);
+        /* readOnly= */ true);
   }
 
   /**
@@ -175,7 +182,7 @@ public class TableRepository {
           return NormalizedURL.from(stagingTableDAO.getStagingLocation());
         },
         "Failed to get storage location of staging table",
-        /* readOnly = */ true);
+        /* readOnly= */ true);
   }
 
   /**
@@ -222,7 +229,7 @@ public class TableRepository {
           return Pair.of(schemaInfoDAO.getCatalogId(), schemaId);
         },
         "Failed to get table or staging table by ID",
-        /* readOnly = */ true);
+        /* readOnly= */ true);
   }
 
   public TableInfo getTable(String fullName) {
@@ -246,7 +253,7 @@ public class TableRepository {
           return tableInfo;
         },
         "Failed to get table",
-        /* readOnly = */ true);
+        /* readOnly= */ true);
   }
 
   /**
@@ -272,7 +279,7 @@ public class TableRepository {
           return buildLoadTableResponse(session, dao, Optional.empty(), catalog, schema, table);
         },
         "Failed to load table",
-        /* readOnly = */ true,
+        /* readOnly= */ true,
         Optional.of(TRANSACTION_REPEATABLE_READ));
   }
 
@@ -309,6 +316,12 @@ public class TableRepository {
       // Idempotent replay: the transaction rolled back to a no-op. Return the current table state
       // (a fresh read, since the rolled-back transaction produced no response).
       return loadTableForDelta(catalog, schema, table);
+    } catch (DeltaCommitRepository.CommitContentCheckRequiredException e) {
+      // Version was purged, so the DB couldn't decide: settle it out of the (rolled-back)
+      // transaction by comparing file content. A match is a no-op success (return current state);
+      // a difference throws a conflict.
+      DeltaCommitRepository.verifyContentReplayOrThrowConflict(repositories.getFileOperations(), e);
+      return loadTableForDelta(catalog, schema, table);
     }
   }
 
@@ -323,8 +336,7 @@ public class TableRepository {
         session -> {
           TableInfoDAO dao = findTableOrThrow(session, catalog, schema, table);
           requireDeltaTable(dao, catalog, schema, table);
-          DeltaCommitRepository.lockTableForCommit(
-              session, dao, dao.getId(), Optional.of(tableFullName));
+          RepositoryUtils.lockTableForCommit(session, dao, dao.getId(), Optional.of(tableFullName));
           // assert-table-uuid is stable identity, so check it up front. assert-etag is deferred to
           // after the apply, captured here against pre-apply state: a commit advances the etag, and
           // an idempotent replay must bypass the etag entirely (it throws mid-apply and rolls back
@@ -362,7 +374,7 @@ public class TableRepository {
               session, dao, Optional.of(properties.asMap()), catalog, schema, table);
         },
         "Failed to update table " + tableFullName,
-        /* readOnly = */ false);
+        /* readOnly= */ false);
   }
 
   /**
@@ -564,6 +576,115 @@ public class TableRepository {
     return dao.getUniformIcebergMetadataLocation();
   }
 
+  public IcebergTableState getIcebergTableState(
+      String catalogName, String schemaName, String tableName) {
+    return getIcebergTableState(catalogName, schemaName, tableName, false);
+  }
+
+  public IcebergTableState getNativeIcebergTableState(
+      String catalogName, String schemaName, String tableName) {
+    return getIcebergTableState(catalogName, schemaName, tableName, true);
+  }
+
+  private IcebergTableState getIcebergTableState(
+      String catalogName, String schemaName, String tableName, boolean requireNativeIceberg) {
+    String fullName = catalogName + "." + schemaName + "." + tableName;
+    return TransactionManager.executeWithTransaction(
+        sessionFactory,
+        session -> {
+          TableInfoDAO dao = findTableOrThrow(session, catalogName, schemaName, tableName);
+          DataSourceFormat dataSourceFormat =
+              dao.getDataSourceFormat() == null
+                  ? null
+                  : DataSourceFormat.fromValue(dao.getDataSourceFormat());
+          if (requireNativeIceberg && dataSourceFormat != DataSourceFormat.ICEBERG) {
+            throw new BaseException(
+                ErrorCode.INVALID_ARGUMENT,
+                "Table is not a native Iceberg table and cannot be committed to via the Iceberg"
+                    + " REST catalog: "
+                    + fullName);
+          }
+          return new IcebergTableState(
+              dao.getId(), dataSourceFormat, dao.getUniformIcebergMetadataLocation(), dao.getUrl());
+        },
+        "Failed to load Iceberg table state for " + fullName,
+        /* readOnly= */ true);
+  }
+
+  /**
+   * Commits a native Iceberg table's metadata pointer, UC columns, and UC properties in one locked
+   * transaction. This is the linearization point of an Iceberg REST commit: the metadata file for
+   * {@code newMetadataLocation} is written by the caller before this method runs, and the update
+   * only succeeds when the stored location still matches {@code expectedMetadataLocation}. A
+   * mismatch means a concurrent commit won and surfaces as {@link
+   * ErrorCode#UPDATE_REQUIREMENT_CONFLICT} so the caller can translate it into an Iceberg {@code
+   * CommitFailedException}.
+   *
+   * <p>Only tables with {@link DataSourceFormat#ICEBERG} can be committed to: UniForm-enabled Delta
+   * tables also carry a uniform metadata location, but their Iceberg metadata is derived from the
+   * Delta log and stays read-only through this API.
+   */
+  public void commitIcebergTable(
+      String catalogName,
+      String schemaName,
+      String tableName,
+      String expectedMetadataLocation,
+      NormalizedURL newMetadataLocation,
+      List<ColumnInfo> columns,
+      Map<String, String> tableProperties) {
+    String callerId = IdentityUtils.findPrincipalEmailAddress();
+    String fullName = catalogName + "." + schemaName + "." + tableName;
+    TransactionManager.executeWithTransaction(
+        sessionFactory,
+        session -> {
+          TableInfoDAO dao = findTableOrThrow(session, catalogName, schemaName, tableName);
+          if (!DataSourceFormat.ICEBERG.toString().equals(dao.getDataSourceFormat())) {
+            throw new BaseException(
+                ErrorCode.INVALID_ARGUMENT,
+                "Table is not a native Iceberg table and cannot be committed to via the Iceberg"
+                    + " REST catalog: "
+                    + fullName);
+          }
+          RepositoryUtils.lockTableForCommit(session, dao, dao.getId(), Optional.of(fullName));
+          if (!Objects.equals(dao.getUniformIcebergMetadataLocation(), expectedMetadataLocation)) {
+            throw new BaseException(
+                ErrorCode.UPDATE_REQUIREMENT_CONFLICT,
+                "Metadata location for "
+                    + fullName
+                    + " changed concurrently: expected "
+                    + expectedMetadataLocation
+                    + " but found "
+                    + dao.getUniformIcebergMetadataLocation());
+          }
+          List<ColumnInfoDAO> newColumns = ColumnInfoDAO.fromList(columns);
+          newColumns.forEach(
+              column -> {
+                column.setId(UUID.randomUUID());
+                column.setTable(dao);
+              });
+          dao.getColumns().clear();
+          session.flush();
+          dao.getColumns().addAll(newColumns);
+          dao.setColumnCount(newColumns.size());
+
+          MutablePropertyMap properties = MutablePropertyMap.load(session, dao.getId());
+          // Native Iceberg metadata is the authoritative projection of UC-visible properties. A
+          // commit therefore replaces the complete property set; server-owned properties must not
+          // be persisted here because the next client snapshot would intentionally erase them.
+          properties.removeAll(new ArrayList<>(properties.asMap().keySet()));
+          properties.putAll(tableProperties);
+          properties.flush(session, dao.getId());
+
+          dao.setUniformIcebergMetadataLocation(newMetadataLocation.toString());
+          dao.setUpdatedAt(new Date());
+          dao.setUpdatedBy(callerId);
+          session.merge(dao);
+          return null;
+        },
+        "Failed to update Iceberg metadata location for " + fullName,
+        /* readOnly= */ false);
+  }
+
   private TableInfoDAO findTableOrThrow(
       Session session, String catalogName, String schemaName, String tableName) {
     UUID schemaId =
@@ -578,7 +699,20 @@ public class TableRepository {
   }
 
   public TableInfo createTable(CreateTable createTable) {
-    return createTableImpl(createTable, Optional.empty(), (session, dao, tableInfo) -> tableInfo);
+    requireNonIcebergFormat(createTable, "createTable");
+    return createTableImpl(
+        createTable, Optional.empty(), Optional.empty(), (session, dao, tableInfo) -> tableInfo);
+  }
+
+  public TableInfo createTableForIceberg(CreateTable createTable, NormalizedURL metadataLocation) {
+    if (createTable.getDataSourceFormat() != DataSourceFormat.ICEBERG) {
+      throw new BaseException(ErrorCode.INTERNAL, "createTableForIceberg requires ICEBERG format.");
+    }
+    return createTableImpl(
+        createTable,
+        Optional.empty(),
+        Optional.of(metadataLocation),
+        (session, dao, tableInfo) -> tableInfo);
   }
 
   /**
@@ -594,9 +728,11 @@ public class TableRepository {
    */
   public DeltaLoadTableResponse createTableForDelta(
       CreateTable createTable, Optional<DeltaUniformUtils.UniformIcebergFields> uniformFields) {
+    requireNonIcebergFormat(createTable, "createTableForDelta");
     return createTableImpl(
         createTable,
         uniformFields,
+        Optional.empty(),
         (session, dao, tableInfo) ->
             buildLoadTableResponse(
                 session,
@@ -607,23 +743,38 @@ public class TableRepository {
                 createTable.getName()));
   }
 
+  private static void requireNonIcebergFormat(CreateTable createTable, String caller) {
+    if (createTable.getDataSourceFormat() == DataSourceFormat.ICEBERG) {
+      throw new BaseException(
+          ErrorCode.UNSUPPORTED_TABLE_FORMAT,
+          caller
+              + " cannot create native ICEBERG tables; use the Iceberg REST catalog endpoints"
+              + " instead.");
+    }
+  }
+
   /**
-   * Shared implementation for the two {@code create} entry points. Validates the name, opens a
+   * Shared implementation for the table {@code create} entry points. Validates the name, opens a
    * write transaction, builds the new {@link TableInfoDAO} (row, columns, properties), applies
-   * UniForm Iceberg metadata when {@code uniformFields} is non-empty, persists the DAO, then hands
-   * it and the built {@link TableInfo} to {@code mapper} which picks the return shape each caller
-   * needs. Keeps the create path as a single operation, and pins all DAO setters before {@code
-   * session.persist} so the create lands as a single INSERT.
+   * UniForm or native Iceberg metadata when supplied, persists the DAO, then hands it and the built
+   * {@link TableInfo} to {@code mapper} which picks the return shape each caller needs. Keeps the
+   * create path as a single operation, and pins all DAO setters before {@code session.persist} so
+   * the create lands as a single INSERT.
    */
   private <T> T createTableImpl(
       CreateTable createTable,
       Optional<DeltaUniformUtils.UniformIcebergFields> uniformFields,
+      Optional<NormalizedURL> nativeIcebergMetadataLocation,
       CreateResultMapper<T> mapper) {
     ValidationUtils.validateSqlObjectName(createTable.getName());
     String callerId = IdentityUtils.findPrincipalEmailAddress();
     DataSourceFormat format = createTable.getDataSourceFormat();
+    // `columns` arrives as null (not an empty list) when a client omits the field entirely, so
+    // normalize before streaming. Whether an empty column list is acceptable is a per-table-type
+    // rule decided in the create branches below, and those checks must be the ones that reject the
+    // request so the caller gets INVALID_ARGUMENT instead of an NPE here.
     List<ColumnInfo> columnInfos =
-        createTable.getColumns().stream()
+        Optional.ofNullable(createTable.getColumns()).orElse(List.of()).stream()
             .map(
                 c -> {
                   ColumnUtils.validateTypeJson(c, format);
@@ -669,24 +820,28 @@ public class TableRepository {
           } else if (tableType == TableType.MANAGED) {
             storageLocation = NormalizedURL.from(createTable.getStorageLocation());
             serverProperties.checkManagedTableEnabled();
-            if (createTable.getDataSourceFormat() != DataSourceFormat.DELTA) {
+            if (createTable.getDataSourceFormat() != DataSourceFormat.DELTA
+                && createTable.getDataSourceFormat() != DataSourceFormat.ICEBERG) {
               throw new BaseException(
                   ErrorCode.INVALID_ARGUMENT,
-                  "Managed table creation is only supported for Delta format.");
+                  "Managed table creation is only supported for Delta and Iceberg formats.");
             }
-            // Find and commit staging table with the same staging location
+            // Find and commit the staging table with the same staging location. This single
+            // transaction validates ownership and prevents a staging location from being reused.
             StagingTableDAO stagingTableDAO =
                 repositories
                     .getStagingTableRepository()
                     .commitStagingTable(session, callerId, storageLocation);
             tableUUID = stagingTableDAO.getId();
-            // MANAGED tables (created via either UC REST or Delta REST) must carry UC_TABLE_ID in
-            // their properties, matching the staging UUID. UC has the staging UUID as the source of
-            // truth; a request with a missing or mismatched UC_TABLE_ID gets rejected here
-            // instead of producing an internally-inconsistent UC table that subsequent commits
-            // would fail on.
-            UcManagedDeltaContract.validateTableIdProperty(
-                createTable.getProperties(), tableUUID.toString());
+            if (createTable.getDataSourceFormat() == DataSourceFormat.DELTA) {
+              // MANAGED tables (created via either UC REST or Delta REST) must carry UC_TABLE_ID
+              // in their properties, matching the staging UUID. UC has the staging UUID as the
+              // source of truth; a request with a missing or mismatched UC_TABLE_ID gets rejected
+              // here instead of producing an internally-inconsistent UC table that subsequent
+              // commits would fail on.
+              UcManagedDeltaContract.validateTableIdProperty(
+                  createTable.getProperties(), tableUUID.toString());
+            }
           } else if (tableType == TableType.METRIC_VIEW) {
             storageLocation = null;
             validateMetricView(session, createTable);
@@ -740,6 +895,8 @@ public class TableRepository {
           // UniForm Iceberg fields (when supplied by the Delta create path) are written while the
           // entity is still transient so they're folded into the single INSERT below.
           DeltaUniformUtils.applyToDao(tableInfoDAO, uniformFields);
+          nativeIcebergMetadataLocation.ifPresent(
+              location -> tableInfoDAO.setUniformIcebergMetadataLocation(location.toString()));
           session.persist(tableInfoDAO);
           if (RepositoryUtils.isViewLike(tableType.getValue())) {
             DependencyDAO.DependentType dependentType = DependencyDAO.DependentType.TABLE;
@@ -760,7 +917,7 @@ public class TableRepository {
           return mapper.apply(session, tableInfoDAO, tableInfo);
         },
         "Error creating table: " + fullName,
-        /* readOnly = */ false);
+        /* readOnly= */ false);
   }
 
   @FunctionalInterface
@@ -789,6 +946,16 @@ public class TableRepository {
     if (createTable.getViewDefinition() == null || createTable.getViewDefinition().isEmpty()) {
       throw new BaseException(
           ErrorCode.INVALID_ARGUMENT, "view_definition is required for " + entityLabel);
+    }
+    // A view (plain or metric) exposes its output as columns, and a reader resolves queries against
+    // that column list, so a view with no columns is accepted by the server but unusable by any
+    // engine. Reject it rather than persisting an unreadable entity. Column-level validation beyond
+    // this (that each column matches the view definition) needs the definition semantics and stays
+    // with the engine that owns them. Checked ahead of the dependency-existence lookups below so
+    // this request-shape rule is reported without first spending those on an unusable request.
+    if (Optional.ofNullable(createTable.getColumns()).orElse(List.of()).isEmpty()) {
+      throw new BaseException(
+          ErrorCode.INVALID_ARGUMENT, "columns must contain at least one entry for " + entityLabel);
     }
     // view_dependencies is optional here (shared by view + metric view):
     //  - a plain view may omit it (e.g. the Spark connector sends null when it cannot derive
@@ -895,7 +1062,7 @@ public class TableRepository {
               omitColumns);
         },
         "Failed to list tables",
-        /* readOnly = */ true);
+        /* readOnly= */ true);
   }
 
   public ListTablesResponse listTables(
@@ -949,7 +1116,7 @@ public class TableRepository {
           return deleteTable(session, schemaId, table);
         },
         "Failed to delete table",
-        /* readOnly = */ false);
+        /* readOnly= */ false);
   }
 
   TableInfoDAO deleteTable(Session session, UUID schemaId, String tableName) {
@@ -1013,6 +1180,6 @@ public class TableRepository {
           return null;
         },
         "Failed to rename table " + catalog + "." + schema + "." + table,
-        /* readOnly = */ false);
+        /* readOnly= */ false);
   }
 }

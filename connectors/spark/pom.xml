@@ -379,7 +379,7 @@
       <dependencies>
         <dependency>
           <groupId>io.delta</groupId>
-          <artifactId>delta-spark_${spark.short.version}_${scala.binary.version}</artifactId>
+          <artifactId>${delta.spark.artifactId}</artifactId>
           <version>${delta.version}</version>
           <scope>test</scope>
         </dependency>

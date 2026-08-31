@@ -142,7 +142,7 @@ public class CredentialDAO extends IdentifiableDAO {
         // Only the access key id is stored/returned; secrets live in server configuration.
         credentialInfo.setAwsS3AccessKey(parseCredential(AwsS3AccessKeyResponse.class));
         break;
-        // TODO: support Azure and GCP.
+      // TODO: support Azure and GCP.
       default:
         // Reachable only if a CredentialType is added without extending this switch.
         throw new BaseException(

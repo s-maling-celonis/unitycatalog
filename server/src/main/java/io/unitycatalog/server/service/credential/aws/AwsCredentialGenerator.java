@@ -76,9 +76,9 @@ public interface AwsCredentialGenerator {
     // This is the role ARN to assume for the per-bucket config. Otherwise, the CredentialContext
     // contains a CredentialDAO and it will assume the role ARN in CredentialDAO instead.
     private final String staticAwsRoleArn;
+    // Same region the STS client uses; used when the assumed role ARN does not carry a partition.
+    private final Region awsRegion;
     private final boolean includeKmsPermissions;
-    // Same region the STS client uses; drives the S3 ARN partition in the session policy.
-    private final String awsRegion;
 
     public StsAwsCredentialGenerator(StsClientBuilder builder, S3StorageConfig config) {
       // Get STS region
@@ -111,9 +111,9 @@ public interface AwsCredentialGenerator {
       }
       this.stsClient = stsBuilder.build();
       this.staticAwsRoleArn = config.getAwsRoleArn();
+      this.awsRegion = region;
       this.includeKmsPermissions =
           AwsPolicyGenerator.stsSupportsKmsPolicyConditions(stsEndpointUrl);
-      this.awsRegion = region.id();
     }
 
     private static String effectiveStsEndpoint(S3StorageConfig config) {
@@ -138,7 +138,7 @@ public interface AwsCredentialGenerator {
 
       String awsPolicy =
           AwsPolicyGenerator.generatePolicy(
-              ctx.getPrivileges(), ctx.getLocations(), includeKmsPermissions, awsRegion);
+              ctx.getPrivileges(), ctx.getLocations(), roleArn, awsRegion, includeKmsPermissions);
       String roleSessionName = "uc-%s".formatted(UUID.randomUUID());
 
       AssumeRoleRequest.Builder roleRequestBuilder =

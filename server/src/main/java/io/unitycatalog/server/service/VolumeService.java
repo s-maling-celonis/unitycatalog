@@ -9,7 +9,6 @@ import static io.unitycatalog.server.model.SecurableType.VOLUME;
 import com.linecorp.armeria.common.HttpResponse;
 import com.linecorp.armeria.common.HttpStatus;
 import com.linecorp.armeria.server.annotation.Delete;
-import com.linecorp.armeria.server.annotation.ExceptionHandler;
 import com.linecorp.armeria.server.annotation.Get;
 import com.linecorp.armeria.server.annotation.Param;
 import com.linecorp.armeria.server.annotation.Patch;
@@ -20,7 +19,6 @@ import io.unitycatalog.server.auth.annotation.AuthorizeKey;
 import io.unitycatalog.server.auth.annotation.AuthorizeResourceKey;
 import io.unitycatalog.server.auth.annotation.AuthorizeResourceKeys;
 import io.unitycatalog.server.auth.annotation.ResponseAuthorizeFilter;
-import io.unitycatalog.server.exception.GlobalExceptionHandler;
 import io.unitycatalog.server.model.CreateVolumeRequestContent;
 import io.unitycatalog.server.model.ListVolumesResponseContent;
 import io.unitycatalog.server.model.SchemaInfo;
@@ -36,8 +34,7 @@ import io.unitycatalog.server.utils.ServerProperties;
 import java.util.Optional;
 import lombok.SneakyThrows;
 
-@ExceptionHandler(GlobalExceptionHandler.class)
-public class VolumeService extends AuthorizedService {
+public class VolumeService extends AuthorizedService implements UnityCatalogRestService {
   private final VolumeRepository volumeRepository;
   private final SchemaRepository schemaRepository;
   private final CatalogRepository catalogRepository;

@@ -4,7 +4,6 @@ import io.unitycatalog.server.exception.BaseException;
 import io.unitycatalog.server.exception.ErrorCode;
 import io.unitycatalog.server.model.AwsIamRoleRequest;
 import io.unitycatalog.server.model.AwsIamRoleResponse;
-import io.unitycatalog.server.model.AwsS3AccessKeyResponse;
 import io.unitycatalog.server.persist.dao.CredentialDAO;
 import io.unitycatalog.server.service.credential.CredentialContext;
 import io.unitycatalog.server.utils.NormalizedURL;
@@ -31,9 +30,9 @@ import software.amazon.awssdk.services.sts.model.Credentials;
  *       client assumes that role (see {@link AwsIamRoleRequest} / {@link AwsIamRoleResponse}).
  *   <li><b>External Location + static access key:</b> When the credential is {@link
  *       CredentialDAO.CredentialType#S3_ACCESS_KEY}, UC reads the secret configured under {@code
- *       s3.static.secretKey.<accessKeyId>} for that credential's {@link
- *       AwsS3AccessKeyResponse#getAccessKeyId()}. Soft expiry comes from {@code
- *       s3.static.credentialTtlSeconds}. Secrets are never stored in the catalog database.
+ *       s3.static.secretKey.<accessKeyId>} for that credential's access key id. Soft expiry comes
+ *       from {@code s3.static.credentialTtlSeconds}. Secrets are never stored in the catalog
+ *       database.
  *   <li><b>Per-Bucket Configuration:</b> Legacy mode using per-bucket S3 configurations in
  *       server.properties when no external location covers the path.
  * </ol>

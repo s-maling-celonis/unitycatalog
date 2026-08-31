@@ -7,7 +7,6 @@ import static io.unitycatalog.server.service.credential.CredentialContext.Privil
 import static io.unitycatalog.server.service.credential.CredentialContext.Privilege.UPDATE;
 
 import com.linecorp.armeria.common.HttpResponse;
-import com.linecorp.armeria.server.annotation.ExceptionHandler;
 import com.linecorp.armeria.server.annotation.Post;
 import io.unitycatalog.server.auth.annotation.AuthorizeExpression;
 import io.unitycatalog.server.auth.annotation.AuthorizeKey;
@@ -15,7 +14,6 @@ import io.unitycatalog.server.auth.annotation.AuthorizeResourceKey;
 import io.unitycatalog.server.auth.annotation.AuthorizeResourceKeys;
 import io.unitycatalog.server.exception.BaseException;
 import io.unitycatalog.server.exception.ErrorCode;
-import io.unitycatalog.server.exception.GlobalExceptionHandler;
 import io.unitycatalog.server.model.GenerateTemporaryModelVersionCredential;
 import io.unitycatalog.server.model.ModelVersionInfo;
 import io.unitycatalog.server.model.ModelVersionOperation;
@@ -28,8 +26,7 @@ import io.unitycatalog.server.service.credential.StorageCredentialVendor;
 import io.unitycatalog.server.utils.NormalizedURL;
 import java.util.Set;
 
-@ExceptionHandler(GlobalExceptionHandler.class)
-public class TemporaryModelVersionCredentialsService {
+public class TemporaryModelVersionCredentialsService implements UnityCatalogRestService {
   private final ModelRepository modelRepository;
   private final StorageCredentialVendor storageCredentialVendor;
 
@@ -102,10 +99,11 @@ public class TemporaryModelVersionCredentialsService {
     return switch (modelVersionOperation) {
       case READ_MODEL_VERSION -> Set.of(SELECT);
       case READ_WRITE_MODEL_VERSION -> Set.of(SELECT, UPDATE);
-      case UNKNOWN_MODEL_VERSION_OPERATION -> throw new BaseException(
-          ErrorCode.INVALID_ARGUMENT,
-          "Unknown operation in the request: "
-              + ModelVersionOperation.UNKNOWN_MODEL_VERSION_OPERATION);
+      case UNKNOWN_MODEL_VERSION_OPERATION ->
+          throw new BaseException(
+              ErrorCode.INVALID_ARGUMENT,
+              "Unknown operation in the request: "
+                  + ModelVersionOperation.UNKNOWN_MODEL_VERSION_OPERATION);
     };
   }
 }

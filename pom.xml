@@ -77,6 +77,8 @@
          would apply to every module and break test code that needs Java 17. -->
     <spark.test.release>11</spark.test.release>
     <delta.version>4.3.1</delta.version>
+    <!-- Spark 4.0/4.1 publish delta-spark_<short>_<scala>; Spark 4.2+ uses unsuffixed delta-spark_<scala>. -->
+    <delta.spark.artifactId>delta-spark_${spark.short.version}_${scala.binary.version}</delta.spark.artifactId>
     <hadoop.version>3.4.2</hadoop.version>
     <iceberg.version>1.11.0</iceberg.version>
     <jackson.version>2.17.0</jackson.version>
@@ -376,9 +378,9 @@
           <version>${spotless.version}</version>
           <configuration>
             <java>
-              <!-- Oldest google-java-format Spotless will run on JVM 17. Newer lines reformat
-                   more of the tree for no rule benefit; sbt's 1.7 could not parse text blocks
-                   or switch expressions and silently skipped those files. -->
+              <!-- Match the Java 17 formatter line used by the Celonis build before its Maven
+                   migration. Older lines cannot parse all current Java syntax or produce
+                   indentation that agrees with the repository Checkstyle rules. -->
               <!-- Spotless' googleJavaFormat step does not touch imports, but the formatter's
                    own CLI (and sbt-java-formatter before it) sorts and prunes them. -->
               <removeUnusedImports/>
@@ -386,7 +388,7 @@
                 <order>\#,</order>
               </importOrder>
               <googleJavaFormat>
-                <version>1.10.0</version>
+                <version>1.28.0</version>
                 <style>GOOGLE</style>
               </googleJavaFormat>
               <includes>
@@ -592,6 +594,7 @@
         <spark.shim.dir>scala-shims/spark-4.2</spark.shim.dir>
         <spark.shim.shared.dir>scala-shims/spark-4.1-4.2</spark.shim.shared.dir>
         <spark.test.release>17</spark.test.release>
+        <delta.spark.artifactId>delta-spark_${scala.binary.version}</delta.spark.artifactId>
       </properties>
     </profile>
     <profile>
@@ -609,6 +612,7 @@
         <spark.shim.dir>scala-shims/spark-4.2</spark.shim.dir>
         <spark.shim.shared.dir>scala-shims/spark-4.1-4.2</spark.shim.shared.dir>
         <spark.test.release>17</spark.test.release>
+        <delta.spark.artifactId>delta-spark_${scala.binary.version}</delta.spark.artifactId>
       </properties>
     </profile>
     <profile>
