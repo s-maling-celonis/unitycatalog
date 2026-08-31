@@ -105,14 +105,25 @@ public interface AwsCredentialGenerator {
       }
 
       StsClientBuilder stsBuilder = builder.region(region).credentialsProvider(credentialsProvider);
-      if (config.getEndpointUrl() != null && !config.getEndpointUrl().isEmpty()) {
-        stsBuilder.endpointOverride(URI.create(config.getEndpointUrl()));
+      String stsEndpointUrl = effectiveStsEndpoint(config);
+      if (stsEndpointUrl != null) {
+        stsBuilder.endpointOverride(URI.create(stsEndpointUrl));
       }
       this.stsClient = stsBuilder.build();
       this.staticAwsRoleArn = config.getAwsRoleArn();
       this.includeKmsPermissions =
-          AwsPolicyGenerator.stsSupportsKmsPolicyConditions(config.getEndpointUrl());
+          AwsPolicyGenerator.stsSupportsKmsPolicyConditions(stsEndpointUrl);
       this.awsRegion = region.id();
+    }
+
+    private static String effectiveStsEndpoint(S3StorageConfig config) {
+      if (config.getStsEndpointUrl() != null && !config.getStsEndpointUrl().isEmpty()) {
+        return config.getStsEndpointUrl();
+      }
+      if (config.getEndpointUrl() != null && !config.getEndpointUrl().isEmpty()) {
+        return config.getEndpointUrl();
+      }
+      return null;
     }
 
     @Override

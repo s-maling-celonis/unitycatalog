@@ -20,9 +20,14 @@ import software.amazon.awssdk.regions.RegionMetadata;
 
 public class AwsPolicyGenerator {
 
-  static final List<String> SELECT_ACTIONS = List.of("s3:GetO*");
+  static final List<String> SELECT_ACTIONS = List.of("s3:GetObject");
   static final List<String> UPDATE_ACTIONS =
-      List.of("s3:GetO*", "s3:PutO*", "s3:DeleteO*", "s3:*Multipart*");
+      List.of(
+          "s3:GetObject",
+          "s3:PutObject",
+          "s3:DeleteObject",
+          "s3:AbortMultipartUpload",
+          "s3:ListMultipartUploadParts");
 
   // Reading an object encrypted with SSE-KMS requires kms:Decrypt, and writing one additionally
   // requires kms:GenerateDataKey*. Without these the vended session credentials can't touch a
