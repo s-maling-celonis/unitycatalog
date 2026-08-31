@@ -246,6 +246,12 @@ set should match the pre-reconciliation `develop` set except for explicitly
 approved additions/removals. A `disabled_` filename does not disable a GitHub
 workflow.
 
+When restoring Celonis-only files onto the upstream tree, derive the path list
+from a tree comparison instead of writing it by hand. Hand-written lists miss
+files that sit outside the directories you edited, in particular build-output
+paths kept tracked by `.gitignore` negation rules. Step 8 gates this, but
+recovering there costs a rebuild of the landing commit.
+
 Keep the group → old SHAs → new SHA mapping for the PR.
 
 ### Step 8: Validate
@@ -256,7 +262,17 @@ Run all validation inside the `-after` worktree:
    again to prove the second run is clean.
 2. Compile and run targeted tests for changed modules.
 3. Run the full suite when practical.
-4. Compare the complete workflow file set before and after rebuilding.
+4. Compare the complete set of tracked paths, not just the workflow file set:
+
+   ```bash
+   comm -23 <(git ls-tree -r --name-only "$BEFORE_SHA" | sort) \
+            <(git ls-tree -r --name-only "$AFTER_SHA" | sort)
+   ```
+
+   Every path printed must be restored, or recorded in the PR as an approved
+   removal, before landing. Treat non-empty output as a failure rather than a
+   list to skim; working through it partially is the failure mode this check
+   exists to catch.
 5. Run `mvn spotless:apply`, review any resulting changes, and require a clean
    `mvn spotless:check`. If final validation finds formatting drift, commit the
    fix and record which replay group introduced it.
