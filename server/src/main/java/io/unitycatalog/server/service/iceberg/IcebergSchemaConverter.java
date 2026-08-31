@@ -20,8 +20,8 @@ import org.apache.iceberg.types.Types;
  * Iceberg REST catalog are browsable through the UC API and UI. The Iceberg metadata file remains
  * the source of truth for Iceberg clients; this conversion only feeds UC's own column listing.
  *
- * <p>{@code type_json} is rendered in the Spark StructField JSON shape that UC stores for all
- * other formats (see {@code ColumnUtils.validateTypeJson}).
+ * <p>{@code type_json} is rendered in the Spark StructField JSON shape that UC stores for all other
+ * formats (see {@code ColumnUtils.validateTypeJson}).
  */
 public final class IcebergSchemaConverter {
 
@@ -158,7 +158,8 @@ public final class IcebergSchemaConverter {
       case STRUCT -> ColumnTypeName.STRUCT;
       case LIST -> ColumnTypeName.ARRAY;
       case MAP -> ColumnTypeName.MAP;
-      // Iceberg has no standard GEOMETRY or GEOGRAPHY primitive type today. Keep this rejection in
+      // Iceberg has no standard GEOMETRY or GEOGRAPHY primitive type today. Keep this rejection
+      // in
       // sync with primitiveTypeName until Iceberg defines interoperable type IDs for them.
       default ->
           throw new BadRequestException(

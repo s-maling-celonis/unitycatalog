@@ -234,6 +234,13 @@ Replay each approved group in original dependency/topological order as one
 squashed commit. Its message must list all replaced SHAs and PRs. If a new
 semantic conflict appears, return to Step 5.
 
+Check and fix formatting throughout the rebuild, not only at final validation.
+After replaying or adapting each group, run the formatter for every affected
+module (currently `mvn spotless:apply`), review and include only formatting
+changes attributable to that group, then run `mvn spotless:check`. This keeps
+formatting fixes with the logical commit that introduced the code and prevents
+format drift from accumulating across groups.
+
 Reconcile Celonis workflow deletions as well as additions. The final workflow
 set should match the pre-reconciliation `develop` set except for explicitly
 approved additions/removals. A `disabled_` filename does not disable a GitHub
@@ -250,6 +257,9 @@ Run all validation inside the `-after` worktree:
 2. Compile and run targeted tests for changed modules.
 3. Run the full suite when practical.
 4. Compare the complete workflow file set before and after rebuilding.
+5. Run `mvn spotless:apply`, review any resulting changes, and require a clean
+   `mvn spotless:check`. If final validation finds formatting drift, commit the
+   fix and record which replay group introduced it.
 
 Repository-specific traps to verify:
 

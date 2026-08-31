@@ -378,9 +378,9 @@
           <version>${spotless.version}</version>
           <configuration>
             <java>
-              <!-- Oldest google-java-format Spotless will run on JVM 17. Newer lines reformat
-                   more of the tree for no rule benefit; sbt's 1.7 could not parse text blocks
-                   or switch expressions and silently skipped those files. -->
+              <!-- Match the Java 17 formatter line used by the Celonis build before its Maven
+                   migration. Older lines cannot parse all current Java syntax or produce
+                   indentation that agrees with the repository Checkstyle rules. -->
               <!-- Spotless' googleJavaFormat step does not touch imports, but the formatter's
                    own CLI (and sbt-java-formatter before it) sorts and prunes them. -->
               <removeUnusedImports/>
@@ -388,7 +388,7 @@
                 <order>\#,</order>
               </importOrder>
               <googleJavaFormat>
-                <version>1.10.0</version>
+                <version>1.28.0</version>
                 <style>GOOGLE</style>
               </googleJavaFormat>
               <includes>

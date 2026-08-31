@@ -59,7 +59,7 @@ public class CredentialRepository {
           return dao.toCredentialInfo(getAwsS3MasterRoleArn());
         },
         "Failed to add storage credential",
-        /* readOnly = */ false);
+        /* readOnly= */ false);
   }
 
   public CredentialInfo getCredential(String name) {
@@ -74,7 +74,7 @@ public class CredentialRepository {
           return dao.toCredentialInfo(getAwsS3MasterRoleArn());
         },
         "Failed to get storage credential",
-        /* readOnly = */ true);
+        /* readOnly= */ true);
   }
 
   protected String getCredentialName(Session session, UUID id) {
@@ -99,8 +99,7 @@ public class CredentialRepository {
         sessionFactory,
         session -> {
           List<CredentialDAO> daoList =
-              LISTING_HELPER.listEntity(
-                  session, maxResults, pageToken, /* parentEntityId = */ null);
+              LISTING_HELPER.listEntity(session, maxResults, pageToken, /* parentEntityId= */ null);
           String nextPageToken = LISTING_HELPER.getNextPageToken(daoList, maxResults);
           List<CredentialInfo> results = new ArrayList<>();
           for (CredentialDAO dao : daoList) {
@@ -114,7 +113,7 @@ public class CredentialRepository {
           return new ListCredentialsResponse().credentials(results).nextPageToken(nextPageToken);
         },
         "Failed to list storage credentials",
-        /* readOnly = */ true);
+        /* readOnly= */ true);
   }
 
   public CredentialInfo updateCredential(String name, UpdateCredentialRequest updateCredential) {
@@ -163,7 +162,7 @@ public class CredentialRepository {
           return existingCredential.toCredentialInfo(getAwsS3MasterRoleArn());
         },
         "Failed to update storage credential",
-        /* readOnly = */ false);
+        /* readOnly= */ false);
   }
 
   public UUID deleteCredential(String name, boolean force) {
@@ -192,7 +191,7 @@ public class CredentialRepository {
           return existingCredential.getId();
         },
         "Failed to delete credential",
-        /* readOnly = */ false);
+        /* readOnly= */ false);
   }
 
   protected ExternalLocationDAO getExternalLocationDAOUsingCredential(

@@ -327,7 +327,7 @@ public class DeltaCommitRepository {
           return null;
         },
         "Error committing to table: " + commit.getTableId(),
-        /* readOnly = */ false);
+        /* readOnly= */ false);
   }
 
   /**

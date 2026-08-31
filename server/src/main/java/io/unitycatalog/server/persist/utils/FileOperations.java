@@ -112,11 +112,11 @@ public class FileOperations {
   }
 
   /** Returns a FileIO configured for the requested storage privileges. */
-  public FileIO getFileIO(
-      NormalizedURL path, Set<CredentialContext.Privilege> privileges) {
+  public FileIO getFileIO(NormalizedURL path, Set<CredentialContext.Privilege> privileges) {
     return switch (UriScheme.fromURI(path.toUri())) {
       // Local paths are served by SimpleLocalFileIO (backed by java.nio + iceberg-core). We
-      // deliberately do NOT route these through ResolvingFileIO: it resolves the file:// scheme to
+      // deliberately do NOT route these through ResolvingFileIO: it resolves the file:// scheme
+      // to
       // Iceberg's HadoopFileIO, which requires hadoop-client-runtime on the classpath. The server
       // only depends on hadoop-client-api, and SimpleLocalFileIO covers the local read and
       // directory operations we need without that heavy runtime dependency.
@@ -163,8 +163,7 @@ public class FileOperations {
       // scheme, so fail loudly rather than silently returning an empty (credential-less) config
       // that would later surface as an opaque access-denied error.
       throw new BaseException(
-          ErrorCode.INTERNAL,
-          "No recognized storage credential was vended for location: " + path);
+          ErrorCode.INTERNAL, "No recognized storage credential was vended for location: " + path);
     }
   }
 
