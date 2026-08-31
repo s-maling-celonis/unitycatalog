@@ -19,7 +19,7 @@
 
 package org.apache.spark.sql.catalyst.parser.extensions
 
-import io.unitycatalog.spark.ResolvePathCredentials
+import io.unitycatalog.spark.{ResolvePathCredentials, ResolveUcViewDdlInParser}
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.{FunctionIdentifier, TableIdentifier}
@@ -34,14 +34,20 @@ class UCSparkSqlExtensionsParser(spark: SparkSession, delegate: ParserInterface)
 
   protected def delegateParser: ParserInterface = delegate
 
+  private def applyUcExtensions(plan: LogicalPlan): LogicalPlan = {
+    // Route UC view DDL to REST before ResolveSessionCatalog rejects catalogs without ViewCatalog.
+    ResolveUcViewDdlInParser(spark, plan)
+  }
+
   // Spark 4.1's HiveSessionStateBuilder omits extension-provided hint rules. Hive Thrift Server
   // therefore needs this early fallback before ResolveSQLOnFile probes a cloud path. The rule is
   // idempotent, but keep parser-time catalog I/O out of sessions whose analyzer runs hint rules.
   protected def applyParserExtensions(plan: LogicalPlan): LogicalPlan =
     if (spark.sessionState.conf.getConf(StaticSQLConf.CATALOG_IMPLEMENTATION) == "hive") {
-      ResolvePathCredentials(spark, resolveDeltaPathRelations = true).apply(plan)
+      ResolvePathCredentials(spark, resolveDeltaPathRelations = true)
+        .apply(applyUcExtensions(plan))
     } else {
-      plan
+      applyUcExtensions(plan)
     }
 
   override def parseDataType(sqlText: String): DataType = delegate.parseDataType(sqlText)
