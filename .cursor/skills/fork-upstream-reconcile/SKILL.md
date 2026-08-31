@@ -282,7 +282,22 @@ Run all validation inside the `-after` worktree:
    removal, before landing. Treat non-empty output as a failure rather than a
    list to skim; working through it partially is the failure mode this check
    exists to catch.
-5. Run `mvn spotless:apply`, review any resulting changes, and require a clean
+5. Compare in the opposite direction too. Trees the fork deliberately deleted
+   return silently, because they arrive with the upstream tree instead of
+   through a replay group:
+
+   ```bash
+   comm -12 <(comm -13 /tmp/before.txt /tmp/after.txt) \
+            <(git ls-tree -r --name-only "$PREV_UP_SHA" | sort)
+   ```
+
+   `PREV_UP_SHA` is the upstream base of the previous reconciliation. Every
+   path printed existed upstream before, was removed by the fork, and is now
+   back; re-delete it or record an explicit re-adoption. Verify each drop group
+   by asserting its paths are absent from the rebuilt tree. Do not trust a
+   Step 3 note claiming a deletion is no longer needed because upstream already
+   dropped the tree — confirm that against `UP` with `git ls-tree`.
+6. Run `mvn spotless:apply`, review any resulting changes, and require a clean
    `mvn spotless:check`. If final validation finds formatting drift, commit the
    fix and record which replay group introduced it.
 
