@@ -21,7 +21,7 @@ import java.util.Collections;
 import java.util.Set;
 
 @ExceptionHandler(GlobalExceptionHandler.class)
-public class TemporaryPathCredentialsService {
+public class TemporaryPathCredentialsService implements UnityCatalogRestService {
   private final StorageCredentialVendor storageCredentialVendor;
 
   public TemporaryPathCredentialsService(StorageCredentialVendor storageCredentialVendor) {
