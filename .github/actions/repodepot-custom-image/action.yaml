@@ -1,0 +1,427 @@
+name: Create Image
+description: Custom build, test, publish, and image creation for Unity Catalog Repo Depot components.
+
+inputs:
+  working-directory:
+    description: Relative path under $GITHUB_WORKSPACE to use when running commands.
+    required: true
+  image-registry:
+    description: The name of the container registry to use when creating an image.
+    required: true
+  image-name:
+    description: The name of the image to use when creating a image.
+    required: true
+  image-tag:
+    description: The name of the image tag to use when creating a image.
+    required: true
+  github-token:
+    description: The token to use when accessing Celonis resources.
+    required: true
+  sca-tag-ref:
+    required: true
+    default: ''
+    description: 'string: Tag to reference for SCA scans'
+  srcclr-api-token:
+    required: true
+    description: 'string: The API token for Sourceclear, typically set in a repository secret called SRCCLR_API_TOKEN'
+  secrets:
+    description: JSON encoded repository secrets
+    required: true
+  vars:
+    description: JSON encoded repository variables
+    required: true
+  is-dev-build:
+    description: Boolean indicating if the build is a development build
+    required: true
+  release-branch:
+    description: The name of the release branch to build from
+    required: false
+  relative-source-location:
+    description: The relative source location of a component in the GitHub repository.
+    required: false
+  component-name:
+    description: The name of the component
+    required: true
+  sonar-project-key:
+    description: SonarQube project key (from sonarqube.org/project-key annotation)
+    required: true
+  sonar-scan-blocking:
+    description: When true, a SonarQube quality gate failure fails the job
+    required: true
+  sonar-token:
+    description: SonarQube authentication token
+    required: true
+
+outputs:
+  build-status:
+    description: 'Indicates whether the build was successful (type: boolean, values: true/false).'
+    value: ${{ steps.build.outputs.status }}
+  test-status:
+    description: 'Indicates whether the testing was successful (type: boolean, values: true/false).'
+    value: ${{ steps.test.outputs.status }}
+  image-metadata:
+    description: 'JSON metadata output from the docker image creation'
+    value: ${{ steps.create-image.outputs.metadata || steps.empty-image-metadata.outputs.metadata }}
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve component
+      id: component
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        case "${{ inputs.component-name }}" in
+          unity-catalog-server)
+            echo "maven-pl=server"
+            echo "project-path=server"
+            echo "needs-image=true"
+            echo "docker-context=."
+            ;;
+          unitycatalog-client)
+            echo "maven-pl=clients/java"
+            echo "project-path=clients/java"
+            echo "publishes-maven=true"
+            ;;
+          unitycatalog-controlapi)
+            echo "maven-pl=control-api"
+            echo "project-path=control-api"
+            echo "publishes-maven=true"
+            ;;
+          unitycatalog-hadoop)
+            echo "maven-pl=connectors/hadoop"
+            echo "project-path=connectors/hadoop"
+            echo "publishes-maven=true"
+            ;;
+          unitycatalog-spark)
+            echo "maven-pl=connectors/spark"
+            echo "project-path=connectors/spark"
+            echo "publishes-maven=true"
+            ;;
+          *)
+            echo "Unknown component: ${{ inputs.component-name }}" >&2
+            exit 1
+            ;;
+        esac >> "$GITHUB_OUTPUT"
+
+    - name: Prepare PREBUILT staging home
+      if: inputs.component-name == 'unity-catalog-server'
+      shell: bash
+      run: |
+        UC_HOME="${GITHUB_WORKSPACE}/${{ inputs.working-directory }}/build/ci-staging/home"
+        echo "UC_HOME=$UC_HOME" >> "$GITHUB_ENV"
+        echo "HOME=$UC_HOME" >> "$GITHUB_ENV"
+        # HOME only sets the path the classpath files are rewritten to. The JVM takes
+        # user.home from the passwd entry, so Maven still resolves into the runner's
+        # real ~/.m2; do not create an empty .m2 here or it shadows that cache.
+        mkdir -p "$UC_HOME"
+
+    - name: Setup Java
+      uses: celonis/core-setup-java-action@v4.0.2
+      with:
+        use-cache: 'false'
+        maven-version: '3.9.16'
+
+    - name: Build
+      id: build
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        MAVEN_OPTS: -XX:+TieredCompilation -XX:TieredStopAtLevel=1 -XX:+UseG1GC -Xmx16g -XX:-UseGCOverheadLimit
+        REPO_DEPOT_VERSION: ${{ inputs.image-tag }}
+      run: |
+        set -euo pipefail
+
+        build_maven_module() {
+          local maven_pl="$1"
+          mvn -B -pl "$maven_pl" -am package -DskipTests
+        }
+
+        case "${{ inputs.component-name }}" in
+          unity-catalog-server)
+            # Compiled by the Test step's verify run.
+            ;;
+          unitycatalog-client|unitycatalog-controlapi|unitycatalog-hadoop|unitycatalog-spark)
+            build_maven_module "${{ steps.component.outputs.maven-pl }}"
+            ;;
+          *)
+            echo "Unsupported component: ${{ inputs.component-name }}" >&2
+            exit 1
+            ;;
+        esac
+
+        echo "status=true" >> "$GITHUB_OUTPUT"
+
+    - name: Setup Maven publish credentials
+      if: steps.component.outputs.publishes-maven == 'true'
+      uses: actions/setup-java@v4
+      with:
+        distribution: zulu
+        java-version: '21'
+        server-id: github
+        server-username: REPO_DEPOT_MAVEN_USERNAME
+        server-password: REPO_DEPOT_MAVEN_PASSWORD
+
+    - name: Publish Maven artifact
+      if: steps.component.outputs.publishes-maven == 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        REPO_DEPOT_MAVEN_USERNAME: celobot
+        REPO_DEPOT_MAVEN_PASSWORD: ${{ inputs.github-token }}
+        REPO_DEPOT_VERSION: ${{ inputs.image-tag }}
+        PROJECT_PATH: ${{ steps.component.outputs.project-path }}
+      run: |
+        set -euo pipefail
+
+        final_name="$(mvn -q -f "$PROJECT_PATH/pom.xml" -DforceStdout help:evaluate -Dexpression=project.build.finalName)"
+        project_version="$(mvn -q -f "$PROJECT_PATH/pom.xml" -DforceStdout help:evaluate -Dexpression=project.version)"
+        jar_file="$PROJECT_PATH/target/${final_name}.jar"
+        if [ ! -f "$jar_file" ]; then
+          echo "Jar not found: $jar_file" >&2
+          ls -la "$PROJECT_PATH/target" >&2 || true
+          exit 1
+        fi
+
+        # Spark already writes a flattened, suffix-rewritten POM at package.
+        # Other modules need flatten so we do not publish a parent-relative pom.xml.
+        if [ -f "$PROJECT_PATH/target/published-pom.xml" ]; then
+          src_pom="$PROJECT_PATH/target/published-pom.xml"
+        else
+          mvn -q -f "$PROJECT_PATH/pom.xml" flatten:flatten -Dflatten.updatePomFile=false
+          src_pom="$PROJECT_PATH/.flattened-pom.xml"
+        fi
+        if [ ! -f "$src_pom" ]; then
+          echo "Publish POM not found: $src_pom" >&2
+          exit 1
+        fi
+
+        pom_file="$PROJECT_PATH/target/github-packages.pom"
+        cp "$src_pom" "$pom_file"
+        # GitHub Packages coordinate is cloud.celonis; source POMs stay io.unitycatalog.
+        sed -i 's#<groupId>io.unitycatalog</groupId>#<groupId>cloud.celonis</groupId>#g' "$pom_file"
+        # sbt set ThisBuild / version before makePom, so UC inter-module deps used the
+        # Repo Depot tag. Flatten still emits the SNAPSHOT; rewrite every copy of it.
+        version_pattern="${project_version//./\\.}"
+        sed -i "s|<version>${version_pattern}</version>|<version>${REPO_DEPOT_VERSION}</version>|g" "$pom_file"
+
+        echo "Publishing ${jar_file} with ${pom_file} at version ${REPO_DEPOT_VERSION}"
+        mvn deploy:deploy-file -e \
+          -Dfile="$jar_file" \
+          -DrepositoryId=github \
+          -Durl=https://maven.pkg.github.com/celonis/maven-internal/ \
+          -DpomFile="$pom_file"
+
+    - name: Test
+      id: test
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        CI: true
+        REPO_DEPOT_VERSION: ${{ inputs.image-tag }}
+        # Maven heap for RepoDepot test/package (tuned for ~8GB runners; bump if OOM on larger runners).
+        MAVEN_OPTS: -Xmx6g
+      run: |
+        set -euo pipefail
+        df -h
+
+        case "${{ inputs.component-name }}" in
+          unity-catalog-server)
+            mvn -B -pl server,examples/cli -am verify
+            ;;
+          unitycatalog-client|unitycatalog-controlapi)
+            mvn -B -pl "${{ steps.component.outputs.maven-pl }}" -am test
+            ;;
+          unitycatalog-hadoop)
+            mvn -B -pl server-shaded,connectors/hadoop -am test
+            ;;
+          unitycatalog-spark)
+            mvn -B -DsparkVersion=4.1.0 -DdeltaVersion=4.3.1 -pl connectors/spark -am test
+            ;;
+          *)
+            echo "Unsupported component: ${{ inputs.component-name }}" >&2
+            exit 1
+            ;;
+        esac
+
+        echo "status=true" >> "$GITHUB_OUTPUT"
+
+    - name: Stage PREBUILT server artifacts for Docker
+      if: steps.component.outputs.needs-image == 'true' && inputs.component-name == 'unity-catalog-server'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        set -euo pipefail
+        # .dockerignore excludes server/target/ and examples/cli/target/; stage under build/.
+        rm -rf build/ci-staging/prebuilt/server/target \
+          build/ci-staging/prebuilt/examples/cli/target \
+          build/ci-staging/prebuilt/control-api/target \
+          build/ci-staging/prebuilt/home
+        mkdir -p build/ci-staging/prebuilt/server \
+          build/ci-staging/prebuilt/examples/cli \
+          build/ci-staging/prebuilt/control-api \
+          build/ci-staging/prebuilt/home
+        cp -a server/target build/ci-staging/prebuilt/server/
+        cp -a examples/cli/target build/ci-staging/prebuilt/examples/cli/
+        cp -a control-api/target build/ci-staging/prebuilt/control-api/
+
+        # Copy only jars that the runtime classpaths reference so the PREBUILT
+        # image does not ship the test cache.
+        # Match on repository/, not .m2/: an empty .m2 would otherwise win and every
+        # classpath entry would look missing.
+        CACHE_SRC=""
+        for candidate in "${HOME}/.m2" /home/runner/.m2; do
+          if [ -d "$candidate/repository" ]; then
+            CACHE_SRC="$candidate"
+            break
+          fi
+        done
+        if [ -z "$CACHE_SRC" ]; then
+          echo "No Maven repository under ${HOME}/.m2 or /home/runner/.m2" >&2
+          exit 1
+        fi
+        slim_cache="build/ci-staging/prebuilt/home/.m2"
+        mkdir -p "$slim_cache"
+        for classpath in \
+          build/ci-staging/prebuilt/server/target/classpath \
+          build/ci-staging/prebuilt/examples/cli/target/classpath; do
+          if [ ! -f "$classpath" ]; then
+            echo "Missing $classpath" >&2
+            exit 1
+          fi
+          sed -i "s|/home/runner/.m2|${HOME}/.m2|g" "$classpath"
+          IFS=':' read -r -a entries < "$classpath" || true
+          if [ "${#entries[@]}" -eq 0 ]; then
+            echo "Empty classpath: $classpath" >&2
+            exit 1
+          fi
+          for entry in "${entries[@]}"; do
+            case "$entry" in
+              "${HOME}/.m2/"*)
+                rel="${entry#${HOME}/.m2/}"
+                ;;
+              /home/runner/.m2/*)
+                rel="${entry#/home/runner/.m2/}"
+                ;;
+              *)
+                continue
+                ;;
+            esac
+            src="$CACHE_SRC/$rel"
+            dest="$slim_cache/$rel"
+            if [ ! -e "$src" ]; then
+              echo "Classpath entry missing from cache: $src" >&2
+              exit 1
+            fi
+            mkdir -p "$(dirname "$dest")"
+            if [ ! -e "$dest" ]; then
+              cp -a "$src" "$dest"
+            fi
+          done
+        done
+        echo "Maven cache before/after slimming:"
+        du -sh "$CACHE_SRC" "$slim_cache" || true
+
+        rm -rf server/target examples/cli/target control-api/target
+        rm -rf "${HOME}/.m2" /home/runner/.m2/repository 2>/dev/null || true
+        docker builder prune -af || true
+        docker system prune -af --volumes || true
+        df -h
+
+    # Re-login immediately before buildx push. Parent RepoDepot ECR login happens before
+    # CUSTOM (and before long sbt test/package); buildx's docker-container driver may not
+    # inherit those credentials when pushing after a new builder is created.
+    - name: Login to AWS ECR
+      if: steps.component.outputs.needs-image == 'true'
+      uses: aws-actions/amazon-ecr-login@v2
+
+    - name: Reuse existing immutable image
+      if: steps.component.outputs.needs-image == 'true'
+      id: existing-image
+      shell: bash
+      env:
+        IMAGE_NAME: ${{ inputs.image-name }}
+        IMAGE_TAG: ${{ inputs.image-tag }}
+      run: |
+        set -euo pipefail
+        if aws ecr describe-images --repository-name "$IMAGE_NAME" --image-ids imageTag="$IMAGE_TAG" >/dev/null 2>&1; then
+          echo "Image ${IMAGE_NAME}:${IMAGE_TAG} already exists and is immutable; skipping rebuild."
+          echo "exists=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "exists=false" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Login to GHCR
+      if: steps.component.outputs.needs-image == 'true'
+      uses: docker/login-action@v3
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ inputs.github-token }}
+
+    - name: Set up QEMU
+      if: steps.component.outputs.needs-image == 'true' && inputs.is-dev-build != 'true'
+      uses: docker/setup-qemu-action@v3
+
+    - name: Set up Docker Buildx
+      if: steps.component.outputs.needs-image == 'true'
+      uses: docker/setup-buildx-action@v3
+
+    - name: Report disk usage before Docker build
+      if: steps.component.outputs.needs-image == 'true' && inputs.component-name == 'unity-catalog-server'
+      shell: bash
+      run: df -h
+
+    - name: Create Docker Image
+      if: steps.component.outputs.needs-image == 'true' && steps.existing-image.outputs.exists != 'true'
+      id: create-image
+      uses: docker/build-push-action@v6
+      with:
+        context: ${{ format('{0}/{1}', inputs.working-directory, steps.component.outputs.docker-context) }}
+        push: true
+        platforms: ${{ inputs.is-dev-build == 'true' && 'linux/amd64' || 'linux/amd64,linux/arm64' }}
+        provenance: false
+        sbom: false
+        tags: |
+          ${{ inputs.image-registry }}/${{ inputs.image-name }}:${{ inputs.image-tag }}
+          ghcr.io/celonis/${{ inputs.image-name }}:${{ inputs.image-tag }}
+        build-args: |
+          HOME=/home/unitycatalog
+          PREBUILT=${{ inputs.component-name == 'unity-catalog-server' && 'true' || 'false' }}
+          BUILD_ROOT=${{ github.workspace }}/${{ inputs.working-directory }}
+          BUILD_HOME=${{ github.workspace }}/${{ inputs.working-directory }}/build/ci-staging/home
+        cache-from: type=gha
+        cache-to: type=gha,mode=min,ignore-error=true
+
+    - name: Verify unity-catalog-server image classpath
+      if: steps.component.outputs.needs-image == 'true' && inputs.component-name == 'unity-catalog-server'
+      shell: bash
+      env:
+        IMAGE: ${{ inputs.image-registry }}/${{ inputs.image-name }}:${{ inputs.image-tag }}
+      run: |
+        set -euo pipefail
+        docker run --rm --platform linux/amd64 --user root --entrypoint sh "$IMAGE" -c '
+          CLASSPATH=/home/unitycatalog/server/target/classpath
+          CLI_CLASSPATH=/home/unitycatalog/examples/cli/target/classpath
+          if [ ! -f "$CLASSPATH" ]; then
+            echo "Missing $CLASSPATH; listing /home/unitycatalog/server/target:" >&2
+            ls -la /home/unitycatalog/server/target 2>&1 || ls -la /home/unitycatalog/server 2>&1 || true
+            exit 1
+          fi
+          if [ ! -f "$CLI_CLASSPATH" ]; then
+            echo "Missing $CLI_CLASSPATH; listing /home/unitycatalog/examples/cli/target:" >&2
+            ls -la /home/unitycatalog/examples/cli/target 2>&1 || ls -la /home/unitycatalog/examples/cli 2>&1 || true
+            exit 1
+          fi
+          grep -q "/home/unitycatalog/.m2" "$CLASSPATH"
+          grep -q "/home/unitycatalog/.m2" "$CLI_CLASSPATH"
+          test -d /home/unitycatalog/.m2
+          test -x /home/unitycatalog/bin/uc
+          /home/unitycatalog/bin/uc --help >/dev/null
+        '
+
+    - name: Set empty image metadata
+      if: steps.component.outputs.needs-image != 'true'
+      id: empty-image-metadata
+      shell: bash
+      run: echo 'metadata={}' >> "$GITHUB_OUTPUT"

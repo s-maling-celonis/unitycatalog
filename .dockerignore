@@ -1,0 +1,12 @@
+# Host CI artifacts are staged under build/ci-staging/prebuilt; do not send
+# the live target trees or unrelated modules as Docker context.
+server/target/
+examples/cli/target/
+target/control/java/target/
+.git
+.github
+ai/
+docs/
+connectors/
+clients/python/
+ui/

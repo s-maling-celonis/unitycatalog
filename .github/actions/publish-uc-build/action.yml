@@ -1,0 +1,54 @@
+name: Publish UC build
+description: >-
+  Compile UC, publish to local Maven/Ivy caches, build the shaded server JAR, and
+  compile integration tests. Saves a workflow-scoped cache for downstream test jobs.
+  The calling job must run actions/checkout first.
+
+inputs:
+  spark-version:
+    description: Spark version used to compile integration tests.
+    required: false
+    default: '4.1.0'
+  delta-version:
+    description: Delta version used to compile integration tests.
+    required: false
+    default: '4.3.1'
+
+runs:
+  using: composite
+  steps:
+    - name: Set up JDK 17
+      uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4.8.0
+      with:
+        java-version: '17'
+        distribution: 'zulu'
+        cache: 'maven'
+
+    - name: Build, package, and publish UC locally
+      shell: bash
+      run: |
+        mvn -B -DsparkVersion=${{ inputs.spark-version }} -DskipTests install
+
+    # integration-tests is not in the default test reactor; compile it here so downstream
+    # Spark jobs can run tests without a separate compile-only step.
+    - name: Compile integration tests
+      shell: bash
+      run: |
+        mvn -B -DsparkVersion=${{ inputs.spark-version }} \
+          -DdeltaVersion=${{ inputs.delta-version }} \
+          -pl integration-tests -am test-compile
+
+    - name: Save UC build cache
+      uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      with:
+        path: |
+          ~/.m2/repository/io/unitycatalog
+          server/target
+          server-shaded/target
+          clients/java/target
+          connectors/hadoop/target
+          connectors/spark/target
+          examples/cli/target
+          integration-tests/target
+          control-api/target
+        key: uc-build-${{ github.run_id }}
