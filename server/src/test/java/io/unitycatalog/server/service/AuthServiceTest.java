@@ -155,11 +155,6 @@ public class AuthServiceTest extends BaseAuthCRUDTest {
     return client.execute(headers, HttpData.ofUtf8(formBody)).aggregate().join();
   }
 
-  /**
-   * Also covers the token endpoint's interaction with the authorization gate: it is excluded from
-   * the access decorators, so nothing sets a PayloadAuthorizer, and it binds its body with its own
-   * {@code @RequestConverter} rather than the gate. Both together are why it still succeeds.
-   */
   @Test
   public void testTokenExchangeWithCorrectIssuerAndAudience() throws IOException {
     String token =
@@ -172,6 +167,11 @@ public class AuthServiceTest extends BaseAuthCRUDTest {
     JsonNode body = MAPPER.readTree(response.contentUtf8());
     assertThat(body.has("access_token")).isTrue();
     assertThat(body.get("access_token").asText()).isNotEmpty();
+    assertThat(
+            JWT.decode(body.get("access_token").asText())
+                .getClaim(JwtClaim.SUBJECT.key())
+                .asString())
+        .isEqualTo("admin");
     assertThat(body.get("issued_token_type").asText())
         .isEqualTo("urn:ietf:params:oauth:token-type:access_token");
     assertThat(body.get("token_type").asText()).isEqualTo("Bearer");

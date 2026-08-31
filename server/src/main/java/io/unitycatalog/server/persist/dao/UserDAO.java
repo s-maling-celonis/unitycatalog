@@ -1,9 +1,10 @@
 package io.unitycatalog.server.persist.dao;
 
-import io.unitycatalog.control.model.User;
+import io.unitycatalog.server.control.model.User;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Table;
+import jakarta.persistence.UniqueConstraint;
 import java.util.Date;
 import java.util.UUID;
 import lombok.AllArgsConstructor;
@@ -14,7 +15,11 @@ import lombok.Setter;
 import lombok.experimental.SuperBuilder;
 
 @Entity
-@Table(name = "uc_users")
+@Table(
+    name = "uc_users",
+    uniqueConstraints = {
+      @UniqueConstraint(name = "uc_users_external_id_key", columnNames = "external_id")
+    })
 // Lombok annotations
 @Getter
 @Setter
