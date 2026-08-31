@@ -162,6 +162,8 @@ and final merge commit. Verify that the prior `-after` tip is an ancestor of
 `-after` tip, then add later first-parent work on `develop` and selected main
 drift. Expand later merged PRs to their logical commits or diffs. Validate
 completeness against the endpoint tree diff between `UP` and `origin/develop`.
+Record the prior PR's upstream base as `PREV_UP_SHA`; Step 8 uses it to detect
+fork-deleted upstream trees that would otherwise silently return.
 
 On the first run, use the broad reachable range only as a candidate list and
 reconcile it against the endpoint tree diff. For a legacy reconciliation that
@@ -234,10 +236,49 @@ Replay each approved group in original dependency/topological order as one
 squashed commit. Its message must list all replaced SHAs and PRs. If a new
 semantic conflict appears, return to Step 5.
 
+Before accepting a replay group, compare its complete old and new change
+surfaces. Obtain the old PR's changed-file list from GitHub or diff each old
+merge commit against its first parent, then compare it with the new squashed
+commit:
+
+```bash
+git diff --name-only "$OLD_SHA^1" "$OLD_SHA" | sort > /tmp/group-old-paths
+git diff --name-only "$NEW_SHA^1" "$NEW_SHA" | sort > /tmp/group-new-paths
+comm -23 /tmp/group-old-paths /tmp/group-new-paths
+```
+
+Every omitted path needs a line-item explanation: already upstream, superseded,
+or deliberately dropped. Inspect the diff hunks as well as the file list;
+partial replays can preserve runtime code while silently dropping API/CLI
+integration, configuration examples, generated documentation, or tests. Run
+the feature's original focused tests before declaring the group complete.
+
+Check and fix formatting throughout the rebuild, not only at final validation.
+After replaying or adapting each group, run the formatter for every affected
+module (currently `mvn spotless:apply`), review and include only formatting
+changes attributable to that group, then run `mvn spotless:check`. This keeps
+formatting fixes with the logical commit that introduced the code and prevents
+format drift from accumulating across groups.
+
 Reconcile Celonis workflow deletions as well as additions. The final workflow
 set should match the pre-reconciliation `develop` set except for explicitly
 approved additions/removals. A `disabled_` filename does not disable a GitHub
 workflow.
+
+When restoring Celonis-only files onto the upstream tree, derive the path list
+mechanically rather than writing it by hand:
+
+```bash
+comm -23 <(git ls-tree -r --name-only "$BEFORE_SHA" | sort) \
+         <(git ls-tree -r --name-only "$UP_SHA" | sort)
+```
+
+Every path this prints belongs to exactly one replay group or to an explicit
+drop decision; work the list to zero rather than reconstructing it from the
+group diffs. Hand-written lists miss files that sit outside the directories you
+edited, in particular build-output paths kept tracked by `.gitignore` negation
+rules. Step 8 gates this, but recovering there costs a rebuild of the landing
+commit.
 
 Keep the group → old SHAs → new SHA mapping for the PR.
 
@@ -249,7 +290,53 @@ Run all validation inside the `-after` worktree:
    again to prove the second run is clean.
 2. Compile and run targeted tests for changed modules.
 3. Run the full suite when practical.
-4. Compare the complete workflow file set before and after rebuilding.
+4. Compare the complete set of tracked paths, not just the workflow file set:
+
+   ```bash
+   git ls-tree -r --name-only "$BEFORE_SHA" | sort > /tmp/before.txt
+   git ls-tree -r --name-only "$AFTER_SHA" | sort > /tmp/after.txt
+   comm -23 /tmp/before.txt /tmp/after.txt
+   ```
+
+   Every path printed must be restored, or recorded in the PR as an approved
+   removal, before landing. Treat non-empty output as a failure rather than a
+   list to skim; working through it partially is the failure mode this check
+   exists to catch.
+5. Compare in the opposite direction too. Trees the fork deliberately deleted
+   return silently, because they arrive with the upstream tree instead of
+   through a replay group:
+
+   ```bash
+   comm -12 <(comm -13 /tmp/before.txt /tmp/after.txt) \
+            <(git ls-tree -r --name-only "$PREV_UP_SHA" | sort)
+   ```
+
+   `PREV_UP_SHA` is the upstream base of the previous reconciliation. Every
+   path printed existed upstream before, was removed by the fork, and is now
+   back; re-delete it or record an explicit re-adoption. Verify each drop group
+   by asserting its paths are absent from the rebuilt tree. Do not trust a
+   Step 3 note claiming a deletion is no longer needed because upstream already
+   dropped the tree — confirm that against `UP` with `git ls-tree`.
+6. Run `mvn spotless:apply`, review any resulting changes, and require a clean
+   `mvn spotless:check`. If final validation finds formatting drift, commit the
+   fix and record which replay group introduced it.
+7. Check build and deleted-tree consistency. For this Maven-only fork, fail if
+   active instructions still target sbt or the removed UI tree:
+
+   ```bash
+   ! rg -n 'build/sbt|version\.sbt' \
+       README.md docs integration-tests tests server/src/test
+   ! rg -n 'cd /?ui|bun (install|run)|yarn (install|start)' \
+       README.md docs/quickstart.md docs/usage/ui.md .pre-commit-config.yaml
+   ! rg -n 'clients/python|python-client-postbuild' \
+       pom.xml dev/maven .pre-commit-config.yaml
+   ```
+
+   References under an explicit upstream-UI disclaimer may remain in detailed
+   upstream UI documentation, but the fork's quickstart and active hooks must
+   not require deleted sources. RepoDepot's delivered workflow is generated;
+   remove obsolete service-specific ignores from `.github/repodepot-config.yaml`
+   and let RepoDepot regenerate the workflow instead of editing it by hand.
 
 Repository-specific traps to verify:
 

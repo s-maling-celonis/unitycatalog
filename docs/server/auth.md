@@ -112,6 +112,29 @@ values under that pattern can steer JWKS fetches (an SSRF-style surface).
 Use wildcard issuers only where necessary, only for domains you control, and avoid patterns that
 cover internal or sensitive hosts. Prefer exact issuer URLs and `https://` issuers when possible.
 
+### Multiple server instances
+
+Authorization decisions use an in-memory Casbin policy loaded from the shared `casbin_rule` table.
+A grant or revoke written on one server process is not visible to other processes until they reload
+that table.
+
+Refresh is **off by default**. For any multi-instance deployment that shares one database (HA,
+rolling updates, horizontal scale), set:
+
+```properties
+server.authorization.policy-refresh=true
+```
+
+Optional tuning:
+
+| Property | Default | Purpose |
+|---|---|---|
+| `server.authorization.policy-refresh-interval` | `PT1M` | How often each instance polls `casbin_rule` |
+| `server.authorization.policy-refresh-debounce-interval` | `PT1S` | Minimum gap between deny-triggered reloads |
+
+Revocations propagate on the poll interval. A stale deny (a grant not yet seen) can trigger one
+debounced reload before returning 403.
+
 ### Restart the UC Server
 
 Now that the Google Authentication is configured, restart the UC Server with the following command.
@@ -352,6 +375,38 @@ With this set, now you can continue your [Using Spark SQL to query Unity Catalog
 and [Running CRUD Operations on a Unity Catalog table](../integrations/unity-catalog-spark.md#running-crud-operations-on-a-unity-catalog-table)
 steps with Spark as an authenticated client to UC.
 
+## Using OAuth Client Credentials
+
+Java clients that use the OAuth token provider request the `all-apis` scope by default. If your
+Identity Provider expects a different scope, configure it with `oauth.scope`. The client passes the
+configured scope to the Identity Provider's token endpoint; Unity Catalog does not define or
+interpret it. Follow the scope format required by your Identity Provider and resource server.
+
+For example, Microsoft Entra ID Java client configuration can include:
+
+```java
+Map<String, String> configs = Map.of(
+    "type", "oauth",
+    "oauth.uri", "https://login.microsoftonline.com/<tenant-id>/oauth2/v2.0/token",
+    "oauth.clientId", "<client ID>",
+    "oauth.clientSecret", "<client secret>",
+    "oauth.scope", "<resource-application-id-uri>/.default");
+```
+
+Spark catalog configuration uses the same key with the catalog auth prefix:
+
+```sh
+--conf "spark.sql.catalog.<catalog_name>.auth.type=oauth" \
+--conf "spark.sql.catalog.<catalog_name>.auth.oauth.uri=https://login.microsoftonline.com/<tenant-id>/oauth2/v2.0/token" \
+--conf "spark.sql.catalog.<catalog_name>.auth.oauth.clientId=<client ID>" \
+--conf "spark.sql.catalog.<catalog_name>.auth.oauth.clientSecret=<client secret>" \
+--conf "spark.sql.catalog.<catalog_name>.auth.oauth.scope=<resource-application-id-uri>/.default"
+```
+
+The value can contain one or more space-separated scopes defined by the Identity Provider. For
+Microsoft Entra ID, a resource's default scope typically has the form
+`<resource-application-id-uri>/.default`.
+
 ## Using Google Identity with Unity Catalog UI
 
 This fork does not include the OSS UI sources (`ui/`). The steps below apply to
@@ -375,8 +430,8 @@ If you have not already done so, restart the UI.
 
 ```sh
 cd ui
-yarn install
-yarn start
+bun install
+bun run start
 ```
 
 This will open a new browser window with your identity provider login (e.g., Google Identity).
@@ -402,7 +457,7 @@ Modify the `server.properties` file to disable the server authentication by chan
 server.authorization=disable
 ```
 
-Restarting your UC server (i.e., `bin/start-uc-server`) and UI (i.e., `yarn start`) will open a new browser window
+Restarting your UC server (i.e., `bin/start-uc-server`) and UI (i.e., `bun run start`) will open a new browser window
 with the Google Auth login but fail with the following login failed error.
 
 ![UC Google Auth UI Enabled Server Disabled](../assets/images/uc_googleauth_ui-enabled_server-disabled.png)
@@ -423,7 +478,7 @@ REACT_APP_GOOGLE_AUTH_ENABLED=false
 REACT_APP_GOOGLE_CLIENT_ID=
 ```
 
-Restarting your UC server (i.e., `bin/start-uc-server`)  and UI (i.e., `yarn start`) will open a new browser window
+Restarting your UC server (i.e., `bin/start-uc-server`)  and UI (i.e., `bun run start`) will open a new browser window
 with the Google Auth login. You will successfully log into the UI but fail to show any Unity Catalog assets as the UI
 is not authenticated to query those assets.
 
@@ -444,6 +499,6 @@ REACT_APP_GOOGLE_AUTH_ENABLED=false
 REACT_APP_GOOGLE_CLIENT_ID=
 ```
 
-Restarting your UC server (i.e., `bin/start-uc-server`) and UI (i.e., `yarn start`) will open a new browser window
+Restarting your UC server (i.e., `bin/start-uc-server`) and UI (i.e., `bun run start`) will open a new browser window
 with the Google Auth login. In this case, there will be **no profile menu nor any login screen** but you will be able
 to see your UC assets.

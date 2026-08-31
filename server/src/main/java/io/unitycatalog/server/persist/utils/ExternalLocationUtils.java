@@ -198,8 +198,9 @@ public class ExternalLocationUtils {
       case TABLE -> ((TableInfoDAO) dao).getSchemaId();
       case VOLUME -> ((VolumeInfoDAO) dao).getSchemaId();
       case REGISTERED_MODEL -> ((RegisteredModelInfoDAO) dao).getSchemaId();
-      default -> throw new BaseException(
-          ErrorCode.UNIMPLEMENTED, "Unknown securable type: " + securableType);
+      default ->
+          throw new BaseException(
+              ErrorCode.UNIMPLEMENTED, "Unknown securable type: " + securableType);
     };
   }
 

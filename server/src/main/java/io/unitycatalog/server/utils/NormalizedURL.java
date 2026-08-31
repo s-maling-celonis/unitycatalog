@@ -162,7 +162,7 @@ public final class NormalizedURL {
     }
     UriScheme scheme = UriScheme.fromURI(uri);
     return switch (scheme) {
-        // It's a local path without file://. Construct a file:// URI using Path.
+      // It's a local path without file://. Construct a file:// URI using Path.
       case NULL -> localFileURIToString(Paths.get(inputPath).toAbsolutePath().toUri().normalize());
       case FILE -> localFileURIToString(uri);
       case S3, GS, ABFS, ABFSS -> removeExtraSlashes(uri.toString());

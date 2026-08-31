@@ -20,12 +20,34 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import org.hibernate.LockMode;
 import org.hibernate.Session;
 import org.hibernate.query.Query;
 
 public class RepositoryUtils {
 
   private static final Map<String, Class<?>> PROPERTY_TYPE_MAP = new HashMap<>();
+
+  /**
+   * Acquires the table row lock shared by Delta and Iceberg commit paths. Lock waits and deadlock
+   * victims are reported as retryable requirement conflicts instead of leaking ORM exceptions.
+   */
+  public static void lockTableForCommit(
+      Session session, TableInfoDAO dao, UUID tableId, Optional<String> tableFullNameForLogging) {
+    try {
+      session.refresh(dao, LockMode.PESSIMISTIC_WRITE);
+    } catch (RuntimeException e) {
+      if (!(e instanceof org.hibernate.PessimisticLockException)
+          && !(e instanceof jakarta.persistence.PessimisticLockException)) {
+        throw e;
+      }
+      throw new BaseException(
+          ErrorCode.UPDATE_REQUIREMENT_CONFLICT,
+          "Concurrent commit in progress on table "
+              + tableFullNameForLogging.orElseGet(tableId::toString)
+              + "; retry the request.");
+    }
+  }
 
   static {
     PROPERTY_TYPE_MAP.put(Constants.FUNCTION, String.class);
@@ -46,8 +68,9 @@ public class RepositoryUtils {
           switch (entityClass.getSimpleName()) {
             case "Map" -> propertyMap;
             case "String" -> propertyMap.toString();
-            default -> throw new IllegalArgumentException(
-                "Unsupported parameter type: " + entityClass.getSimpleName());
+            default ->
+                throw new IllegalArgumentException(
+                    "Unsupported parameter type: " + entityClass.getSimpleName());
           };
       setPropertiesMethod.invoke(entityInfo, propertiesArgument);
       return entityInfo;
