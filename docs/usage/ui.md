@@ -6,20 +6,9 @@ The Unity Catalog UI allows you to interact with a Unity Catalog server to view 
 
 ## Start Unity Catalog UI locally
 
-To use the Unity Catalog UI, start a new terminal and ensure you have already started the UC server
-(e.g., `./bin/start-uc-server`)
-
-!!! warning "Prerequisites"
-    The Unity Catalog UI requires both [Node](https://nodejs.org/en/download/package-manager) and
-    [Bun](https://bun.com/docs/installation).
-
-To start the UI locally, run the following commands to start `bun`
-
-```sh
-cd ui
-bun install
-bun run start
-```
+This fork does not include the OSS UI sources. Use `docker compose up` to run the
+[published UI image](https://hub.docker.com/r/unitycatalog/unitycatalog-ui), or build from
+[upstream `ui/`](https://github.com/unitycatalog/unitycatalog/tree/main/ui).
 
 ## Assets
 

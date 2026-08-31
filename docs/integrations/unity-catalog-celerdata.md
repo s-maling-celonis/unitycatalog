@@ -24,7 +24,7 @@ git clone https://github.com/unitycatalog/unitycatalog.git
 
 cd unitycatalog
 
-build/sbt package
+mvn package
 
 bin/start-uc-server
 ```

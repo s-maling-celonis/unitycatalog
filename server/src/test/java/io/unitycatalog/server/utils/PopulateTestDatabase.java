@@ -41,9 +41,10 @@ import org.hibernate.Transaction;
  * examples in the documentation are based on this sample data. This class is not part of the main
  * application code and is only used for testing purposes. To recreate the sample data, first delete
  * the existing database (at /etc/db) and then run main method of this class by running the command
- * `build/sbt server/populateTestDB`. Any data artifacts which might be referred to by storage
- * location of any table/volume should be created before creating the table/volume entry in the
- * database or can be a part of the same PR.
+ * `mvn -pl server -am exec:java -Dexec.classpathScope=test
+ * -Dexec.mainClass=io.unitycatalog.server.utils.PopulateTestDatabase`. Any data artifacts which
+ * might be referred to by storage location of any table/volume should be created before creating
+ * the table/volume entry in the database or can be a part of the same PR.
  */
 public class PopulateTestDatabase {
 

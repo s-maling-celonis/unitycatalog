@@ -162,6 +162,8 @@ and final merge commit. Verify that the prior `-after` tip is an ancestor of
 `-after` tip, then add later first-parent work on `develop` and selected main
 drift. Expand later merged PRs to their logical commits or diffs. Validate
 completeness against the endpoint tree diff between `UP` and `origin/develop`.
+Record the prior PR's upstream base as `PREV_UP_SHA`; Step 8 uses it to detect
+fork-deleted upstream trees that would otherwise silently return.
 
 On the first run, use the broad reachable range only as a candidate list and
 reconcile it against the endpoint tree diff. For a legacy reconciliation that
@@ -291,8 +293,9 @@ Run all validation inside the `-after` worktree:
 4. Compare the complete set of tracked paths, not just the workflow file set:
 
    ```bash
-   comm -23 <(git ls-tree -r --name-only "$BEFORE_SHA" | sort) \
-            <(git ls-tree -r --name-only "$AFTER_SHA" | sort)
+   git ls-tree -r --name-only "$BEFORE_SHA" | sort > /tmp/before.txt
+   git ls-tree -r --name-only "$AFTER_SHA" | sort > /tmp/after.txt
+   comm -23 /tmp/before.txt /tmp/after.txt
    ```
 
    Every path printed must be restored, or recorded in the PR as an approved
@@ -317,6 +320,19 @@ Run all validation inside the `-after` worktree:
 6. Run `mvn spotless:apply`, review any resulting changes, and require a clean
    `mvn spotless:check`. If final validation finds formatting drift, commit the
    fix and record which replay group introduced it.
+7. Check build and deleted-tree consistency. For this Maven-only fork, fail if
+   active instructions still target sbt or the removed UI tree:
+
+   ```bash
+   ! rg -n 'build/sbt|version\.sbt' \
+       README.md docs integration-tests tests server/src/test
+   ! rg -n 'cd /?ui|bun (install|run)|yarn (install|start)' \
+       README.md docs/quickstart.md docs/usage/ui.md .pre-commit-config.yaml
+   ```
+
+   References under an explicit upstream-UI disclaimer may remain in detailed
+   upstream UI documentation, but the fork's quickstart and active hooks must
+   not require deleted sources.
 
 Repository-specific traps to verify:
 
