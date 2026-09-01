@@ -129,7 +129,7 @@
     <dependency>
       <groupId>com.amazonaws</groupId>
       <artifactId>aws-java-sdk-core</artifactId>
-      <version>1.12.728</version>
+      <version>1.12.797</version>
     </dependency>
     <dependency>
       <groupId>org.apache.hadoop</groupId>
