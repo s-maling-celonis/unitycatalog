@@ -88,7 +88,13 @@
     <junit.version>5.10.3</junit.version>
     <mockito.version>5.20.0</mockito.version>
     <lombok.version>1.18.42</lombok.version>
-    <armeria.version>1.28.4</armeria.version>
+    <armeria.version>1.41.0</armeria.version>
+    <!-- Armeria 1.41 ships Netty 4.2.16; keep the BOM and tcnative on the 4.2.17 line.
+         4.2.17's OpenSSL engine calls SSL.getGroupName, which exists only in tcnative 2.0.81+.
+         azure-core-http-netty otherwise wins with tcnative-classes 2.0.65 and the Azure
+         credential test hangs on Linux/macOS after a NoSuchMethodError in the event loop. -->
+    <netty.version>4.2.17.Final</netty.version>
+    <netty.tcnative.version>2.0.81.Final</netty.tcnative.version>
     <httpclient.version>4.5.14</httpclient.version>
     <openapi.jackson.nullable.version>0.2.11</openapi.jackson.nullable.version>
     <python.package.version>0.7.0.dev0</python.package.version>
@@ -104,6 +110,23 @@
 
   <dependencyManagement>
     <dependencies>
+      <dependency>
+        <groupId>io.netty</groupId>
+        <artifactId>netty-bom</artifactId>
+        <version>${netty.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+      <dependency>
+        <groupId>io.netty</groupId>
+        <artifactId>netty-tcnative-classes</artifactId>
+        <version>${netty.tcnative.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>io.netty</groupId>
+        <artifactId>netty-tcnative-boringssl-static</artifactId>
+        <version>${netty.tcnative.version}</version>
+      </dependency>
       <dependency>
         <groupId>io.unitycatalog</groupId>
         <artifactId>unitycatalog-controlapi</artifactId>
