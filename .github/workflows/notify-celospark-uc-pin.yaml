@@ -1,0 +1,86 @@
+# Forwards a Unity Catalog DEV publish to celonis/celospark so it can upsert
+# the rolling pin PR. Do not add this to generated RepoDepot workflow files.
+#
+# RepoDepot Finalize Dev Build POSTs repository_dispatch
+# repodepot_dev_build_complete with build_name + service_name (DEV only).
+# Filter to unitycatalog-spark so one CeloSpark PR is opened per build
+# (spark is the last Maven artifact the Spark image needs).
+#
+# RCs are not forwarded: that event is DEV-only. Bump RCs from CeloSpark
+# via workflow_dispatch on "Bump Unity Catalog pin".
+name: Notify CeloSpark of Unity Catalog pin
+
+on:
+  repository_dispatch:
+    types: [repodepot_dev_build_complete]
+
+  workflow_dispatch:
+    inputs:
+      uc_version:
+        description: RepoDepot tag to pin in CeloSpark
+        required: true
+        type: string
+      channel:
+        description: CeloSpark channel filter
+        type: choice
+        default: all
+        options:
+          - all
+          - rc
+          - dev
+      build_url:
+        description: Optional Actions run URL for the PR body
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  forward-dev:
+    if: github.event_name == 'repository_dispatch' && github.event.client_payload.service_name == 'unitycatalog-spark'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch CeloSpark bump workflow
+        env:
+          GH_TOKEN: ${{ secrets.CELOBOT_GITHUB_TOKEN }}
+          UC_VERSION: ${{ github.event.client_payload.build_name }}
+          ORIGIN_RUN: ${{ github.event.client_payload.origin_run_id }}
+        run: |
+          set -euo pipefail
+          test -n "${UC_VERSION}"
+          BUILD_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${ORIGIN_RUN}"
+          gh api --method POST /repos/celonis/celospark/dispatches --input - <<EOF
+          {
+            "event_type": "unitycatalog-published",
+            "client_payload": {
+              "uc_version": "${UC_VERSION}",
+              "build_url": "${BUILD_URL}",
+              "channel": "all"
+            }
+          }
+          EOF
+
+  forward-manual:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch CeloSpark bump workflow
+        env:
+          GH_TOKEN: ${{ secrets.CELOBOT_GITHUB_TOKEN }}
+          UC_VERSION: ${{ inputs.uc_version }}
+          CHANNEL: ${{ inputs.channel }}
+          BUILD_URL: ${{ inputs.build_url }}
+        run: |
+          set -euo pipefail
+          test -n "${UC_VERSION}"
+          gh api --method POST /repos/celonis/celospark/dispatches --input - <<EOF
+          {
+            "event_type": "unitycatalog-published",
+            "client_payload": {
+              "uc_version": "${UC_VERSION}",
+              "build_url": "${BUILD_URL}",
+              "channel": "${CHANNEL}"
+            }
+          }
+          EOF
