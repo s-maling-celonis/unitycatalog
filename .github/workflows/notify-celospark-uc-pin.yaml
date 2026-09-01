@@ -1,12 +1,13 @@
 # Forwards Unity Catalog publishes to celonis/celospark so it can upsert the
-# matching pin PR (DEV or RC). Do not add this to generated RepoDepot files.
+# matching pin file on main (uc.version.dev or uc.version.rc). Do not add this
+# to generated RepoDepot files.
 #
 # DEV: RepoDepot Finalize Dev Build POSTs repository_dispatch
 # repodepot_dev_build_complete with build_name + service_name. Filter to
 # unitycatalog-spark so one CeloSpark DEV PR is opened per build.
 #
 # RC: that event is DEV-only. Forward RCs with workflow_dispatch using an
-# *_RCnn tag; CeloSpark routes it to chore/bump-unity-catalog-rc.
+# *_RCnn tag; CeloSpark writes images/spark/uc.version.rc.
 name: Notify CeloSpark of Unity Catalog pin
 
 on:
