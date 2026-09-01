@@ -8,7 +8,7 @@ inputs:
   spark-version:
     description: Spark version used to compile integration tests.
     required: false
-    default: '4.1.0'
+    default: '4.1.3'
   delta-version:
     description: Delta version used to compile integration tests.
     required: false

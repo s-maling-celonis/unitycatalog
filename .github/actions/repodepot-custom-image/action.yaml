@@ -236,7 +236,7 @@ runs:
             mvn -B -pl server-shaded,connectors/hadoop -am test
             ;;
           unitycatalog-spark)
-            mvn -B -DsparkVersion=4.1.0 -DdeltaVersion=4.3.1 -pl connectors/spark -am test
+            mvn -B -DsparkVersion=4.1.3 -DdeltaVersion=4.3.1 -pl connectors/spark -am test
             ;;
           *)
             echo "Unsupported component: ${{ inputs.component-name }}" >&2

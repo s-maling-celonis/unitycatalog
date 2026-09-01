@@ -66,7 +66,7 @@
     <scala.version>2.13.17</scala.version>
     <scala.binary.version>2.13</scala.binary.version>
 
-    <spark.version>4.1.0</spark.version>
+    <spark.version>4.1.3</spark.version>
     <spark.short.version>4.1</spark.short.version>
     <spark.artifact.suffix>_4.1</spark.artifact.suffix>
     <!-- Shim dirs mirror project/spark-versions.json: one version-specific dir plus one
@@ -82,7 +82,8 @@
     <hadoop.version>3.4.2</hadoop.version>
     <iceberg.version>1.11.0</iceberg.version>
     <jackson.version>2.18.9</jackson.version>
-    <jackson.spark.version>2.15.0</jackson.spark.version>
+    <jackson.spark.version>2.21.2</jackson.spark.version>
+    <jackson.spark.annotations.version>2.21</jackson.spark.annotations.version>
     <log4j.version>2.25.5</log4j.version>
     <slf4j.version>2.0.13</slf4j.version>
     <junit.version>5.10.3</junit.version>
@@ -549,6 +550,8 @@
         <spark.shim.dir>scala-shims/spark-4.0</spark.shim.dir>
         <spark.shim.shared.dir>scala-shims/spark-4.0-4.1</spark.shim.shared.dir>
         <spark.test.release>11</spark.test.release>
+        <jackson.spark.version>2.18.2</jackson.spark.version>
+        <jackson.spark.annotations.version>2.18.2</jackson.spark.annotations.version>
       </properties>
     </profile>
     <profile>
@@ -566,6 +569,8 @@
         <spark.shim.dir>scala-shims/spark-4.0</spark.shim.dir>
         <spark.shim.shared.dir>scala-shims/spark-4.0-4.1</spark.shim.shared.dir>
         <spark.test.release>11</spark.test.release>
+        <jackson.spark.version>2.18.2</jackson.spark.version>
+        <jackson.spark.annotations.version>2.18.2</jackson.spark.annotations.version>
       </properties>
     </profile>
     <profile>
@@ -577,12 +582,14 @@
         </property>
       </activation>
       <properties>
-        <spark.version>4.1.0</spark.version>
+        <spark.version>4.1.3</spark.version>
         <spark.short.version>4.1</spark.short.version>
         <spark.artifact.suffix>_4.1</spark.artifact.suffix>
         <spark.shim.dir>scala-shims/spark-4.1</spark.shim.dir>
         <spark.shim.shared.dir>scala-shims/spark-4.1-4.2</spark.shim.shared.dir>
         <spark.test.release>11</spark.test.release>
+        <jackson.spark.version>2.21.2</jackson.spark.version>
+        <jackson.spark.annotations.version>2.21</jackson.spark.annotations.version>
       </properties>
     </profile>
     <profile>
@@ -594,12 +601,33 @@
         </property>
       </activation>
       <properties>
-        <spark.version>4.1.0</spark.version>
+        <spark.version>4.1.3</spark.version>
         <spark.short.version>4.1</spark.short.version>
         <spark.artifact.suffix>_4.1</spark.artifact.suffix>
         <spark.shim.dir>scala-shims/spark-4.1</spark.shim.dir>
         <spark.shim.shared.dir>scala-shims/spark-4.1-4.2</spark.shim.shared.dir>
         <spark.test.release>11</spark.test.release>
+        <jackson.spark.version>2.21.2</jackson.spark.version>
+        <jackson.spark.annotations.version>2.21</jackson.spark.annotations.version>
+      </properties>
+    </profile>
+    <profile>
+      <id>spark-4.1.3</id>
+      <activation>
+        <property>
+          <name>sparkVersion</name>
+          <value>4.1.3</value>
+        </property>
+      </activation>
+      <properties>
+        <spark.version>4.1.3</spark.version>
+        <spark.short.version>4.1</spark.short.version>
+        <spark.artifact.suffix>_4.1</spark.artifact.suffix>
+        <spark.shim.dir>scala-shims/spark-4.1</spark.shim.dir>
+        <spark.shim.shared.dir>scala-shims/spark-4.1-4.2</spark.shim.shared.dir>
+        <spark.test.release>11</spark.test.release>
+        <jackson.spark.version>2.21.2</jackson.spark.version>
+        <jackson.spark.annotations.version>2.21</jackson.spark.annotations.version>
       </properties>
     </profile>
     <profile>
@@ -618,6 +646,8 @@
         <spark.shim.shared.dir>scala-shims/spark-4.1-4.2</spark.shim.shared.dir>
         <spark.test.release>17</spark.test.release>
         <delta.spark.artifactId>delta-spark_${scala.binary.version}</delta.spark.artifactId>
+        <jackson.spark.version>2.21.2</jackson.spark.version>
+        <jackson.spark.annotations.version>2.21</jackson.spark.annotations.version>
       </properties>
     </profile>
     <profile>
@@ -636,6 +666,8 @@
         <spark.shim.shared.dir>scala-shims/spark-4.1-4.2</spark.shim.shared.dir>
         <spark.test.release>17</spark.test.release>
         <delta.spark.artifactId>delta-spark_${scala.binary.version}</delta.spark.artifactId>
+        <jackson.spark.version>2.21.2</jackson.spark.version>
+        <jackson.spark.annotations.version>2.21</jackson.spark.annotations.version>
       </properties>
     </profile>
     <profile>

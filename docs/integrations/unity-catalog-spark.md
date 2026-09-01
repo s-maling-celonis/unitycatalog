@@ -50,9 +50,9 @@ The following steps are required to download and configure Unity Catalog for Apa
 
 === "Spark 4.1.x"
 
-    ```sh title="Download Apache Spark 4.1.0 using curl"
-    curl -O https://archive.apache.org/dist/spark/spark-4.1.0/spark-4.1.0-bin-hadoop3.tgz
-    tar xzf spark-4.1.0-bin-hadoop3.tgz
+    ```sh title="Download Apache Spark 4.1.3 using curl"
+    curl -O https://archive.apache.org/dist/spark/spark-4.1.3/spark-4.1.3-bin-hadoop3.tgz
+    tar xzf spark-4.1.3-bin-hadoop3.tgz
     ```
 
 ### [Optional] Configure server properties for cloud storage
