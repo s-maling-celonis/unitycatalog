@@ -1,13 +1,12 @@
-# Forwards a Unity Catalog DEV publish to celonis/celospark so it can upsert
-# the rolling pin PR. Do not add this to generated RepoDepot workflow files.
+# Forwards Unity Catalog publishes to celonis/celospark so it can upsert the
+# matching pin PR (DEV or RC). Do not add this to generated RepoDepot files.
 #
-# RepoDepot Finalize Dev Build POSTs repository_dispatch
-# repodepot_dev_build_complete with build_name + service_name (DEV only).
-# Filter to unitycatalog-spark so one CeloSpark PR is opened per build
-# (spark is the last Maven artifact the Spark image needs).
+# DEV: RepoDepot Finalize Dev Build POSTs repository_dispatch
+# repodepot_dev_build_complete with build_name + service_name. Filter to
+# unitycatalog-spark so one CeloSpark DEV PR is opened per build.
 #
-# RCs are not forwarded: that event is DEV-only. Bump RCs from CeloSpark
-# via workflow_dispatch on "Bump Unity Catalog pin".
+# RC: that event is DEV-only. Forward RCs with workflow_dispatch using an
+# *_RCnn tag; CeloSpark routes it to chore/bump-unity-catalog-rc.
 name: Notify CeloSpark of Unity Catalog pin
 
 on:
@@ -17,17 +16,9 @@ on:
   workflow_dispatch:
     inputs:
       uc_version:
-        description: RepoDepot tag to pin in CeloSpark
+        description: RepoDepot tag (dev_… or …_RCnn)
         required: true
         type: string
-      channel:
-        description: CeloSpark channel filter
-        type: choice
-        default: all
-        options:
-          - all
-          - rc
-          - dev
       build_url:
         description: Optional Actions run URL for the PR body
         required: false
@@ -41,7 +32,7 @@ jobs:
     if: github.event_name == 'repository_dispatch' && github.event.client_payload.service_name == 'unitycatalog-spark'
     runs-on: ubuntu-latest
     steps:
-      - name: Dispatch CeloSpark bump workflow
+      - name: Dispatch CeloSpark DEV bump
         env:
           GH_TOKEN: ${{ secrets.CELOBOT_GITHUB_TOKEN }}
           UC_VERSION: ${{ github.event.client_payload.build_name }}
@@ -55,8 +46,7 @@ jobs:
             "event_type": "unitycatalog-published",
             "client_payload": {
               "uc_version": "${UC_VERSION}",
-              "build_url": "${BUILD_URL}",
-              "channel": "all"
+              "build_url": "${BUILD_URL}"
             }
           }
           EOF
@@ -65,11 +55,10 @@ jobs:
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
-      - name: Dispatch CeloSpark bump workflow
+      - name: Dispatch CeloSpark bump (lane from tag)
         env:
           GH_TOKEN: ${{ secrets.CELOBOT_GITHUB_TOKEN }}
           UC_VERSION: ${{ inputs.uc_version }}
-          CHANNEL: ${{ inputs.channel }}
           BUILD_URL: ${{ inputs.build_url }}
         run: |
           set -euo pipefail
@@ -79,8 +68,7 @@ jobs:
             "event_type": "unitycatalog-published",
             "client_payload": {
               "uc_version": "${UC_VERSION}",
-              "build_url": "${BUILD_URL}",
-              "channel": "${CHANNEL}"
+              "build_url": "${BUILD_URL}"
             }
           }
           EOF
