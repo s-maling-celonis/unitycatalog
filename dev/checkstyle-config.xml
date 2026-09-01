@@ -165,6 +165,9 @@
         <module name="EmptyCatchBlock">
             <property name="exceptionVariableName" value="expected"/>
         </module>
+        <!-- Spotless/google-java-format is the canonical indentation check. Checkstyle's
+             indentation model conflicts with formatter output for switch expressions,
+             annotation arrays, and wrapped comments. -->
         <module name="UnusedImports"/>
         <module name="RedundantImport"/>
         <module name="RedundantModifier"/>
@@ -180,11 +183,6 @@
             <property name="format" value="new (java\.lang\.)?(Byte|Integer|Long|Short)\("/>
             <property name="message" value="Use static factory 'valueOf' or 'parseXXX' instead of the deprecated constructors." />
         </module>
-        <!-- Indentation and CommentsIndentation are owned by Spotless (google-java-format).
-             Checkstyle 9.3 misreads the continuation indent it emits for switch expressions and
-             annotation array initializers. The sbt build never hit this because its formatter
-             (google-java-format 1.7) could not parse those files and silently skipped them. -->
-
         <module name="LeftCurly"/>
         <module name="RightCurly"/>
     </module>

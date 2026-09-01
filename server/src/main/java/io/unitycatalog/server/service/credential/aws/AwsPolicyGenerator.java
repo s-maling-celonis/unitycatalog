@@ -3,6 +3,7 @@ package io.unitycatalog.server.service.credential.aws;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import io.unitycatalog.server.service.credential.CredentialContext;
 import io.unitycatalog.server.utils.NormalizedURL;
@@ -15,10 +16,13 @@ import java.util.Set;
 import java.util.stream.Collectors;
 import lombok.SneakyThrows;
 import org.apache.iceberg.exceptions.NotAuthorizedException;
+import software.amazon.awssdk.arns.Arn;
+import software.amazon.awssdk.regions.PartitionMetadata;
 import software.amazon.awssdk.regions.Region;
-import software.amazon.awssdk.regions.RegionMetadata;
 
 public class AwsPolicyGenerator {
+
+  static final String AWS_PARTITION = "aws";
 
   static final List<String> SELECT_ACTIONS = List.of("s3:GetO*");
   static final List<String> UPDATE_ACTIONS =
@@ -58,18 +62,16 @@ public class AwsPolicyGenerator {
   // open and the statement is narrowed to KMS calls made through S3. A session policy can only
   // narrow what the assumed role is already allowed to do, so a role without KMS access still
   // gets none. Encryption-context ARNs are omitted on purpose: they duplicate every S3 resource
-  // in this policy, and on long GovCloud managed-table paths that blows the STS packed-policy
-  // limit ("Packed policy consumes 100% of allotted space"). S3 resource statements already
-  // constrain which objects the session can Get/Put, so the extra KMS scoping is redundant.
+  // in this policy, and on long managed-table paths that blows the STS packed-policy limit
+  // ("Packed policy consumes 100% of allotted space"). S3 resource statements already constrain
+  // which objects the session can Get/Put. GovCloud/China hit the limit sooner because those
+  // ARN prefixes are longer, but commercial paths of the same length overflow too.
   static final String KMS_STATEMENT =
       """
       Effect: Allow
       Action: []
       Resource:
         - "*"
-      Condition:
-        StringLike:
-          "kms:ViaService": "s3.*.amazonaws.com"
       """;
 
   private static final ObjectMapper JSON_MAPPER = new ObjectMapper();
@@ -107,10 +109,14 @@ public class AwsPolicyGenerator {
 
   // This can support generating a policy across multiple buckets and paths, however, the assumed
   // role the policy is applied to for a scoped-session needs to have access across those buckets
+  /**
+   * Test helper: commercial {@link #AWS_PARTITION} (no role ARN or region). Production always calls
+   * {@link #generatePolicy(Set, List, String, Region)}.
+   */
   @SneakyThrows
-  public static String generatePolicy(
+  static String generatePolicy(
       Set<CredentialContext.Privilege> privileges, List<NormalizedURL> locations) {
-    return generatePolicy(privileges, locations, true);
+    return generatePolicy(privileges, locations, null, null);
   }
 
   @SneakyThrows
@@ -118,28 +124,46 @@ public class AwsPolicyGenerator {
       Set<CredentialContext.Privilege> privileges,
       List<NormalizedURL> locations,
       boolean includeKmsPermissions) {
-    return generatePolicy(privileges, locations, includeKmsPermissions, null);
+    return generatePolicy(privileges, locations, null, null, includeKmsPermissions);
   }
 
   /**
    * Builds the AssumeRole session policy for the given locations.
    *
-   * <p>{@code awsRegion} selects the S3 ARN partition ({@code aws}, {@code aws-us-gov}, {@code
-   * aws-cn}) via the AWS SDK region catalog. A blank region keeps the commercial {@code aws}
-   * partition, matching the previous hardcoded ARNs.
+   * <p>IAM partition is taken from {@code roleArn} when that ARN is well-formed ({@code
+   * arn:aws-us-gov:...} → {@code aws-us-gov}), then from the STS region catalog, then commercial
+   * {@code aws}. The same partition is used for S3 resources and {@code kms:ViaService} ({@code
+   * s3.*.amazonaws.com} vs {@code s3.*.amazonaws.com.cn}).
    */
   @SneakyThrows
   public static String generatePolicy(
       Set<CredentialContext.Privilege> privileges,
       List<NormalizedURL> locations,
-      boolean includeKmsPermissions,
-      String awsRegion) {
-    String partition = s3PartitionId(awsRegion);
+      String roleArn,
+      Region awsRegion) {
+    return generatePolicy(privileges, locations, roleArn, awsRegion, true);
+  }
+
+  @SneakyThrows
+  public static String generatePolicy(
+      Set<CredentialContext.Privilege> privileges,
+      List<NormalizedURL> locations,
+      String roleArn,
+      Region awsRegion,
+      boolean includeKmsPermissions) {
+    PartitionMetadata partition = iamPartition(roleArn, awsRegion);
     JsonNode policyRoot = loadYaml(POLICY_STATEMENT);
     ArrayNode policyStatement = (ArrayNode) policyRoot.findPath("Statement");
     JsonNode operationsStatement = loadYaml(OPERATION_STATEMENT);
     policyStatement.add(operationsStatement);
-    JsonNode kmsStatement = includeKmsPermissions ? loadYaml(KMS_STATEMENT) : null;
+    JsonNode kmsStatement = null;
+    if (includeKmsPermissions) {
+      kmsStatement = loadYaml(KMS_STATEMENT);
+      ((ObjectNode) kmsStatement)
+          .putObject("Condition")
+          .putObject("StringLike")
+          .put("kms:ViaService", kmsViaService(partition));
+    }
 
     // Add the appropriate S3 and KMS operations for the privileges requested
     ArrayNode actions = (ArrayNode) operationsStatement.findPath("Action");
@@ -206,29 +230,60 @@ public class AwsPolicyGenerator {
   }
 
   /**
-   * IAM partition for S3 ARNs in the session policy. Derived from the AWS SDK region catalog so
-   * GovCloud ({@code us-gov-*}) yields {@code aws-us-gov} and China ({@code cn-*}) yields {@code
-   * aws-cn}. A blank or unrecognized region keeps {@code aws}, which is what the policy used before
-   * this was parameterized.
+   * IAM partition for S3 ARNs and KMS conditions. Prefers the assumed role ARN (the session is
+   * bound to that role's partition), then the STS region catalog, then commercial {@code aws}.
    */
-  static String s3PartitionId(String awsRegion) {
-    if (awsRegion == null || awsRegion.isBlank()) {
-      return "aws";
+  static PartitionMetadata iamPartition(String roleArn, Region awsRegion) {
+    PartitionMetadata fromRole = partitionFromArn(roleArn);
+    if (fromRole != null) {
+      return fromRole;
+    }
+    return partitionFromRegion(awsRegion);
+  }
+
+  static PartitionMetadata partitionFromArn(String arn) {
+    if (arn == null || arn.isBlank()) {
+      return null;
     }
     try {
-      RegionMetadata metadata = Region.of(awsRegion).metadata();
-      if (metadata == null || metadata.partition() == null) {
-        return "aws";
+      String partition = Arn.fromString(arn).partition();
+      if (partition == null || partition.isBlank()) {
+        return null;
       }
-      String partitionId = metadata.partition().id();
-      return partitionId == null || partitionId.isBlank() ? "aws" : partitionId;
+      return PartitionMetadata.of(partition);
     } catch (RuntimeException e) {
-      return "aws";
+      return null;
     }
   }
 
-  private static String s3Arn(String partition, String resource) {
-    return String.format("arn:%s:s3:::%s", partition, resource);
+  static PartitionMetadata partitionFromRegion(Region awsRegion) {
+    if (awsRegion == null) {
+      return commercialPartition();
+    }
+    try {
+      if (awsRegion.metadata() != null && awsRegion.metadata().partition() != null) {
+        return awsRegion.metadata().partition();
+      }
+    } catch (RuntimeException ignored) {
+      // Unknown regions fall through to commercial aws.
+    }
+    return commercialPartition();
+  }
+
+  private static String kmsViaService(PartitionMetadata partition) {
+    String dnsSuffix = partition.dnsSuffix();
+    if (dnsSuffix == null || dnsSuffix.isBlank()) {
+      dnsSuffix = "aws-cn".equals(partition.id()) ? "amazonaws.com.cn" : "amazonaws.com";
+    }
+    return "s3.*." + dnsSuffix;
+  }
+
+  private static PartitionMetadata commercialPartition() {
+    return PartitionMetadata.of(AWS_PARTITION);
+  }
+
+  private static String s3Arn(PartitionMetadata partition, String resource) {
+    return String.format("arn:%s:s3:::%s", partition.id(), resource);
   }
 
   /**

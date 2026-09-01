@@ -58,7 +58,7 @@ public class UserRepository {
           return user;
         },
         "Failed to create user",
-        /* readOnly = */ false);
+        /* readOnly= */ false);
   }
 
   public List<User> listUsers(int startIndex, int maxUsers, Predicate<User> filter) {
@@ -102,7 +102,7 @@ public class UserRepository {
           return users.subList(0, Math.min(users.size(), maxUsers));
         },
         "Failed to list users",
-        /* readOnly = */ true);
+        /* readOnly= */ true);
   }
 
   public User getUser(String id) {
@@ -116,7 +116,7 @@ public class UserRepository {
           return userDAO.toUser();
         },
         "Failed to get user",
-        /* readOnly = */ true);
+        /* readOnly= */ true);
   }
 
   public UserDAO getUserById(Session session, String id) {
@@ -137,7 +137,7 @@ public class UserRepository {
           return userDAO.toUser();
         },
         "Failed to get user by email",
-        /* readOnly = */ true);
+        /* readOnly= */ true);
   }
 
   public User getUserByExternalId(String externalId) {
@@ -151,7 +151,7 @@ public class UserRepository {
           return userDAO.toUser();
         },
         "Failed to get user by external id",
-        /* readOnly = */ true);
+        /* readOnly= */ true);
   }
 
   public UserDAO getUserByEmail(Session session, String email) {
@@ -201,7 +201,7 @@ public class UserRepository {
           return userDAO.toUser();
         },
         "Failed to update user",
-        /* readOnly = */ false);
+        /* readOnly= */ false);
   }
 
   public void deleteUser(String id) {
@@ -219,7 +219,7 @@ public class UserRepository {
           }
         },
         "Failed to delete user",
-        /* readOnly = */ false);
+        /* readOnly= */ false);
   }
 
   public UUID findPrincipalId() {

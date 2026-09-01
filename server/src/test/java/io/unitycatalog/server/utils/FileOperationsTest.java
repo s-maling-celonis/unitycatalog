@@ -37,6 +37,8 @@ import org.apache.iceberg.io.CloseableIterable;
 import org.apache.iceberg.io.FileIO;
 import org.apache.iceberg.io.FileInfo;
 import org.apache.iceberg.io.InputFile;
+import org.apache.iceberg.io.OutputFile;
+import org.apache.iceberg.io.PositionOutputStream;
 import org.apache.iceberg.io.ResolvingFileIO;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -235,6 +237,32 @@ public class FileOperationsTest {
   }
 
   @Test
+  public void testGetFileIOConfigS3UsesVendedEndpointWhenNoPerBucketEntry() {
+    Properties props = new Properties();
+    props.setProperty("s3.bucketPath.0", "s3://my-bucket");
+    props.setProperty("s3.region.0", "us-west-2");
+    props.setProperty("s3.awsRoleArn.0", "arn:aws:iam::123456789012:role/test");
+    StorageCredentialVendor vendor = mock(StorageCredentialVendor.class);
+    when(vendor.vendCredential(any(), any()))
+        .thenReturn(
+            new TemporaryCredentials()
+                .awsTempCredentials(
+                    new AwsCredentials()
+                        .accessKeyId("AKIA")
+                        .secretAccessKey("secret")
+                        .sessionToken("token"))
+                .endpointUrl("https://mcg.example.com/s3"));
+    FileOperations fileOps = new FileOperations(vendor, new ServerProperties(props));
+
+    Map<String, String> config =
+        fileOps.getFileIOConfig(NormalizedURL.from("s3://my-bucket/table"));
+
+    assertThat(config)
+        .containsEntry(S3FileIOProperties.ENDPOINT, "https://mcg.example.com/s3")
+        .containsEntry(S3FileIOProperties.PATH_STYLE_ACCESS, "true");
+  }
+
+  @Test
   public void testGetFileIOConfigS3CustomEndpoint() {
     Properties props = new Properties();
     props.setProperty("s3.bucketPath.0", "s3://my-bucket");
@@ -371,6 +399,22 @@ public class FileOperationsTest {
       InputFile input = fileIO.newInputFile(file.toUri().toString());
       assertThat(input.getLength()).isEqualTo("hello world".length());
     }
+  }
+
+  @SneakyThrows
+  @Test
+  public void testGetFileIOForLocalPathWritesThroughReturnedFileIO() {
+    Path file = rootBase.resolve("metadata-" + UUID.randomUUID() + ".json");
+    StorageCredentialVendor vendor = mock(StorageCredentialVendor.class);
+    FileOperations fileOps = new FileOperations(vendor, new ServerProperties(new Properties()));
+
+    try (FileIO fileIO = fileOps.getFileIO(NormalizedURL.from(file.toUri().toString()))) {
+      OutputFile output = fileIO.newOutputFile(file.toUri().toString());
+      try (PositionOutputStream stream = output.createOrOverwrite()) {
+        stream.write("{\"table\":true}".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+      }
+    }
+    assertThat(Files.readString(file)).isEqualTo("{\"table\":true}");
   }
 
   @Test

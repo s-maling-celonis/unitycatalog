@@ -469,8 +469,9 @@ public class ColumnUtils {
       case "string" -> ColumnTypeName.STRING;
       case "binary" -> ColumnTypeName.BINARY;
       case "variant" -> ColumnTypeName.VARIANT;
-      default -> throw new BaseException(
-          ErrorCode.INVALID_ARGUMENT, "Unsupported Delta primitive type: " + primitive);
+      default ->
+          throw new BaseException(
+              ErrorCode.INVALID_ARGUMENT, "Unsupported Delta primitive type: " + primitive);
     };
   }
 

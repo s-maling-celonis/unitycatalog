@@ -4,7 +4,6 @@ import io.unitycatalog.server.exception.BaseException;
 import io.unitycatalog.server.exception.ErrorCode;
 import io.unitycatalog.server.model.AwsIamRoleRequest;
 import io.unitycatalog.server.model.AwsIamRoleResponse;
-import io.unitycatalog.server.model.AwsS3AccessKeyResponse;
 import io.unitycatalog.server.persist.dao.CredentialDAO;
 import io.unitycatalog.server.service.credential.CredentialContext;
 import io.unitycatalog.server.utils.NormalizedURL;
@@ -31,9 +30,9 @@ import software.amazon.awssdk.services.sts.model.Credentials;
  *       client assumes that role (see {@link AwsIamRoleRequest} / {@link AwsIamRoleResponse}).
  *   <li><b>External Location + static access key:</b> When the credential is {@link
  *       CredentialDAO.CredentialType#S3_ACCESS_KEY}, UC reads the secret configured under {@code
- *       s3.static.secretKey.<accessKeyId>} for that credential's {@link
- *       AwsS3AccessKeyResponse#getAccessKeyId()}. Soft expiry comes from {@code
- *       s3.static.credentialTtlSeconds}. Secrets are never stored in the catalog database.
+ *       s3.static.secretKey.<accessKeyId>} for that credential's access key id. Soft expiry comes
+ *       from {@code s3.static.credentialTtlSeconds}. Secrets are never stored in the catalog
+ *       database.
  *   <li><b>Per-Bucket Configuration:</b> Legacy mode using per-bucket S3 configurations in
  *       server.properties when no external location covers the path.
  * </ol>
@@ -152,14 +151,23 @@ public class AwsCredentialVendor {
   public Optional<String> resolveS3EndpointUrl(CredentialContext context) {
     if (context.getStorageBase() != null) {
       S3StorageConfig config = perBucketS3Configs.get(context.getStorageBase());
-      if (config != null && config.getEndpointUrl() != null && !config.getEndpointUrl().isEmpty()) {
-        return Optional.of(config.getEndpointUrl());
+      Optional<String> perBucketEndpoint = resolveConfiguredS3Endpoint(config);
+      if (perBucketEndpoint.isPresent()) {
+        return perBucketEndpoint;
       }
     }
-    if (awsS3MasterRoleConfig != null
-        && awsS3MasterRoleConfig.getEndpointUrl() != null
-        && !awsS3MasterRoleConfig.getEndpointUrl().isEmpty()) {
-      return Optional.of(awsS3MasterRoleConfig.getEndpointUrl());
+    return resolveConfiguredS3Endpoint(awsS3MasterRoleConfig);
+  }
+
+  private Optional<String> resolveConfiguredS3Endpoint(S3StorageConfig config) {
+    if (config == null) {
+      return Optional.empty();
+    }
+    if (config.getS3EndpointUrl() != null && !config.getS3EndpointUrl().isEmpty()) {
+      return Optional.of(config.getS3EndpointUrl());
+    }
+    if (config.getEndpointUrl() != null && !config.getEndpointUrl().isEmpty()) {
+      return Optional.of(config.getEndpointUrl());
     }
     return Optional.empty();
   }

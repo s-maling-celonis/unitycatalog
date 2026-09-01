@@ -195,8 +195,8 @@ public class ServerProperties {
     POLICY_REFRESH_ENABLED("server.authorization.policy-refresh", "false", BOOLEAN_VALIDATOR),
     POLICY_REFRESH_INTERVAL(
         "server.authorization.policy-refresh-interval", "PT1M", DURATION_VALIDATOR),
-    POLICY_REFRESH_DEBOUNCE(
-        "server.authorization.policy-refresh-debounce", "PT1S", DURATION_VALIDATOR),
+    POLICY_REFRESH_DEBOUNCE_INTERVAL(
+        "server.authorization.policy-refresh-debounce-interval", "PT1S", DURATION_VALIDATOR),
     AUTHORIZATION_URL("server.authorization-url", URL_VALIDATOR),
     TOKEN_URL("server.token-url", URL_VALIDATOR),
     CLIENT_ID("server.client-id"),
@@ -207,6 +207,8 @@ public class ServerProperties {
     COOKIE_TIMEOUT("server.cookie-timeout", "P5D", DURATION_VALIDATOR),
     ACCESS_TOKEN_TIMEOUT("server.access-token-timeout", "PT24H", DURATION_VALIDATOR),
     MANAGED_TABLE_ENABLED("server.managed-table.enabled", "true", BOOLEAN_VALIDATOR),
+    // Native Iceberg REST writes are experimental and opt-in until the API is stable.
+    ICEBERG_TABLE_ENABLED("server.iceberg-table.enabled", "false", BOOLEAN_VALIDATOR),
     MANAGED_TABLE_USE_DELTA_API_ONLY(
         "server.managed-table.use-delta-api-only", "false", BOOLEAN_VALIDATOR),
     UNIFORM_ICEBERG_V2_ALLOW_MISSING_DV(
@@ -219,6 +221,8 @@ public class ServerProperties {
     AWS_SECRET_KEY("aws.secretKey"),
     AWS_SESSION_TOKEN("aws.sessionToken"),
     AWS_REGION("aws.region"),
+    AWS_STS_ENDPOINT_URL("aws.stsEndpointUrl"),
+    AWS_S3_ENDPOINT_URL("aws.s3EndpointUrl"),
     AWS_ENDPOINT_URL("aws.endpointUrl"),
     /**
      * Lifetime stamped on credentials vended via the static path so clients refresh. Does not
@@ -335,13 +339,40 @@ public class ServerProperties {
   public S3StorageConfig getS3MasterRoleConfiguration() {
     // These values may be null and that is OK. An empty config means AWS credential vending will
     // use the default credential provider which is typically the same when running on AWS cloud.
+    String legacyEndpoint = get(Property.AWS_ENDPOINT_URL);
     return S3StorageConfig.builder()
         .region(get(Property.AWS_REGION))
         .accessKey(get(Property.AWS_ACCESS_KEY))
         .secretKey(get(Property.AWS_SECRET_KEY))
-        .endpointUrl(get(Property.AWS_ENDPOINT_URL))
+        .endpointUrl(legacyEndpoint)
+        .stsEndpointUrl(resolveStsEndpoint(get(Property.AWS_STS_ENDPOINT_URL), legacyEndpoint))
+        .s3EndpointUrl(resolveS3Endpoint(get(Property.AWS_S3_ENDPOINT_URL), legacyEndpoint))
         // Does not take AWS_SESSION_TOKEN as it's only part of a temporary credential.
         .build();
+  }
+
+  private static String resolveStsEndpoint(String explicitStsEndpoint, String legacyEndpoint) {
+    if (isNonBlank(explicitStsEndpoint)) {
+      return explicitStsEndpoint;
+    }
+    if (isNonBlank(legacyEndpoint)) {
+      return legacyEndpoint;
+    }
+    return null;
+  }
+
+  private static String resolveS3Endpoint(String explicitS3Endpoint, String legacyEndpoint) {
+    if (isNonBlank(explicitS3Endpoint)) {
+      return explicitS3Endpoint;
+    }
+    if (isNonBlank(legacyEndpoint)) {
+      return legacyEndpoint;
+    }
+    return null;
+  }
+
+  private static boolean isNonBlank(String value) {
+    return value != null && !value.isBlank();
   }
 
   /**
@@ -386,6 +417,7 @@ public class ServerProperties {
       String secretKey = getProperty("s3.secretKey." + i);
       String sessionToken = getProperty("s3.sessionToken." + i);
       String endpointUrl = getProperty("s3.endpointUrl." + i);
+      String stsEndpointUrl = getProperty("s3.stsEndpointUrl." + i);
       String credentialGenerator = getProperty("s3.credentialGenerator." + i);
       if ((bucketPath == null || region == null || awsRoleArn == null)
           && (accessKey == null || secretKey == null || sessionToken == null)) {
@@ -400,6 +432,8 @@ public class ServerProperties {
               .secretKey(secretKey)
               .sessionToken(sessionToken)
               .endpointUrl(endpointUrl)
+              .stsEndpointUrl(resolveStsEndpoint(stsEndpointUrl, endpointUrl))
+              .s3EndpointUrl(endpointUrl)
               .credentialGenerator(credentialGenerator)
               .build();
       s3BucketConfigMap.put(NormalizedURL.from(bucketPath), s3StorageConfig);
@@ -519,8 +553,8 @@ public class ServerProperties {
     return Duration.parse(get(Property.POLICY_REFRESH_INTERVAL));
   }
 
-  public Duration getPolicyRefreshDebounce() {
-    return Duration.parse(get(Property.POLICY_REFRESH_DEBOUNCE));
+  public Duration getPolicyRefreshDebounceInterval() {
+    return Duration.parse(get(Property.POLICY_REFRESH_DEBOUNCE_INTERVAL));
   }
 
   public boolean isIncludeStackTraceInError() {
@@ -553,6 +587,23 @@ public class ServerProperties {
           "MANAGED table is an is currently disabled. To enable it, set "
               + "'server.managed-table.enabled=true' in server.properties");
     }
+  }
+
+  /**
+   * Check if experimental native Iceberg REST table writes are enabled. Reads remain available when
+   * this flag is disabled; only namespace/table mutations are gated by this check.
+   */
+  public void checkIcebergTableEnabled() {
+    if (!isIcebergTableEnabled()) {
+      throw new BaseException(
+          ErrorCode.INVALID_ARGUMENT,
+          "Iceberg table writes are currently disabled. To enable them, set "
+              + "'server.iceberg-table.enabled=true' in server.properties");
+    }
+  }
+
+  public boolean isIcebergTableEnabled() {
+    return isTrueOrEnable(get(Property.ICEBERG_TABLE_ENABLED));
   }
 
   /**

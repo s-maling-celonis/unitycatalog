@@ -7,7 +7,6 @@ import static io.unitycatalog.server.model.SecurableType.METASTORE;
 import com.linecorp.armeria.common.HttpResponse;
 import com.linecorp.armeria.common.HttpStatus;
 import com.linecorp.armeria.server.annotation.Delete;
-import com.linecorp.armeria.server.annotation.ExceptionHandler;
 import com.linecorp.armeria.server.annotation.Get;
 import com.linecorp.armeria.server.annotation.Param;
 import com.linecorp.armeria.server.annotation.Patch;
@@ -17,7 +16,6 @@ import io.unitycatalog.server.auth.annotation.AuthorizeExpression;
 import io.unitycatalog.server.auth.annotation.AuthorizeKey;
 import io.unitycatalog.server.auth.annotation.AuthorizeResourceKey;
 import io.unitycatalog.server.auth.annotation.ResponseAuthorizeFilter;
-import io.unitycatalog.server.exception.GlobalExceptionHandler;
 import io.unitycatalog.server.model.CatalogInfo;
 import io.unitycatalog.server.model.CreateCatalog;
 import io.unitycatalog.server.model.ListCatalogsResponse;
@@ -32,8 +30,7 @@ import java.util.List;
 import java.util.Optional;
 import lombok.SneakyThrows;
 
-@ExceptionHandler(GlobalExceptionHandler.class)
-public class CatalogService extends AuthorizedService {
+public class CatalogService extends AuthorizedService implements UnityCatalogRestService {
   private final CatalogRepository catalogRepository;
   private final MetastoreRepository metastoreRepository;
 
@@ -108,7 +105,8 @@ public class CatalogService extends AuthorizedService {
   }
 
   @Patch("/{name}")
-  @AuthorizeExpression("""
+  @AuthorizeExpression(
+      """
       #authorize(#principal, #catalog, OWNER)
       """)
   @AuthorizeResourceKey(METASTORE)

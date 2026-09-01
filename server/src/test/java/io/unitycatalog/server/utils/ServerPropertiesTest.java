@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.unitycatalog.server.exception.BaseException;
 import io.unitycatalog.server.model.TableType;
+import io.unitycatalog.server.service.credential.aws.S3StorageConfig;
 import io.unitycatalog.server.utils.ServerProperties.Property;
 import java.time.Duration;
 import java.util.Properties;
@@ -100,6 +101,9 @@ public class ServerPropertiesTest {
     testValidProperty(Property.MANAGED_TABLE_ENABLED, "true");
     testValidProperty(Property.MANAGED_TABLE_ENABLED, "false");
     testValidProperty(Property.MANAGED_TABLE_ENABLED, "TRUE");
+    testValidProperty(Property.ICEBERG_TABLE_ENABLED, "true");
+    testValidProperty(Property.ICEBERG_TABLE_ENABLED, "false");
+    testValidProperty(Property.ICEBERG_TABLE_ENABLED, "TRUE");
 
     // Invalid values
     testInvalidProperty(
@@ -108,6 +112,25 @@ public class ServerPropertiesTest {
         "Invalid value 'yes'",
         "server.managed-table.enabled",
         "Allowed values: [true, false]");
+    testInvalidProperty(
+        Property.ICEBERG_TABLE_ENABLED,
+        "yes",
+        "Invalid value 'yes'",
+        "server.iceberg-table.enabled",
+        "Allowed values: [true, false]");
+  }
+
+  @Test
+  public void testIcebergTableEnabledCheck() {
+    ServerProperties serverProperties = new ServerProperties();
+    assertThat(serverProperties.isIcebergTableEnabled()).isFalse();
+    assertThatThrownBy(serverProperties::checkIcebergTableEnabled)
+        .isInstanceOf(BaseException.class)
+        .hasMessageContaining("server.iceberg-table.enabled=true");
+
+    serverProperties.set(Property.ICEBERG_TABLE_ENABLED, "true");
+    assertThat(serverProperties.isIcebergTableEnabled()).isTrue();
+    serverProperties.checkIcebergTableEnabled();
   }
 
   @Test
@@ -318,8 +341,36 @@ public class ServerPropertiesTest {
   }
 
   @Test
+  public void testS3EndpointResolutionPrecedence() {
+    Properties global = new Properties();
+    global.setProperty("aws.endpointUrl", "http://legacy:9000");
+    global.setProperty("aws.stsEndpointUrl", "https://mcg.example.com/sts");
+    global.setProperty("aws.s3EndpointUrl", "https://mcg.example.com/s3");
+    ServerProperties serverProperties = new ServerProperties(global);
+
+    S3StorageConfig masterConfig = serverProperties.getS3MasterRoleConfiguration();
+    assertThat(masterConfig.getStsEndpointUrl()).isEqualTo("https://mcg.example.com/sts");
+    assertThat(masterConfig.getS3EndpointUrl()).isEqualTo("https://mcg.example.com/s3");
+  }
+
+  @Test
+  public void testIndexedPerBucketEndpointResolution() {
+    Properties props = new Properties();
+    props.setProperty("s3.bucketPath.0", "s3://bucket-a");
+    props.setProperty("s3.region.0", "us-east-1");
+    props.setProperty("s3.awsRoleArn.0", "arn:aws:iam::123456789012:role/test");
+    props.setProperty("s3.endpointUrl.0", "http://legacy:9000");
+    props.setProperty("s3.stsEndpointUrl.0", "https://mcg.example.com/sts");
+    ServerProperties serverProperties = new ServerProperties(props);
+
+    S3StorageConfig config =
+        serverProperties.getS3Configurations().get(NormalizedURL.from("s3://bucket-a"));
+    assertThat(config.getStsEndpointUrl()).isEqualTo("https://mcg.example.com/sts");
+    assertThat(config.getS3EndpointUrl()).isEqualTo("http://legacy:9000");
+  }
+
+  @Test
   public void testS3StaticCredentialTtl() {
-    // Default is the 3600 seconds declared on the property.
     assertThat(new ServerProperties().getS3StaticCredentialTtl()).isEqualTo(Duration.ofHours(1));
 
     Properties props = new Properties();
@@ -358,7 +409,6 @@ public class ServerPropertiesTest {
               assertThat(config.getSessionToken()).isNull();
             });
 
-    // Each key is independent, and the optional session token belongs to a single key.
     assertThat(serverProperties.resolveS3StaticAccessKeyConfiguration("AKIA_B"))
         .get()
         .satisfies(
@@ -372,7 +422,6 @@ public class ServerPropertiesTest {
   public void testResolveS3StaticAccessKeyConfigurationWhenUnconfigured() {
     Properties props = new Properties();
     props.setProperty("s3.static.secretKey.AKIA_A", "secretA");
-    // Only a session token, no secret: not usable on its own.
     props.setProperty("s3.static.sessionToken.AKIA_TOKEN_ONLY", "tokenOnly");
     props.setProperty("s3.static.secretKey.AKIA_BLANK", "");
     ServerProperties serverProperties = new ServerProperties(props);
