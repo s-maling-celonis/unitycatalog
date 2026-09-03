@@ -32,8 +32,9 @@ import org.junit.jupiter.params.provider.EnumSource;
 
 /**
  * Tests for {@link ResolvePathCredentials}: Unity Catalog credentials are vended for cloud paths
- * referenced directly in a query (e.g. {@code parquet.`s3://bucket/dir`} or {@code
- * delta.`s3://bucket/dir`}), without a pre-registered external table.
+ * referenced directly in a query (e.g. {@code parquet.`s3://bucket/dir`}), without a pre-registered
+ * external table. Bare {@code delta.`s3://...`} paths are excluded and continue to use ambient
+ * storage credentials.
  *
  * <p>Unlike the other Spark integration tests, these register {@code UCSparkSessionExtensions} (the
  * home of the early analyzer rule and Hive parser fallback), and use the {@link
@@ -292,16 +293,7 @@ public class PathCredentialReadWriteTest extends BaseSparkIntegrationTest {
 
   /** Reapplies the idempotent path-credential rule to a parsed plan. */
   private LogicalPlan injectPathCredentials(LogicalPlan plan) {
-    return injectPathCredentials(plan, true);
-  }
-
-  /**
-   * {@code resolveDeltaPathRelations} is the hint-batch path: when true, a credentialed {@code
-   * delta.`path`} may be rewritten to {@code DataSourceV2Relation}. Tests that still inspect the
-   * {@code UnresolvedRelation} pass {@code false}.
-   */
-  private LogicalPlan injectPathCredentials(LogicalPlan plan, boolean resolveDeltaPathRelations) {
-    return new ResolvePathCredentials(session, resolveDeltaPathRelations).apply(plan);
+    return new ResolvePathCredentials(session).apply(plan);
   }
 
   /** Finds a bare {@code format.`cloud-path`} relation anywhere in a parsed plan tree. */
@@ -367,12 +359,11 @@ public class PathCredentialReadWriteTest extends BaseSparkIntegrationTest {
    * <p>Local storage: end-to-end CREATE + read (mirrors {@link
    * DeltaExternalTableReadWriteTest#testDeltaPathTable()} under the path-cred session layout).
    *
-   * <p>Cloud storage: writes a bare {@code delta.`s3://...`} path table (CREATE TABLE AS SELECT,
-   * then INSERT OVERWRITE) and reads it back with vended credentials — the Delta analog of {@link
-   * #testWriteAndReadBarePath()}.
+   * <p>Cloud storage: seeds data via a UC catalog table, then asserts {@link
+   * ResolvePathCredentials} does not inject credentials into {@code delta.`s3://...`}.
    */
   @Test
-  public void testWriteAndReadBareDeltaPath() throws IOException {
+  public void testWriteAndReadBareDeltaPath() throws IOException, ParseException {
     session = createDeltaSparkCatalogSession(CATALOG_NAME, false);
     sql("SET CATALOG %s", CATALOG_NAME);
 
@@ -381,14 +372,19 @@ public class PathCredentialReadWriteTest extends BaseSparkIntegrationTest {
     assertSingleRow(sql("SELECT * FROM delta.`%s`", localPath));
 
     String s3Location = bucketPath("delta_path");
-    sql("CREATE TABLE delta.`%s` USING delta AS SELECT 1 AS i, 'a' AS s", s3Location);
-    assertSingleRow(sql("SELECT * FROM delta.`%s`", s3Location));
+    String seedTable = String.format("%s.%s.path_cred_delta_seed", CATALOG_NAME, SCHEMA_NAME);
+    sql("CREATE TABLE %s (i INT, s STRING) USING delta LOCATION '%s'", seedTable, s3Location);
+    sql("INSERT INTO %s SELECT 1 AS i, 'a' AS s", seedTable);
 
-    sql("INSERT OVERWRITE delta.`%s` SELECT 2 AS i, 'b' AS s", s3Location);
-    List<Row> overwritten = sql("SELECT * FROM delta.`%s`", s3Location);
-    assertThat(overwritten).hasSize(1);
-    assertThat(overwritten.get(0).getInt(0)).isEqualTo(2);
-    assertThat(overwritten.get(0).getString(1)).isEqualTo("b");
+    LogicalPlan readPlan =
+        injectPathCredentials(
+            session
+                .sessionState()
+                .sqlParser()
+                .parsePlan(String.format("SELECT * FROM delta.`%s`", s3Location)));
+    UnresolvedRelation relation = findBareCloudPathRelation(readPlan);
+    assertThat(relation).isNotNull();
+    assertThat(relation.options().get("fs.s3a.access.key")).isNull();
   }
 
   /**
@@ -519,47 +515,6 @@ public class PathCredentialReadWriteTest extends BaseSparkIntegrationTest {
               .parsePlan(String.format("SELECT * FROM parquet.`%s`", location));
       LogicalPlan first = injectPathCredentials(parsed);
       LogicalPlan second = injectPathCredentials(first);
-
-      assertThat(vends.get()).isEqualTo(1);
-      assertThat(second.fastEquals(first)).as("rule must reach a fixed point: %s", second).isTrue();
-      assertThat(findBareCloudPathRelation(first).options().get("fs.s3a.session.token"))
-          .isEqualTo("sessionToken1");
-    } finally {
-      CredPropsUtil.genericCredFetcherFactory = GenericCredentialFetcher::create;
-    }
-  }
-
-  /**
-   * Same fixed-point contract as {@link #testRepeatedApplicationVendsOnceAndLeavesPlanUnchanged()}
-   * for a bare {@code delta.`path`}. Uses the resolution-batch form so the relation stays an {@code
-   * UnresolvedRelation}.
-   */
-  @Test
-  public void testRepeatedApplicationOnBareDeltaPathVendsOnce() throws IOException, ParseException {
-    session = createDeltaSparkCatalogSession(CATALOG_NAME, false);
-    sql("SET CATALOG %s", CATALOG_NAME);
-    session.conf().set(UCHadoopConfConstants.UC_CREDENTIAL_CACHE_ENABLED_KEY, "false");
-    String location = bucketPath("repeated_delta_rule_application");
-
-    AtomicInteger vends = new AtomicInteger();
-    CredPropsUtil.genericCredFetcherFactory =
-        (apiClient, credId) ->
-            () ->
-                List.of(
-                    new AwsCredential(
-                        "accessKey0",
-                        "secretKey0",
-                        "sessionToken" + vends.incrementAndGet(),
-                        Long.MAX_VALUE,
-                        null));
-    try {
-      LogicalPlan parsed =
-          session
-              .sessionState()
-              .sqlParser()
-              .parsePlan(String.format("SELECT * FROM delta.`%s`", location));
-      LogicalPlan first = injectPathCredentials(parsed, false);
-      LogicalPlan second = injectPathCredentials(first, false);
 
       assertThat(vends.get()).isEqualTo(1);
       assertThat(second.fastEquals(first)).as("rule must reach a fixed point: %s", second).isTrue();

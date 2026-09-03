@@ -44,8 +44,7 @@ class UCSparkSqlExtensionsParser(spark: SparkSession, delegate: ParserInterface)
   // idempotent, but keep parser-time catalog I/O out of sessions whose analyzer runs hint rules.
   protected def applyParserExtensions(plan: LogicalPlan): LogicalPlan =
     if (spark.sessionState.conf.getConf(StaticSQLConf.CATALOG_IMPLEMENTATION) == "hive") {
-      ResolvePathCredentials(spark, resolveDeltaPathRelations = true)
-        .apply(applyUcExtensions(plan))
+      ResolvePathCredentials(spark).apply(applyUcExtensions(plan))
     } else {
       applyUcExtensions(plan)
     }
