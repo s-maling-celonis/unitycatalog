@@ -10,8 +10,8 @@ private[spark] object PathCredentialOptions {
 
   /**
    * True when `keys` already carry Hadoop filesystem credentials, either vended by an earlier
-   * pass of [[ResolvePathCredentials]] or supplied explicitly by the user. Delta also stores the
-   * same keys under Spark's `option.` prefix.
+   * pass of [[ResolvePathCredentials]] or supplied explicitly by the user. Spark SQL-on-file
+   * also stores the same keys under the `option.` prefix.
    */
   def hasCredentialKeys(keys: Iterable[String]): Boolean =
     keys.exists { key =>
