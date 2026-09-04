@@ -5,7 +5,7 @@ set -euo pipefail
 
 if [[ $# -lt 1 ]]; then
   echo "usage: $0 <module> [maven-args...]" >&2
-  echo "example: $0 examples/cli" >&2
+  echo "example: $0 server" >&2
   echo "example: $0 connectors/spark -DsparkVersion=4.1" >&2
   exit 1
 fi

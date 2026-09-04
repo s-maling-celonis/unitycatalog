@@ -8,7 +8,7 @@ SERVER_CLASS_FILE="$ROOT_DIR/server/src/main/java/io/unitycatalog/server/UnityCa
 
 # This function generates the unity catalog jars using Maven
 generate_jar() {
-  local GENERATE_JAR_COMMAND="mvn -f \"$ROOT_DIR/pom.xml\" -pl server,examples/cli -am package -DskipTests"
+  local GENERATE_JAR_COMMAND="mvn -f \"$ROOT_DIR/pom.xml\" -pl server -am package -DskipTests"
   echo "Running Maven to generate Server JAR: $GENERATE_JAR_COMMAND"
   eval "$GENERATE_JAR_COMMAND" || exit
 }

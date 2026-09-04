@@ -1,5 +1,8 @@
 # Unity Catalog Authentication and Authorization
 
+This repository does not include `bin/uc`. Manage catalog objects with the [REST API](../usage/api/index.md) (or Spark/DuckDB) instead of CLI commands in this page.
+
+
 You can start working with Unity Catalog Access Control integration with an external authentication provider
 (e.g., Google Auth, Okta, etc.) via the following instructions.
 

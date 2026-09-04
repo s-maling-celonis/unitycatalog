@@ -1,5 +1,8 @@
 # Delta Lake
 
+This repository does not include `bin/uc`. Manage catalog objects with the [REST API](../api/index.md) (or Spark/DuckDB) instead of CLI commands in this page.
+
+
 This page explains how you can work with Delta Lake tables in your Unity Catalog.
 
 To follow along, make sure you have a local instance of Unity Catalog running by launching the following command from a terminal window:

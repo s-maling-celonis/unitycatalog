@@ -56,9 +56,7 @@ Unity Catalog is proud to be hosted by the LF AI & Data Foundation.
 Let's take Unity Catalog for spin. In this guide, we are going to do the following:
 
 - In one terminal, run the UC server.
-- In another terminal, we will explore the contents of the UC server using a CLI.
-  An example project is provided to demonstrate how to use the UC SDK for various assets
-  as well as provide a convenient way to explore the content of any UC server implementation.
+- In another terminal, explore the catalog with the [REST API](docs/usage/api/index.md), DuckDB, or Spark.
 
 > If you prefer to run Unity Catalog in Docker use `docker compose up`. See the [Docker Compose docs](./docs/docker_compose.md) for more details.
 
@@ -80,30 +78,14 @@ bin/start-uc-server
 
 For the remaining steps, continue in a different terminal.
 
-### Operate on Delta tables with the CLI
-
-Let's list the tables.
+### List tables with the REST API
 
 ```sh
-bin/uc table list --catalog unity --schema default
+curl -s 'http://127.0.0.1:8080/api/2.1/unity-catalog/tables?catalog_name=unity&schema_name=default'
 ```
 
-You should see a few tables. Some details are truncated because of the nested nature of the data.
-To see all the content, you can add `--output jsonPretty` to any command.
-
-Next, let's get the metadata of one of those tables.
-
-```sh
-bin/uc table get --full_name unity.default.numbers
-```
-
-You can see that it is a Delta table. Now, specifically for Delta tables, this CLI can
-print a snippet of the contents of a Delta table (powered by the [Delta Kernel Java](https://delta.io/blog/delta-kernel/) project).
-Let's try that.
-
-```sh
-bin/uc table read --full_name unity.default.numbers
-```
+You should see a few tables, including `numbers`. See the [REST API docs](docs/usage/api/index.md) for create/get/delete
+examples. Table data is queried with DuckDB or Spark, not through the server HTTP API.
 
 ### Operate on Delta tables with DuckDB
 
@@ -154,11 +136,10 @@ To quit DuckDB, press `Ctrl`+`D` (if your platform supports it), press `Ctrl`+`C
 
 This fork does not include the OSS UI sources (`ui/`). `docker compose up` still starts the [published UI image](https://hub.docker.com/r/unitycatalog/unitycatalog-ui) on `http://localhost:3000`. To build or modify the UI, use [upstream `ui/`](https://github.com/unitycatalog/unitycatalog/tree/main/ui).
 
-## CLI tutorial
+## REST API
 
-You can interact with a Unity Catalog server to create and manage catalogs, schemas and tables,
-operate on volumes and functions from the CLI, and much more.
-See the [cli usage](docs/usage/cli.md) for more details.
+Create and manage catalogs, schemas, tables, volumes, functions, and models with the
+[REST API](docs/usage/api/index.md).
 
 ## APIs and Compatibility
 
@@ -179,7 +160,7 @@ Spark line is selected with `-DsparkVersion=4.0`, `4.1` (default), or `4.2`. The
 
 ## Deployment
 
-- To create a tarball that can be used to deploy the UC server or run the CLI, run the following:
+- To create a tarball that can be used to deploy the UC server, run the following:
   ```sh
   mvn -Pdist package -DskipTests
   ```
@@ -199,7 +180,7 @@ Spark line is selected with `-DsparkVersion=4.0`, `4.1` (default), or `4.2`. The
   ```
 - To test a single module without re-running upstream tests (`-am test` would), run:
   ```sh
-  ./dev/maven/test-module.sh examples/cli
+  ./dev/maven/test-module.sh server
   ./dev/maven/test-module.sh connectors/spark
   ```
   The script installs SNAPSHOT dependencies with tests skipped, then runs tests only in the selected module.

@@ -227,7 +227,7 @@ runs:
 
         case "${{ inputs.component-name }}" in
           unity-catalog-server)
-            mvn -B -pl server,examples/cli -am verify
+            mvn -B -pl server -am verify
             ;;
           unitycatalog-client|unitycatalog-controlapi)
             mvn -B -pl "${{ steps.component.outputs.maven-pl }}" -am test
@@ -252,17 +252,14 @@ runs:
       working-directory: ${{ inputs.working-directory }}
       run: |
         set -euo pipefail
-        # .dockerignore excludes server/target/ and examples/cli/target/; stage under build/.
+        # .dockerignore excludes server/target/; stage under build/.
         rm -rf build/ci-staging/prebuilt/server/target \
-          build/ci-staging/prebuilt/examples/cli/target \
           build/ci-staging/prebuilt/control-api/target \
           build/ci-staging/prebuilt/home
         mkdir -p build/ci-staging/prebuilt/server \
-          build/ci-staging/prebuilt/examples/cli \
           build/ci-staging/prebuilt/control-api \
           build/ci-staging/prebuilt/home
         cp -a server/target build/ci-staging/prebuilt/server/
-        cp -a examples/cli/target build/ci-staging/prebuilt/examples/cli/
         cp -a control-api/target build/ci-staging/prebuilt/control-api/
 
         # Copy only jars that the runtime classpaths reference so the PREBUILT
@@ -283,8 +280,7 @@ runs:
         slim_cache="build/ci-staging/prebuilt/home/.m2"
         mkdir -p "$slim_cache"
         for classpath in \
-          build/ci-staging/prebuilt/server/target/classpath \
-          build/ci-staging/prebuilt/examples/cli/target/classpath; do
+          build/ci-staging/prebuilt/server/target/classpath; do
           if [ ! -f "$classpath" ]; then
             echo "Missing $classpath" >&2
             exit 1
@@ -322,7 +318,7 @@ runs:
         echo "Maven cache before/after slimming:"
         du -sh "$CACHE_SRC" "$slim_cache" || true
 
-        rm -rf server/target examples/cli/target control-api/target
+        rm -rf server/target control-api/target
         rm -rf "${HOME}/.m2" /home/runner/.m2/repository 2>/dev/null || true
         docker builder prune -af || true
         docker system prune -af --volumes || true
@@ -402,22 +398,14 @@ runs:
         set -euo pipefail
         docker run --rm --platform linux/amd64 --user root --entrypoint sh "$IMAGE" -c '
           CLASSPATH=/home/unitycatalog/server/target/classpath
-          CLI_CLASSPATH=/home/unitycatalog/examples/cli/target/classpath
           if [ ! -f "$CLASSPATH" ]; then
             echo "Missing $CLASSPATH; listing /home/unitycatalog/server/target:" >&2
             ls -la /home/unitycatalog/server/target 2>&1 || ls -la /home/unitycatalog/server 2>&1 || true
             exit 1
           fi
-          if [ ! -f "$CLI_CLASSPATH" ]; then
-            echo "Missing $CLI_CLASSPATH; listing /home/unitycatalog/examples/cli/target:" >&2
-            ls -la /home/unitycatalog/examples/cli/target 2>&1 || ls -la /home/unitycatalog/examples/cli 2>&1 || true
-            exit 1
-          fi
           grep -q "/home/unitycatalog/.m2" "$CLASSPATH"
-          grep -q "/home/unitycatalog/.m2" "$CLI_CLASSPATH"
           test -d /home/unitycatalog/.m2
-          test -x /home/unitycatalog/bin/uc
-          /home/unitycatalog/bin/uc --help >/dev/null
+          test -x /home/unitycatalog/bin/start-uc-server
         '
 
     - name: Set empty image metadata

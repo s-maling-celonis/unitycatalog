@@ -1,5 +1,8 @@
 # Unity Catalog PuppyGraph Integration
 
+This repository does not include `bin/uc`. Manage catalog objects with the [REST API](../usage/api/index.md) (or Spark/DuckDB) instead of CLI commands in this page.
+
+
 This document walks through how to use [PuppyGraph](https://www.puppygraph.com) to query data from Delta tables registered in Unity Catalog as a graph.
 
 ## Prerequisites

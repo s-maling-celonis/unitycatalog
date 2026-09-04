@@ -1,5 +1,8 @@
 # Unity Catalog Functions
 
+This repository does not include `bin/uc`. Manage catalog objects with the [REST API](api/index.md) (or Spark/DuckDB) instead of CLI commands in this page.
+
+
 This page shows you how to use Unity Catalog to store, access and govern Functions.
 
 Functions are units of saved logic that return a scalar value or a set of rows.

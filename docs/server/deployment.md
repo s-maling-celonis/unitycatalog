@@ -25,8 +25,7 @@ This guide outlines how to deploy the Unity Catalog server.
     ```console
     unitycatalog-<version>
     ├── bin
-    │   ├── start-uc-server
-    │   └── uc
+    │   └── start-uc-server
     ├── etc
     │   ├── conf
     │   ├── data
@@ -35,7 +34,7 @@ This guide outlines how to deploy the Unity Catalog server.
     └── jars
     ```
 
-- The `bin` directory contains the scripts that you can use to start the UC server and run the CLI.
+- The `bin` directory contains the script that starts the UC server.
 - The `etc` directory contains the configuration, data, database, and logs directories.
 - The `jars` directory contains the jar files required to run the UC server.
 

@@ -1,5 +1,8 @@
 # Deploy for AWS
 
+This repository does not include `bin/uc`. Manage catalog objects with the [REST API](../usage/api/index.md) (or Spark/DuckDB) instead of CLI commands in this page.
+
+
 This page explains how to configure Unity Catalog server with AWS storage and credential. Here's a quick overview:
 
 * Unity Catalog server needs to hold credentials of a ***master role*** (or user) which is usually the IAM role the server runs as.

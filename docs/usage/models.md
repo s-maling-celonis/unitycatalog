@@ -1,5 +1,8 @@
 # Unity Catalog Registered Models and Model Versions
 
+This repository does not include `bin/uc`. Manage catalog objects with the [REST API](api/index.md) (or Spark/DuckDB) instead of CLI commands in this page.
+
+
 This page shows you how to use Unity Catalog to store, access, and govern Registered Models and Model Versions.
 
 Registered Models are logical containers for ML models within Unity Catalog.  A registered model is comprised of any

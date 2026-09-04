@@ -22,8 +22,10 @@ cd integration-tests
 ```
 
 In a separate shell, ensure a catalog is created for testing:
-```
-bin/uc catalog create --name unity
+```sh
+curl -s -X POST 'http://127.0.0.1:8080/api/2.1/unity-catalog/catalogs' \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"unity"}'
 ```
 
 ### Option 2: Use external catalog

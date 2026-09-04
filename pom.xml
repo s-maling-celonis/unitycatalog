@@ -53,7 +53,6 @@
     <module>server</module>
     <module>server-shaded</module>
     <module>connectors/hadoop</module>
-    <module>examples/cli</module>
     <module>connectors/spark</module>
     <module>integration-tests</module>
   </modules>
@@ -163,11 +162,6 @@
       <dependency>
         <groupId>io.unitycatalog</groupId>
         <artifactId>unitycatalog-server-shaded</artifactId>
-        <version>${project.version}</version>
-      </dependency>
-      <dependency>
-        <groupId>io.unitycatalog</groupId>
-        <artifactId>unitycatalog-cli</artifactId>
         <version>${project.version}</version>
       </dependency>
       <dependency>

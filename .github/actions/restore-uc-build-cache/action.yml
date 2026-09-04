@@ -23,7 +23,6 @@ runs:
           clients/java/target
           connectors/hadoop/target
           connectors/spark/target
-          examples/cli/target
           integration-tests/target
           control-api/target
         key: uc-build-${{ github.run_id }}

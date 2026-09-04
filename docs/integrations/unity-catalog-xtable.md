@@ -1,5 +1,8 @@
 # Unity Catalog XTable Integration
 
+This repository does not include `bin/uc`. Manage catalog objects with the [REST API](../usage/api/index.md) (or Spark/DuckDB) instead of CLI commands in this page.
+
+
 This document walks through the steps to register an Apache XTable™ (Incubating) synced Delta table in Unity Catalog.
 
 [Apache XTable](https://xtable.apache.org) provides cross-table omni-directional interoperability between Apache Hudi,

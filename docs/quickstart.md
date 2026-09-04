@@ -57,48 +57,15 @@ Well, that was pretty easy!
 
 Let’s create a new Terminal window and verify that the Unity Catalog server is running.
 
-Unity Catalog has a few built-in tables that are great for quick experimentation. Let’s look at all the tables that
-have a catalog name of “unity” and a schema name of “default” with the Unity Catalog CLI.
+Unity Catalog has a few built-in tables that are great for quick experimentation. List tables in the `unity` catalog
+and `default` schema with the REST API:
 
 ```sh
-bin/uc table list --catalog unity --schema default
+curl -s 'http://127.0.0.1:8080/api/2.1/unity-catalog/tables?catalog_name=unity&schema_name=default'
 ```
 
-```console
-┌─────────────────┬──────────────┬─────┬────────────────────────────────────┐
-│      NAME       │ CATALOG_NAME │ ... │              TABLE_ID              │
-├─────────────────┼──────────────┼─────┼────────────────────────────────────┤
-│marksheet        │unity         │ ... │c389adfa-5c8f-497b-8f70-26c2cca4976d│
-├─────────────────┼──────────────┼─────┼────────────────────────────────────┤
-│marksheet_uniform│unity         │ ... │9a73eb46-adf0-4457-9bd8-9ab491865e0d│
-├─────────────────┼──────────────┼─────┼────────────────────────────────────┤
-│numbers          │unity         │ ... │32025924-be53-4d67-ac39-501a86046c01│
-├─────────────────┼──────────────┼─────┼────────────────────────────────────┤
-│user_countries   │unity         │ ... │26ed93b5-9a18-4726-8ae8-c89dfcfea069│
-└─────────────────┴──────────────┴─────┴────────────────────────────────────┘
-```
-
-Let’s read the content of the `unity.default.numbers` table with the Unity Catalog CLI.
-
-```sh
-bin/uc table read --full_name unity.default.numbers
-```
-
-```console
-┌───────────────────┬────────────────────┐
-│as_int(integer)    │as_double(double)   │
-├───────────────────┼────────────────────┤
-│564                │188.75535598441473  │
-├───────────────────┼────────────────────┤
-│755                │883.6105633023361   │
-├───────────────────┼────────────────────┤
-│...                │...                 │
-├───────────────────┼────────────────────┤
-│958                │509.3712727285101   │
-└───────────────────┴────────────────────┘
-```
-
-We can see it’s straightforward to make queries with the Unity Catalog CLI.
+You should see `marksheet`, `marksheet_uniform`, `numbers`, and `user_countries`. See the
+[REST API docs](usage/api/index.md) for other catalog operations. Query table data with DuckDB or Spark.
 
 ## Unity Catalog structure
 
@@ -122,165 +89,19 @@ The `cool_stuff` catalog contains two schema: `thing_a` and `thing_b`.
 
 Unity Catalog provides a nice organizational structure for various datasets.
 
-## List the catalogs and schemas with the CLI
+## List catalogs, schemas, and tables with the REST API
 
 The Unity Catalog server is pre-populated with a few sample catalogs, schemas, Delta tables, etc.
 
-Let's start by listing the catalogs using the CLI.
-
 ```sh
-bin/uc catalog list
+curl -s 'http://127.0.0.1:8080/api/2.1/unity-catalog/catalogs'
+curl -s 'http://127.0.0.1:8080/api/2.1/unity-catalog/schemas?catalog_name=unity'
+curl -s 'http://127.0.0.1:8080/api/2.1/unity-catalog/tables?catalog_name=unity&schema_name=default'
 ```
 
-You should see a catalog named `unity`. Let's see what's in this `unity` catalog (pun intended).
-
-```sh
-bin/uc schema list --catalog unity
-```
-
-```console
-┌───────┬────────────┬───┬────────────────────────────────────┐
-│ NAME  │CATALOG_NAME│...│             SCHEMA_ID              │
-├───────┼────────────┼───┼────────────────────────────────────┤
-│default│unity       │...│b08dfd57-a939-46cf-b102-9b906b884fae│
-└───────┴────────────┴───┴────────────────────────────────────┘
-```
-
-You should see that there is a schema named `default`. To go deeper into the contents of this schema,
-you have to list different asset types separately. Let's start with tables.
-
-## Operate on Delta tables with the CLI
-
-Let's list the tables.
-
-```sh
-bin/uc table list --catalog unity --schema default
-```
-
-```console
-┌─────────────────┬────────────┬────┬────────────────────────────────────┐
-│      NAME       │CATALOG_NAME│....│              TABLE_ID              │
-├─────────────────┼────────────┼────┼────────────────────────────────────┤
-│marksheet        │unity       │....│c389adfa-5c8f-497b-8f70-26c2cca4976d│
-├─────────────────┼────────────┼────┼────────────────────────────────────┤
-│marksheet_uniform│unity       │....│9a73eb46-adf0-4457-9bd8-9ab491865e0d│
-├─────────────────┼────────────┼────┼────────────────────────────────────┤
-│numbers          │unity       │....│32025924-be53-4d67-ac39-501a86046c01│
-├─────────────────┼────────────┼────┼────────────────────────────────────┤
-│user_countries   │unity       │....│26ed93b5-9a18-4726-8ae8-c89dfcfea069│
-└─────────────────┴────────────┴────┴────────────────────────────────────┘
-```
-
-You should see a few tables. Some details are truncated because of the nested nature of the data.
-
-> To see all the content, you can add `--output jsonPretty` to any command.
-
-Next, let's get the metadata of one those tables.
-
-```sh
-bin/uc table get --full_name unity.default.numbers
-```
-
-```console
-┌──────────────────────┬───────────────────────────────────────────┐
-│         KEY          │                  VALUE                    │
-├──────────────────────┼───────────────────────────────────────────┤
-│NAME                  │numbers                                    │
-├──────────────────────┼───────────────────────────────────────────┤
-│CATALOG_NAME          │unity                                      │
-├──────────────────────┼───────────────────────────────────────────┤
-│SCHEMA_NAME           │default                                    │
-├──────────────────────┼───────────────────────────────────────────┤
-│TABLE_TYPE            │EXTERNAL                                   │
-├──────────────────────┼───────────────────────────────────────────┤
-│DATA_SOURCE_FORMAT    │DELTA                                      │
-├──────────────────────┼───────────────────────────────────────────┤
-│COLUMNS               │{"name":"as_int","type_text":"int","type_js│
-│                      │NT","type_precision":0,"type_scale":0,"type│
-│                      │{"name":"as_double","type_text":"double","t│
-│                      │name":"DOUBLE","type_precision":0,"type_sca│
-│                      │column","nullable":false,"partition_index":│
-├──────────────────────┼───────────────────────────────────────────┤
-│...                   │...                                        │
-├──────────────────────┼───────────────────────────────────────────┤
-│TABLE_ID              │32025924-be53-4d67-ac39-501a86046c01       │
-└──────────────────────┴───────────────────────────────────────────┘
-```
-
-You can see this is a Delta table from the `DATA_SOURCE_FORMAT` metadata.
-
-Here's how to print a snippet of a Delta table (powered by the [Delta Kernel Java](https://delta.io/blog/delta-kernel/) project).
-
-Let's try creating a new table.
-
-```sh
-bin/uc table create --full_name unity.default.mytable \
---columns "col1 int, col2 double" --storage_location /tmp/uc/my_table
-```
-
-```console
-┌──────────────────────┬───────────────────────────────────────────┐
-│         KEY          │                  VALUE                    │
-├──────────────────────┼───────────────────────────────────────────┤
-│NAME                  │mytable                                    │
-├──────────────────────┼───────────────────────────────────────────┤
-│CATALOG_NAME          │unity                                      │
-├──────────────────────┼───────────────────────────────────────────┤
-│SCHEMA_NAME           │default                                    │
-├──────────────────────┼───────────────────────────────────────────┤
-│TABLE_TYPE            │EXTERNAL                                   │
-├──────────────────────┼───────────────────────────────────────────┤
-│DATA_SOURCE_FORMAT    │DELTA                                      │
-├──────────────────────┼───────────────────────────────────────────┤
-│COLUMNS               │{"name":"col1","type_text":"int","type_json"│
-│                      │{"name":"col2","type_text":"double","type_js│
-├──────────────────────┼───────────────────────────────────────────┤
-│...                   │...                                        │
-├──────────────────────┼───────────────────────────────────────────┤
-│TABLE_ID              │263a234a-7a29-44c8-8e41-8c46aa30650c       │
-└──────────────────────┴───────────────────────────────────────────┘
-```
-
-If you list the tables (e.g., `bin/uc table list --catalog unity --schema default`) again, you should see this new table.
-
-!!! note "mytable is an empty table"
-     Note, at this point, `unity.default.mytable` is an empty table; e.g. if you run
-    `bin/uc table read --full_name unity.default.mytable` there will be no rows.
-
-Next, append some randomly generated data to the table using `write`.
-
-```sh
-bin/uc table write --full_name unity.default.mytable
-```
-
-Read the table to confirm the random data was appended:
-
-```sh
-bin/uc table read --full_name unity.default.mytable
-```
-
-```console
-┌───────────────────┬────────────────────┐
-│col1(integer)      │col2(double)        │
-├───────────────────┼────────────────────┤
-│358                │289.04381385477393  │
-├───────────────────┼────────────────────┤
-│571                │22.709993302915787  │
-├───────────────────┼────────────────────┤
-│...                │...                 │
-├───────────────────┼────────────────────┤
-│221                │917.8549104485671   │
-└───────────────────┴────────────────────┘
-```
-
-Delete the table to clean up:
-
-```sh
-bin/uc table delete --full_name unity.default.mytable
-```
-
-> Note, while you have deleted the table from Unity Catalog, the underlying file system may still have the files (i.e.,
-check the /tmp/uc/my_table/folder).  
+You should see a catalog named `unity`, a schema named `default`, and several tables including `numbers`.
+Create, update, and delete operations are documented in the [REST API](usage/api/index.md). Query table data with
+DuckDB or Spark.
 
 ## Interact with the Unity Catalog UI
 

@@ -13,21 +13,13 @@ This starts the Unity Catalog server and UI. You can access the UI at
 DuckDB or Spark running on the host machine will be able to interact on those
 ports with the containers running Unity Catalog.
 
-To use the Unity Catalog CLI, attach to a shell in the Unity Catalog server
-container:
+From the host, list the sample tables through the REST API:
 
 ```sh
-docker exec -it unitycatalog-server-1 /bin/bash
+curl -s 'http://localhost:8080/api/2.1/unity-catalog/tables?catalog_name=unity&schema_name=default'
 ```
 
-Use the Unity Catalog CLI from the attached shell to interact with the server:
-
-```sh
-bin/uc table list --catalog unity --schema default
-```
-
-To remove the containers and persistent volumes, `exit` the attached shell and
-run the following from the host machine:
+To remove the containers and persistent volumes, run the following from the host machine:
 
 ```sh
 docker compose down --volumes --remove-orphans

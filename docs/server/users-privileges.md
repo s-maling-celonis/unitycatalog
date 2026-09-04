@@ -1,5 +1,8 @@
 # Users and Privileges
 
+This repository does not include `bin/uc`. Manage catalog objects with the [REST API](../usage/api/index.md) (or Spark/DuckDB) instead of CLI commands in this page.
+
+
 This page explains how Unity Catalog defines users and privileges.
 
 Here's a quick overview:

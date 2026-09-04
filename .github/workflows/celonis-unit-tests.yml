@@ -15,7 +15,7 @@ permissions:
   contents: read
 
 # Build once, then shard JaCoCo across parallel jobs. Non-Spark modules (server, hadoop,
-# client, cli) do not need a Spark/Delta matrix. Spark connector tests run in parallel for
+# client) do not need a Spark/Delta matrix. Spark connector tests run in parallel for
 # each supported Spark version. The publish job also compiles integration tests (not in the
 # root aggregate) so compilation and checkstyle issues are caught before Spark shards run.
 #
@@ -45,7 +45,6 @@ jobs:
           - server
           - connectors/hadoop
           - clients/java
-          - examples/cli
     steps:
       - name: Checkout Branch
         uses: actions/checkout@v4.1.2

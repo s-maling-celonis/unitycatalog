@@ -1,5 +1,8 @@
 # Table Formats
 
+This repository does not include `bin/uc`. Manage catalog objects with the [REST API](../api/index.md) (or Spark/DuckDB) instead of CLI commands in this page.
+
+
 This page explains how you can work with various table storage format tables in your Unity Catalog. It will also
 explain the advantages and drawbacks of working with these storage formats including Parquet, ORC, JSON, CSV, Avro,
 and TEXT.

@@ -14,56 +14,7 @@ commands_and_expected_output_strings = [
     ("bin/start-uc-server -v", ["0."]),
     ("bin/start-uc-server --version", ["0."]),
 
-    # cli version
-    ("bin/uc -v", ["0."]),
-    ("bin/uc --version", ["0."]),
-
-    # catalogs
-    ("bin/uc catalog list", ["unity"]),
-
-    # schemas
-    ("bin/uc schema list --catalog unity", ["default"]),
-
-    # tables
-    ## all tables
-    ("bin/uc table list --catalog unity --schema default", ["numbers", "marksheet", "user_countries", "MANAGED", "EXTERNAL", "EXTERNAL"]),
-    ## numbers
-    ("bin/uc table get --full_name unity.default.numbers --output json", ["numbers", "as_int", "EXTERNAL"]),
-    ("bin/uc table read --full_name unity.default.numbers", ["as_int"]),
-    ## user_countries
-    ("bin/uc table get --full_name unity.default.user_countries --output json", ["partition_index", "user_countries", "EXTERNAL"]),
-    ("bin/uc table read --full_name unity.default.user_countries", ["first_name(string)", "age(long)", "country(string)"]),
-    ## read/write of the new table
-    (f"rm -rf /tmp/uc/myTable", []),
-    (f"bin/uc table create --full_name unity.default.myTable --columns \"col1 int, col2 double\" --storage_location /tmp/uc/myTable", ["myTable", "col"]),
-    ("bin/uc table write --full_name unity.default.myTable", [""]),
-    ("bin/uc table read --full_name unity.default.myTable", ["col1", "col2"]),
-    ("bin/uc table delete --full_name unity.default.myTable", [""]),
-
-    # volumes
-    ("bin/uc volume list --catalog unity --schema default --output jsonPretty", ["txt_files", "json_files"]),
-    ("bin/uc volume get --full_name unity.default.txt_files --output jsonPretty", ["txt_files", "MANAGED"]),
-    ("bin/uc volume get --full_name unity.default.json_files --output jsonPretty", ["json_files", "EXTERNAL"]),
-    ("bin/uc volume read --full_name unity.default.json_files", ["c.json", "d.json"]),
-    ("bin/uc volume read --full_name unity.default.txt_files", ["a.txt", "b.txt"]),
-    ("bin/uc volume read --full_name unity.default.json_files --path c.json", ["marks"]),
-    ("bin/uc volume read --full_name unity.default.json_files --path dir1", ["e.json"]),
-    (f"mkdir -p /tmp/uc/myVolume", []),
-    (f"cp etc/data/external/unity/default/volumes/json_files/c.json /tmp/uc/myVolume/", []),
-    ("bin/uc volume create --full_name unity.default.myVolume --storage_location /tmp/uc/myVolume", ["myVolume"]),
-    ("bin/uc volume read --full_name unity.default.myVolume", ["c.json"]),
-    ("bin/uc volume read --full_name unity.default.myVolume --path c.json", ["marks"]),
-    (f"rm -rf /tmp/uc/myVolume", []),
-    ("bin/uc volume delete --full_name unity.default.myVolume", [""]),
-
-    # functions
-    ("bin/uc function list --catalog unity --schema default --output jsonPretty", ["sum", "lowercase"]),
-    ("bin/uc function get --full_name unity.default.sum --output jsonPretty", ["sum", "x + y + z"]),
-    ("bin/uc function get --full_name unity.default.lowercase --output jsonPretty", ["lowercase", "lower()"]),
-    ("bin/uc function call --full_name unity.default.sum --input_params \"1,2,3\"", ["6"]),
-    ("bin/uc function create --full_name unity.default.myFunction --data_type INT --input_params \"a int, b int\" --def \"c=a*b\\nreturn c\" --output jsonPretty", ["myFunction", "a*b"]),
-    ("bin/uc function call --full_name unity.default.myFunction --input_params \"2,3\"", ["6"]),
-    ("bin/uc function delete --full_name unity.default.myFunction", [""]),
+    # REST/DuckDB cover catalog exploration; CLI was removed.
 
     # duckdb
     ("duckdb:install uc_catalog from core_nightly;", []),

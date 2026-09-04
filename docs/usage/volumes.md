@@ -1,5 +1,8 @@
 # Unity Catalog Volumes
 
+This repository does not include `bin/uc`. Manage catalog objects with the [REST API](api/index.md) (or Spark/DuckDB) instead of CLI commands in this page.
+
+
 Unity Catalog volumes are good for registering datasets that are non-tabular or not supported as Unity Catalog tables.
 
 Unity Catalog volumes are a great option for JSON files, text files, or Lance datasets.

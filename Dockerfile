@@ -27,9 +27,9 @@ ENV MAVEN_PROXY_URL=${MAVEN_PROXY_URL}
 
 WORKDIR $HOME
 
-# build/ carries Repo Depot PREBUILT trees (server/cli/control-api targets + slim .m2).
+# build/ carries Repo Depot PREBUILT trees (server/control-api targets + slim .m2).
 # Omit it and PREBUILT=true fails: those paths never enter the image.
-COPY --parents .mvn/ dev/ build/ control-api/ server-shaded/ examples/ server/ api/ clients/ connectors/ integration-tests/ pom.xml ./
+COPY --parents .mvn/ dev/ build/ control-api/ server-shaded/ server/ api/ clients/ connectors/ integration-tests/ pom.xml ./
 
 RUN apk add --no-cache bash maven \
  && addgroup -S "$USER" \
@@ -45,15 +45,6 @@ RUN if [ "$PREBUILT" = "true" ]; then \
       mkdir -p "$HOME/server/target" \
       && cp -a "$HOME/build/ci-staging/prebuilt/server/target/." "$HOME/server/target/" \
       && chown -R "$USER:$USER" "$HOME/server/target"; \
-    fi
-RUN if [ "$PREBUILT" = "true" ]; then \
-      if [ ! -d "$HOME/build/ci-staging/prebuilt/examples/cli/target" ]; then \
-        echo "PREBUILT build requires $HOME/build/ci-staging/prebuilt/examples/cli/target from host Maven" >&2; \
-        exit 1; \
-      fi; \
-      mkdir -p "$HOME/examples/cli/target" \
-      && cp -a "$HOME/build/ci-staging/prebuilt/examples/cli/target/." "$HOME/examples/cli/target/" \
-      && chown -R "$USER:$USER" "$HOME/examples/cli/target"; \
     fi
 RUN if [ "$PREBUILT" = "true" ]; then \
       if [ ! -d "$HOME/build/ci-staging/prebuilt/control-api/target" ]; then \
@@ -81,7 +72,7 @@ RUN if [ "$PREBUILT" = "true" ]; then \
 # promoting artifacts so the image does not keep two copies of the cache.
 RUN rm -rf /home/unitycatalog/build/ci-staging
 USER $USER
-RUN if [ "$PREBUILT" != "true" ]; then mvn -q -pl server,examples/cli -am package -DskipTests; fi
+RUN if [ "$PREBUILT" != "true" ]; then mvn -q -pl server -am package -DskipTests; fi
 
 USER root
 RUN if [ "$PREBUILT" = "true" ] && [ -f "$HOME/server/target/classpath" ]; then \
@@ -89,13 +80,6 @@ RUN if [ "$PREBUILT" = "true" ] && [ -f "$HOME/server/target/classpath" ]; then 
       && chown "$USER:$USER" "$HOME/server/target/classpath"; \
     elif [ "$PREBUILT" = "true" ]; then \
       echo "PREBUILT build requires $HOME/server/target/classpath" >&2; \
-      exit 1; \
-    fi
-RUN if [ "$PREBUILT" = "true" ] && [ -f "$HOME/examples/cli/target/classpath" ]; then \
-      sed -i "s|${BUILD_HOME}|${HOME}|g; s|${BUILD_ROOT}|${HOME}|g" "$HOME/examples/cli/target/classpath" \
-      && chown "$USER:$USER" "$HOME/examples/cli/target/classpath"; \
-    elif [ "$PREBUILT" = "true" ]; then \
-      echo "PREBUILT build requires $HOME/examples/cli/target/classpath" >&2; \
       exit 1; \
     fi
 USER $USER
@@ -117,7 +101,6 @@ ENV HOME=$HOME \
 
 # Copy build artifacts from base stage. Use directory-to-directory COPY (not
 # --parents with trailing slashes) so server/target/ is preserved under server/.
-COPY --from=base $HOME/examples $HOME/examples
 COPY --from=base $HOME/server $HOME/server
 COPY --from=base $HOME/api $HOME/api
 COPY --from=base $HOME/clients $HOME/clients

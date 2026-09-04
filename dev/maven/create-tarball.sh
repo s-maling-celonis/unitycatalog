@@ -33,7 +33,6 @@ copy_from_classpath_file() {
 }
 
 copy_from_classpath_file "$ROOT_DIR/server/target/classpath"
-copy_from_classpath_file "$ROOT_DIR/examples/cli/target/classpath"
 
 python3 - "$JARS" <<'PY'
 from pathlib import Path
