@@ -14,7 +14,6 @@ on:
       - '.cursor/**'
       - '.mirrord/**'
       - 'docs/**'
-      - 'mkdocs.yml'
       - '**.md'
       - 'examples/**'
       - 'integration-tests/**'
