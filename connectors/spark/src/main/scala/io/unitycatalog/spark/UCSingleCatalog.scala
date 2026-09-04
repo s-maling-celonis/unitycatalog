@@ -1095,9 +1095,11 @@ private[spark] class UCProxy(
     comment.foreach(createTable.setComment(_))
     createTable.setColumns(columns)
     createTable.setDataSourceFormat(convertDatasourceFormat(format))
-    // Do not send the V2 table properties as they are made part of the `createTable` already.
-    val propertiesToServer =
-      properties.view.filterKeys(!UCTableProperties.V2_TABLE_PROPERTIES.contains(_)).toMap
+    // Drop V2 reserved keys, vended fs.* credentials, and Spark Hive-metastore schema JSON.
+    // Same deny-list as createView; see UCTableProperties.shouldPersistProperty.
+    val propertiesToServer = properties.view
+      .filterKeys(UCTableProperties.shouldPersistProperty(_))
+      .toMap
     createTable.setProperties(propertiesToServer)
     try {
       tablesApi.createTable(createTable)
