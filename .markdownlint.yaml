@@ -1,7 +1,7 @@
 ---
 # Unordered list indentation
 MD007:
-  # Use 4 spaces for unordered list indentation for mkdocs displaying it correctly
+  # Use 4 spaces for unordered list indentation so nested lists render correctly
   indent: 4
 
 # Line length
@@ -19,6 +19,5 @@ MD024:
 MD041: false
 
 # Code block style
-# Ignoring as we use different styles for different purposes and at some points also mkdocs is requring different
-# styles
+# Ignoring as we use different styles for different purposes
 MD046: false
