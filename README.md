@@ -247,10 +247,9 @@ switch expressions and long strings differently, so an IDE plugin on a different
 
 The Maven build [requires JDK 17–24](./pom.xml) via the enforcer plugin (`[17,25)`). Spark and Hadoop modules still compile with `--release 11` / `17` for runtime compatibility. Run tests on **JDK 17**; Hadoop and CLI Delta tests fail on JDK 25+ (`Subject.getSubject` removed).
 
-### Serving the documentation with mkdocs
+### Documentation
 
-For an overview of how to contribute to the documentation, please see our introduction [here](./docs/README.md).
-For the official documentation, please take a look at [https://docs.unitycatalog.io/](https://docs.unitycatalog.io/).
+User documentation lives as Markdown under [`docs/`](./docs/). See [`docs/README.md`](./docs/README.md) for how to contribute. Official OSS docs are at [https://docs.unitycatalog.io/](https://docs.unitycatalog.io/).
 
 # Docker Builds
 
