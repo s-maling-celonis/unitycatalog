@@ -133,16 +133,24 @@ runs:
       run: |
         set -euo pipefail
 
+        # install (not package) so later module-only tests resolve sibling SNAPSHOTs
+        # from ~/.m2 instead of re-entering the reactor with -am (which re-runs
+        # every upstream test suite).
         build_maven_module() {
           local maven_pl="$1"
-          mvn -B -pl "$maven_pl" -am package -DskipTests
+          shift
+          mvn -B -pl "$maven_pl" -am install -DskipTests "$@"
         }
 
         case "${{ inputs.component-name }}" in
           unity-catalog-server)
             # Compiled by the Test step's verify run.
             ;;
-          unitycatalog-client|unitycatalog-controlapi|unitycatalog-hadoop|unitycatalog-spark)
+          unitycatalog-spark)
+            build_maven_module "${{ steps.component.outputs.maven-pl }}" \
+              -DsparkVersion=4.1.3 -DdeltaVersion=4.3.1
+            ;;
+          unitycatalog-client|unitycatalog-controlapi|unitycatalog-hadoop)
             build_maven_module "${{ steps.component.outputs.maven-pl }}"
             ;;
           *)
@@ -234,10 +242,10 @@ runs:
             mvn -B -pl "${{ steps.component.outputs.maven-pl }}" -am test
             ;;
           unitycatalog-hadoop)
-            mvn -B -pl server-shaded,connectors/hadoop -am test
+            mvn -B -pl connectors/hadoop test
             ;;
           unitycatalog-spark)
-            mvn -B -DsparkVersion=4.1.3 -DdeltaVersion=4.3.1 -pl connectors/spark -am test
+            mvn -B -DsparkVersion=4.1.3 -DdeltaVersion=4.3.1 -pl connectors/spark test
             ;;
           *)
             echo "Unsupported component: ${{ inputs.component-name }}" >&2

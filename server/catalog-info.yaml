@@ -17,6 +17,18 @@ metadata:
     repo-depot.celonis.dev/workflow-runner-release: runner=8cpu-linux-x64
     repo-depot.celonis.dev/deploy-strategy: kargo
     celonis.dev/omnia-ultra-secure-ready: 'true'
+    prr-slo.celonis.dev/alerts_slack_channel: storium-alerts
+    prr-slo.celonis.dev/opsgenie_handle: Storium
+    repo-depot.com/release-manager-opsgenie-schedule-id: bbddcabf-ba59-48e7-a803-49867156c647
+  links:
+    - url: https://grid-celonis.enterprise.slack.com/archives/C0786ETGKA4
+      title: Support Channel
+      icon: chat
+      type: slack-channel
+    - url: https://grid-celonis.enterprise.slack.com/archives/C08KJJS87MK
+      title: Alerts Channel
+      icon: chat
+      type: slack-channel
 spec:
   type: service
   lifecycle: experimental
