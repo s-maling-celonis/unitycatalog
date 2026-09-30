@@ -4,7 +4,7 @@ This document walks through how to use [PuppyGraph](https://www.puppygraph.com) 
 
 ## Prerequisites
 
-- JDK 17 to build and run Unity Catalog and Spark
+- JDK 21 to build and run Unity Catalog and Spark
 - Docker
 - This repository `unitycatalog` cloned
 - Spark downloaded
@@ -16,13 +16,13 @@ Run one of the following from the cloned repository root directory, depending on
 === "Spark 4.0.x"
 
     ```sh
-    build/sbt -DsparkVersion=4.0 clean package publishLocal spark/publishLocal
+    mvn -DsparkVersion=4.0 clean install -DskipTests
     ```
 
 === "Spark 4.1.x"
 
     ```sh
-    build/sbt -DsparkVersion=4.1 clean package publishLocal spark/publishLocal
+    mvn -DsparkVersion=4.1 clean install -DskipTests
     ```
 
 === "Spark 4.2.x"

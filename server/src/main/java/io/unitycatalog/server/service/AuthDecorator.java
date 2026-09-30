@@ -13,7 +13,7 @@ import com.linecorp.armeria.server.DecoratingHttpServiceFunction;
 import com.linecorp.armeria.server.HttpService;
 import com.linecorp.armeria.server.ServiceRequestContext;
 import io.netty.util.AttributeKey;
-import io.unitycatalog.control.model.User;
+import io.unitycatalog.server.control.model.User;
 import io.unitycatalog.server.exception.AuthorizationException;
 import io.unitycatalog.server.exception.ErrorCode;
 import io.unitycatalog.server.persist.Repositories;

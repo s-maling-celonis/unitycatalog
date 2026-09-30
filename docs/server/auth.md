@@ -66,7 +66,6 @@ Service integrations exchange an upstream OAuth access token on `POST /auth/toke
 2. **External id mode** — for `access_token` subjects, look up the user by OAuth client id (`azp`, or `client_id`) mapped to `externalId`. When the access token has no `email` claim, this is tried before `sub`.
 
 Create UC users with a human-readable `email` for grants and set `externalId` to the OAuth client id for programmatic exchange. The issued UC access token always uses the resolved user's `email`.
-
 #### Multiple Identity Providers
 
 You can configure multiple issuers and audiences by separating them with commas:
@@ -432,6 +431,10 @@ Microsoft Entra ID, a resource's default scope typically has the form
 `<resource-application-id-uri>/.default`.
 
 ## Using Google Identity with Unity Catalog UI
+
+This fork does not include the OSS UI sources (`ui/`). The steps below apply to
+[upstream `ui/`](https://github.com/unitycatalog/unitycatalog/tree/main/ui), or to a running
+published UI container.
 
 We previously configured Google as the Identity Provider and configured UC Server settings for CLI access. However, we
 can also apply this authentication and authorization to the Unity Catalog UI.

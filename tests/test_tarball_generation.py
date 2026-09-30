@@ -26,15 +26,17 @@ tarball_path = "target/unitycatalog-{version}.tar.gz"
 extract_path = "target/dist"
 
 try:
-    version_pattern = r'version\s*:=\s*"([^"]+)"'
-    with open('version.sbt', 'r') as file:
+    version_pattern = (
+        r"<artifactId>unitycatalog</artifactId>\s*<version>([^<]+)</version>"
+    )
+    with open("pom.xml", "r") as file:
         content = file.read()
-        match = re.search(version_pattern, content) # Extract the version string
+        match = re.search(version_pattern, content, re.DOTALL)
         if match:
             version = match.group(1)
             tarball_path = tarball_path.format(version=version)
         else:
-            print('Version string not found.')
+            print("Version string not found.")
             sys.exit(1)
 except Exception as e:
     print(f"Failed to extract version string: {e}")

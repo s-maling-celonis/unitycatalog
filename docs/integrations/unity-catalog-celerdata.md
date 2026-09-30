@@ -15,16 +15,16 @@ In this example, for simplicity, we query the data that comes with the  UC quick
 For this to work, you would need to deploy a UC server on every FE and BE/CN in your CelerData environment, under the
 same path.
 
-SSH into each FE and BE/CN node, install JDK 17, and under the same path, Clone, build, start Unity Catalog:
+SSH into each FE and BE/CN node, install JDK 21, and under the same path, Clone, build, start Unity Catalog:
 
 ```sh
-sudo apt install openjdk-17-jdk
+sudo apt install openjdk-21-jdk
 
 git clone https://github.com/unitycatalog/unitycatalog.git
 
 cd unitycatalog
 
-build/sbt package
+mvn package
 
 bin/start-uc-server
 ```

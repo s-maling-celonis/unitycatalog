@@ -9,9 +9,9 @@ DELTA_DIR="${DELTA_DIR:-/tmp/delta}"
 META_ONLY=false
 
 # Read UC version from the checkout directory (before cd-ing to Delta).
-UC_VERSION=$(sed -n 's/.*version := "\([^"]*\)".*/\1/p' version.sbt)
+UC_VERSION=$(sed -n '/<artifactId>unitycatalog<\/artifactId>/,/<version>/s,.*<version>\([^<]*\)</version>.*,\1,p' pom.xml | head -n 1)
 if [ -z "$UC_VERSION" ]; then
-  echo "::error::Failed to resolve UC version from version.sbt"
+  echo "::error::Failed to resolve UC version from pom.xml"
   exit 1
 fi
 
@@ -68,13 +68,12 @@ if [[ -n "${SPARK_ARTIFACT_VERSION:-}" ]]; then
 fi
 cd "$DELTA_DIR"
 
-# UC jars are already in ~/.m2 from the workflow's pre-Delta publishM2 step.
+# UC jars are already in ~/.m2 from the workflow's pre-Delta `mvn install` step.
 # -DunityCatalogVersion makes Delta resolve them directly; the autoBuild flag
 # is a safety net (redundant when -DunityCatalogVersion is set, but explicit).
 # publishM2 only (not publishLocal): Delta's ivy.xml lists internal modules
 # (delta-spark-v1, delta-spark-v2) that aren't published separately. The M2 POM
-# filters them via pomPostProcess. UC's build/sbt forces maven-local in the
-# resolver chain, so ~/.m2 artifacts are found.
+# filters them via pomPostProcess. Maven resolves those artifacts from ~/.m2.
 build/sbt -DsparkVersion="$SPARK_VERSION" \
   "${SPARK_COMMIT_ARGS[@]}" \
   -Ddelta.autoBuildPinnedUnityCatalog=false \

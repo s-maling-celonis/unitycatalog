@@ -13,22 +13,22 @@ git clone git@github.com:unitycatalog/unitycatalog.git
 > To start Unity Catalog in Docker, refer to the [Docker
 > Compose docs](docker_compose.md).
 
-To run Unity Catalog, you need **Java 17** installed on your machine.  You can
+To run Unity Catalog, you need **Java 21** installed on your machine.  You can
 always run the `java --version` command to verify that you have the right
 version of Java installed such as the following example output.
 
 ```sh
 % java --version
-openjdk 17.0.12 2024-07-16
-OpenJDK Runtime Environment Homebrew (build 17.0.12+0)
-OpenJDK 64-Bit Server VM Homebrew (build 17.0.12+0, mixed mode, sharing)
+openjdk 21.0.8 2025-07-15 LTS
+OpenJDK Runtime Environment Temurin-21.0.8+9 (build 21.0.8+9-LTS)
+OpenJDK 64-Bit Server VM Temurin-21.0.8+9 (build 21.0.8+9-LTS, mixed mode, sharing)
 ```
 
 From the repository root, build the server artifacts. The startup script can trigger this automatically on first run,
 but building explicitly is recommended:
 
 ```sh
-build/sbt package
+mvn package
 ```
 
 From the repository root, run `bin/start-uc-server` to instantiate the server. Here is what you
@@ -286,18 +286,7 @@ check the /tmp/uc/my_table/folder).
 
 ![UC UI](./assets/images/uc-ui.png)
 
-To use the Unity Catalog UI, start a new terminal and ensure you have already started the Unity Catalog server (e.g., `./bin/start-uc-server`)
-
-!!! warning "Prerequisites"
-    The Unity Catalog UI requires both [Node](https://nodejs.org/en/download/package-manager) and [Bun](https://bun.com/docs/installation).
-
-To start the UI locally, run the following commands to start `bun`
-
-```console
-cd ui
-bun install
-bun run start
-```
+This fork does not include the OSS UI sources. `docker compose up` starts the [published UI image](https://hub.docker.com/r/unitycatalog/unitycatalog-ui) at `http://localhost:3000`. To build the UI from source, use [upstream `ui/`](https://github.com/unitycatalog/unitycatalog/tree/main/ui).
 
 ## Manage models in Unity Catalog using MLflow
 

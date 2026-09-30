@@ -158,7 +158,8 @@ public final class IcebergSchemaConverter {
       case STRUCT -> ColumnTypeName.STRUCT;
       case LIST -> ColumnTypeName.ARRAY;
       case MAP -> ColumnTypeName.MAP;
-      // Iceberg has no standard GEOMETRY or GEOGRAPHY primitive type today. Keep this rejection in
+      // Iceberg has no standard GEOMETRY or GEOGRAPHY primitive type today. Keep this rejection
+      // in
       // sync with primitiveTypeName until Iceberg defines interoperable type IDs for them.
       default ->
           throw new BadRequestException(

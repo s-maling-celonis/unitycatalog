@@ -4,7 +4,7 @@ import com.unboundid.scim2.common.types.Email;
 import com.unboundid.scim2.common.types.Meta;
 import com.unboundid.scim2.common.types.Photo;
 import com.unboundid.scim2.common.types.UserResource;
-import io.unitycatalog.control.model.User;
+import io.unitycatalog.server.control.model.User;
 import java.net.URI;
 import java.util.Calendar;
 import java.util.List;
